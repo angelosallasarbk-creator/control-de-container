@@ -4,6 +4,10 @@ import { prisma } from "./prisma.js";
 export const CONFIG_PADRAO = {
   // Na leitura manual, o operador registra a temperatura a cada X minutos; passando disso, alerta.
   intervaloLeituraMinutos: 240,
+  // Cotação manual para consolidar o Custo estimado em R$ (0 = não informada: a tela mostra
+  // cada moeda separada, sem somar moedas diferentes).
+  cotacaoUSD: 0,
+  cotacaoEUR: 0,
 };
 
 export async function lerConfiguracao() {

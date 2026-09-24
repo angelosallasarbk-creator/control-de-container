@@ -40,6 +40,8 @@ export const api = {
   cancelar: (id, motivo) => request(`/containers/${id}/cancelar`, { method: "POST", body: { motivo } }),
   registrarLeitura: (id, dados) => request(`/containers/${id}/leituras`, { method: "POST", body: dados }),
 
+  custos: (params) => request(`/custos${qs(params)}`),
+
   alertas: (params) => request(`/alertas${qs(params)}`),
   resumoAlertas: () => request("/alertas/resumo"),
   reconhecerAlerta: (id, acaoTomada) => request(`/alertas/${id}/reconhecer`, { method: "POST", body: { acaoTomada } }),

@@ -104,7 +104,7 @@ function abrirEditar() {
   Object.assign(ed, {
     booking: x.booking ?? "", navio: x.navio ?? "", placa: x.placa ?? "", motorista: x.motorista ?? "", lacre: x.lacre ?? "",
     posicaoPatio: x.posicaoPatio ?? "", observacao: x.observacao ?? "", deadline: x.deadline ? paraInputLocal(x.deadline) : "",
-    metaEstadiaHoras: x.metaEstadiaHoras, freeTimeDias: x.freeTimeDias,
+    metaEstadiaHoras: x.metaEstadiaHoras, custoEstadiaPorHora: x.custoEstadiaPorHora ?? "", freeTimeDias: x.freeTimeDias,
     setpoint: x.setpoint, tempMin: x.tempMin, tempMax: x.tempMax, toleranciaMinutos: x.toleranciaMinutos,
   });
   erro.value = null;
@@ -119,6 +119,10 @@ function salvarEdicao() {
   // Prazos só vão se mudaram (operador não pode alterá-los).
   for (const campo of ["metaEstadiaHoras", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"]) {
     if (ed[campo] !== undefined && ed[campo] !== null && String(ed[campo]) !== String(x[campo])) dados[campo] = ed[campo];
+  }
+  // Custo/h pode ser apagado (volta a "sem valor"); vazio = null.
+  if (String(ed.custoEstadiaPorHora ?? "") !== String(x.custoEstadiaPorHora ?? "")) {
+    dados.custoEstadiaPorHora = ed.custoEstadiaPorHora === "" ? null : ed.custoEstadiaPorHora;
   }
   executar(() => api.editarContainer(x.id, dados), "Dados atualizados.");
 }
@@ -370,6 +374,7 @@ function reconhecido() {
           <div class="dica mudo pequeno">Copiados do cadastro na criação. Altere só se houve negociação específica (ex.: free time estendido pelo armador).</div>
           <div class="grade-form">
             <div class="campo"><label>Meta de estadia (h)</label><input v-model.number="ed.metaEstadiaHoras" type="number" min="1" /></div>
+            <div class="campo"><label>Custo por hora excedida (R$)</label><input v-model="ed.custoEstadiaPorHora" type="number" min="0" step="0.01" placeholder="sem valor" /></div>
             <div class="campo"><label>Free time (dias)</label><input v-model.number="ed.freeTimeDias" type="number" min="0" /></div>
             <template v-if="c.reefer">
               <div class="campo"><label>Setpoint (°C)</label><input v-model.number="ed.setpoint" type="number" step="0.1" /></div>

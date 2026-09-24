@@ -260,6 +260,39 @@ test("painel agrupa por Cliente / Fábrica e a entrega no porto encerra todos os
   assert.equal(novo.status, 201);
 });
 
+test("custo estimado: estadia excedida aparece por dia e no detalhamento; valida período; cotação", async () => {
+  // O reefer do teste ficou com meta de 1h e passou ~1h na fábrica antes de ser entregue.
+  const r = await agentes.VISUALIZACAO.get("/api/custos");
+  assert.equal(r.status, 200);
+  const det = r.body.containers.find((c) => c.id === ids.reefer);
+  assert.ok(det, "container com estadia excedida entra no detalhamento");
+  assert.ok(det.estadiaHoras > 0);
+  assert.equal(det.semCustoHora, true, "grupo sem custo/h → horas sem valor");
+  assert.equal(det.estadiaValor, 0);
+  assert.ok(r.body.dias.some((d) => d.grupoId === ids.grupo && d.estadiaHoras > 0));
+  assert.equal(r.body.grupos.find((g) => g.id === ids.grupo).regiao.nome, "Sul");
+  assert.equal(r.body.cotacoes.USD, null);
+
+  // Custo/h cadastrado depois: supervisor ajusta no container e o custo passa a ter valor.
+  assert.equal((await agentes.OPERADOR.patch(`/api/containers/${ids.reefer}`).send({ custoEstadiaPorHora: 100 })).status, 403);
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/containers/${ids.reefer}`).send({ custoEstadiaPorHora: "100,00" })).status, 200);
+  const comValor = (await agentes.VISUALIZACAO.get("/api/custos")).body.containers.find((c) => c.id === ids.reefer);
+  assert.equal(comValor.semCustoHora, false);
+  assert.ok(comValor.estadiaValor > 0);
+
+  assert.equal((await agentes.VISUALIZACAO.get("/api/custos?de=2026-13-01")).status, 400);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/custos?de=2026-09-10&ate=2026-09-01")).status, 400);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/custos?de=2020-01-01&ate=2026-09-01")).status, 400, "período máximo");
+  const antigo = await agentes.VISUALIZACAO.get("/api/custos?de=2020-01-01&ate=2020-01-31");
+  assert.equal(antigo.body.containers.length, 0, "período sem operação");
+
+  assert.equal((await agentes.SUPERVISOR.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, cotacaoUSD: 5.4 })).status, 403);
+  const cfg = await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, cotacaoUSD: "5,40" });
+  assert.equal(cfg.status, 200);
+  assert.equal(cfg.body.cotacaoUSD, 5.4);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/custos")).body.cotacoes.USD, 5.4);
+});
+
 test("cadastro usado não pode ser excluído (só desativado)", async () => {
   assert.equal((await agentes.SUPERVISOR.delete(`/api/armadores/${ids.armador}`)).status, 409);
   const r = await agentes.SUPERVISOR.patch(`/api/armadores/${ids.armador}`).send({ ativo: false });

@@ -213,12 +213,13 @@ containersRouter.patch("/:id", requireRole(...PERMISSOES.operar), asyncHandler(a
   if (dados.placa) dados.placa = dados.placa.toUpperCase();
   if ("deadline" in b) dados.deadline = dataHora(b.deadline, "Deadline");
 
-  const camposPrazo = ["metaEstadiaHoras", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"];
+  const camposPrazo = ["metaEstadiaHoras", "custoEstadiaPorHora", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"];
   if (camposPrazo.some((c) => c in b)) {
     if (!["ADMIN", "SUPERVISOR"].includes(req.usuario.perfil)) {
       throw erroHttp(403, "Só supervisor ou administrador pode alterar prazos e faixa de temperatura de um container.");
     }
     if ("metaEstadiaHoras" in b) dados.metaEstadiaHoras = inteiro(b.metaEstadiaHoras, "Meta de estadia (h)", { obrigatorio: true, min: 1, max: 2000 });
+    if ("custoEstadiaPorHora" in b) dados.custoEstadiaPorHora = decimal(b.custoEstadiaPorHora, "Custo por hora excedida", { min: 0 });
     if ("freeTimeDias" in b) dados.freeTimeDias = inteiro(b.freeTimeDias, "Free time (dias)", { obrigatorio: true, min: 0, max: 365 });
     if (ehReefer(antes.tipo)) {
       for (const [campo, rotulo] of [["setpoint", "Setpoint"], ["tempMin", "Temperatura mínima"], ["tempMax", "Temperatura máxima"]]) {

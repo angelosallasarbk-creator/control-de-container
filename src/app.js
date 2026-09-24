@@ -8,6 +8,7 @@ import { cadastrosRouter } from "./routes/cadastros.js";
 import { containersRouter } from "./routes/containers.js";
 import { painelRouter } from "./routes/painel.js";
 import { alertasRouter } from "./routes/alertas.js";
+import { custosRouter } from "./routes/custos.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
@@ -34,6 +35,7 @@ export function criarApp() {
   app.use("/api/containers", containersRouter);
   app.use("/api/painel", painelRouter);
   app.use("/api/alertas", alertasRouter);
+  app.use("/api/custos", custosRouter);
   app.use("/api/tokens", tokensRouter);
   app.use("/api/usuarios", usuariosRouter);
   app.use("/api/configuracao", configuracaoRouter);

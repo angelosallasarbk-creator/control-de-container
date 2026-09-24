@@ -5,7 +5,7 @@ import { requireRole, PERMISSOES } from "../lib/auth.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao, salvarConfiguracao } from "../lib/configuracao.js";
 import { executarVerificacao } from "../lib/verificador.js";
-import { inteiro } from "../lib/validacao.js";
+import { inteiro, decimal } from "../lib/validacao.js";
 
 export const configuracaoRouter = Router();
 
@@ -20,7 +20,11 @@ configuracaoRouter.put("/", requireRole(...PERMISSOES.administrar), asyncHandler
     min: 0,
     max: 10080,
   });
-  const depois = await salvarConfiguracao({ intervaloLeituraMinutos });
+  const cotacoes = {};
+  for (const [chave, rotulo] of [["cotacaoUSD", "Cotação do dólar (R$)"], ["cotacaoEUR", "Cotação do euro (R$)"]]) {
+    if (chave in (req.body ?? {})) cotacoes[chave] = decimal(req.body[chave], rotulo, { min: 0, max: 1000 }) ?? 0;
+  }
+  const depois = await salvarConfiguracao({ intervaloLeituraMinutos, ...cotacoes });
   await registrarLog({ usuarioEmail: req.usuario.email, acao: "ALTERAR", entidade: "Configuracao", descricao: "Configurações alteradas", dadosAntes: antes, dadosDepois: depois });
   // Aplica a nova regra de "sem leitura" já, sem esperar o próximo ciclo do verificador.
   await executarVerificacao();

@@ -74,6 +74,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           Alertas
           <span v-if="resumo?.total" class="chip" :class="resumo.criticos ? 'vermelho' : 'amarelo'">{{ resumo.total }}</span>
         </router-link>
+        <router-link to="/custos">Custo estimado</router-link>
         <div class="lateral-secao">Cadastros</div>
         <router-link to="/cadastros/regioes">Regiões</router-link>
         <router-link to="/cadastros/grupos">Cliente / Fábrica</router-link>
