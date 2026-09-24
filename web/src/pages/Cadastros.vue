@@ -115,9 +115,14 @@ function opcoesDoCampo(c) {
   return c.vazio ? [{ valor: "", rotulo: c.vazio }, ...lista] : lista;
 }
 
+// Ao editar um cadastro com containers em andamento, aplicar os valores novos a eles
+// vem marcado: é o que se espera ao corrigir uma meta/custo. Entregues nunca mudam.
+const aplicarEmAndamento = ref(true);
+
 function abrir(registro) {
   editando.value = registro ?? {};
   form.value = Object.fromEntries(cfg.value.campos.map((c) => [c.chave, registro ? registro[c.chave] ?? "" : c.padrao ?? ""]));
+  aplicarEmAndamento.value = true;
   erro.value = null;
   aviso.value = null;
 }
@@ -137,10 +142,14 @@ async function salvar() {
         else dados[c.chave] = dados[c.chave] === "" ? null : Number(dados[c.chave]);
       }
     }
+    if (editando.value.emAndamento) dados.aplicarEmAndamento = aplicarEmAndamento.value;
     const salvo = editando.value.id
       ? await api.atualizar(props.recurso, editando.value.id, dados)
       : await api.criar(props.recurso, dados);
-    if (salvo?.propagados) aviso.value = `Região aplicada também a ${salvo.propagados} outro(s) cliente(s) da fábrica ${salvo.fabrica}.`;
+    const avisos = [];
+    if (salvo?.propagados) avisos.push(`Região aplicada também a ${salvo.propagados} outro(s) cliente(s) da fábrica ${salvo.fabrica}.`);
+    if (salvo?.containersAtualizados) avisos.push(`Valores aplicados a ${salvo.containersAtualizados} container(s) em andamento; prazos, alertas e custos recalculados.`);
+    aviso.value = avisos.join(" ") || null;
     editando.value = null;
     await carregar();
   } catch (e) {
@@ -177,7 +186,7 @@ async function excluir(r) {
       <div>
         <h2 style="margin: 0">{{ cfg.titulo }}</h2>
         <div class="mudo pequeno" style="margin-top: 4px">
-          {{ cfg.ajuda }}<template v-if="!cfg.rotuloUso"> Alterações valem para containers novos; os já cadastrados mantêm os prazos da época.</template>
+          {{ cfg.ajuda }}<template v-if="!cfg.rotuloUso"> Ao editar, você escolhe se os valores novos valem também para os containers em andamento; entregues e cancelados mantêm os valores da época.</template>
         </div>
       </div>
       <button v-if="auth.pode('cadastros')" class="primario" @click="abrir(null)">+ Novo</button>
@@ -225,6 +234,16 @@ async function excluir(r) {
           <span v-if="c.opcoesDe === 'regioes' && !opcoesDinamicas.regioes?.length" class="dica">
             Nenhuma região cadastrada ainda — <router-link to="/cadastros/regioes">cadastrar regiões</router-link>.
           </span>
+        </div>
+        <div v-if="editando.emAndamento" class="aviso">
+          <label class="linha" style="gap: 8px; align-items: flex-start">
+            <input v-model="aplicarEmAndamento" type="checkbox" style="margin-top: 3px" />
+            <span>
+              <strong>Aplicar também aos {{ editando.emAndamento }} container(s) em andamento</strong><br />
+              <span class="pequeno">Prazos, alertas e custos deles são recalculados com os valores deste cadastro. Ajustes feitos individualmente
+                na ficha desses containers serão substituídos. Containers entregues ou cancelados não mudam.</span>
+            </span>
+          </label>
         </div>
         <div class="modal-acoes">
           <button type="button" @click="editando = null">Cancelar</button>

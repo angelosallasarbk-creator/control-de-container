@@ -5,6 +5,8 @@ import { requireRole, PERMISSOES } from "../lib/auth.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { decimaisParaNumero } from "../lib/containerView.js";
 import { texto, inteiro, decimal, id as validarId } from "../lib/validacao.js";
+import { STATUS_ENCERRADOS } from "../lib/prazos.js";
+import { sincronizarAlertas } from "../lib/alertas.js";
 
 // Cadastros de apoio (Regiões, Cliente/Fábrica, Armadores, Produtos) com o mesmo CRUD.
 // Registro já usado não é excluído fisicamente: desativa-se (ativo = false).
@@ -122,6 +124,15 @@ const CADASTROS = {
   },
 };
 
+// Campos que o container copia do cadastro na criação. Ao editar o cadastro, o usuário pode
+// escolher aplicar os valores novos aos containers EM ANDAMENTO (entregues/cancelados nunca
+// mudam, para o histórico de custo continuar valendo).
+CADASTROS.grupos.aplicarNosContainers = { fk: "grupoId", campos: ["metaEstadiaHoras", "alertaEstadiaHoras", "custoEstadiaPorHora"] };
+CADASTROS.armadores.aplicarNosContainers = { fk: "armadorId", campos: ["freeTimeDias", "valorDiaria", "moeda", "alertaDemurrageDias"] };
+CADASTROS.produtos.aplicarNosContainers = { fk: "produtoId", campos: ["setpoint", "tempMin", "tempMax", "toleranciaMinutos"] };
+
+const EM_ANDAMENTO = { status: { notIn: STATUS_ENCERRADOS } };
+
 export const cadastrosRouter = Router();
 
 function traduzirErroUnico(err) {
@@ -138,7 +149,14 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
   cadastrosRouter.get(`/${rota}`, asyncHandler(async (req, res) => {
     const where = req.query.ativos === "1" ? { ativo: true } : {};
     const registros = await repo().findMany({ where, orderBy: cfg.ordem, include });
-    res.json(registros.map(serializar));
+    // Quantos containers em andamento cada cadastro tem (para a opção "aplicar aos em andamento").
+    const emAndamento = new Map();
+    if (cfg.aplicarNosContainers) {
+      const { fk } = cfg.aplicarNosContainers;
+      const contagem = await prisma.container.groupBy({ by: [fk], where: EM_ANDAMENTO, _count: true });
+      for (const linha of contagem) emAndamento.set(linha[fk], linha._count);
+    }
+    res.json(registros.map((r) => ({ ...serializar(r), emAndamento: emAndamento.get(r.id) ?? 0 })));
   }));
 
   cadastrosRouter.post(`/${rota}`, requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
@@ -168,11 +186,25 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     if (!antes) throw erroHttp(404, "Cadastro não encontrado.");
     const dados = cfg.validar(corpo, true);
     cfg.validarConjunto?.({ ...antes, ...dados });
-    const { depois, propagados } = await prisma.$transaction(async (tx) => {
+    const aplicar = Boolean(corpo.aplicarEmAndamento && cfg.aplicarNosContainers);
+    const { depois, propagados, containersAtualizados } = await prisma.$transaction(async (tx) => {
       const depoisDeSalvar = cfg.antesDeSalvar ? await cfg.antesDeSalvar(tx, dados, corpo, antes) : null;
       const depois = await repo(tx).update({ where: { id: registroId }, data: dados, include }).catch(traduzirErroUnico);
-      return { depois, propagados: depoisDeSalvar ? await depoisDeSalvar() : 0 };
+      let containersAtualizados = [];
+      if (aplicar) {
+        // Aplica os valores ATUAIS do cadastro (não só os alterados agora): cobre também o caso
+        // de o cadastro ter sido mudado antes sem aplicar.
+        const { fk, campos } = cfg.aplicarNosContainers;
+        const where = { [fk]: registroId, ...EM_ANDAMENTO };
+        containersAtualizados = (await tx.container.findMany({ where, select: { id: true } })).map((c) => c.id);
+        if (containersAtualizados.length) {
+          await tx.container.updateMany({ where, data: Object.fromEntries(campos.map((c) => [c, depois[c]])) });
+        }
+      }
+      return { depois, propagados: depoisDeSalvar ? await depoisDeSalvar() : 0, containersAtualizados };
     });
+    // Prazos mudaram: recalcula alertas desses containers já, sem esperar o verificador.
+    for (const id of containersAtualizados) await sincronizarAlertas(id);
     await registrarLog({
       usuarioEmail: req.usuario.email,
       acao: "ALTERAR",
@@ -181,11 +213,15 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
       descricao:
         `Cadastro alterado: ${cfg.rotulo(depois)}` +
         (propagados ? ` (região aplicada a mais ${propagados} cliente(s) da mesma fábrica)` : "") +
-        (cfg.uso === "containers" ? " (containers já em andamento mantêm os prazos antigos)" : ""),
+        (cfg.aplicarNosContainers
+          ? aplicar
+            ? ` (valores aplicados a ${containersAtualizados.length} container(s) em andamento: ${containersAtualizados.join(", ") || "nenhum"})`
+            : " (containers em andamento mantêm os valores antigos)"
+          : ""),
       dadosAntes: antes,
       dadosDepois: depois,
     });
-    res.json({ ...serializar(depois), propagados });
+    res.json({ ...serializar(depois), propagados, containersAtualizados: containersAtualizados.length });
   }));
 
   cadastrosRouter.delete(`/${rota}/:id`, requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {

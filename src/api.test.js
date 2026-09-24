@@ -293,6 +293,28 @@ test("custo estimado: estadia excedida aparece por dia e no detalhamento; valida
   assert.equal((await agentes.VISUALIZACAO.get("/api/custos")).body.cotacoes.USD, 5.4);
 });
 
+test("editar cadastro: aplicar aos containers em andamento é opcional e nunca mexe em entregues", async () => {
+  const lista = await agentes.SUPERVISOR.get("/api/armadores");
+  assert.equal(lista.body.find((a) => a.id === ids.armador).emAndamento, 1, "só o container novo está em andamento");
+  const ativo = await prisma.container.findFirst({ where: { armadorId: ids.armador, status: { notIn: ["ENTREGUE_PORTO", "CANCELADO"] } } });
+
+  // Sem marcar a opção: container em andamento mantém o valor antigo.
+  let r = await agentes.SUPERVISOR.patch(`/api/armadores/${ids.armador}`).send({ freeTimeDias: 12 });
+  assert.equal(r.body.containersAtualizados, 0);
+  assert.equal((await prisma.container.findUnique({ where: { id: ativo.id } })).freeTimeDias, 7);
+
+  // Marcando: aplica os valores ATUAIS do cadastro (mesmo que já tivessem sido alterados antes).
+  r = await agentes.SUPERVISOR.patch(`/api/armadores/${ids.armador}`).send({ valorDiaria: 200, aplicarEmAndamento: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.containersAtualizados, 1);
+  const depois = await prisma.container.findUnique({ where: { id: ativo.id } });
+  assert.equal(depois.freeTimeDias, 12);
+  assert.equal(Number(depois.valorDiaria), 200);
+  const entregue = await prisma.container.findUnique({ where: { id: ids.reefer } });
+  assert.equal(entregue.freeTimeDias, 7, "entregue preserva o histórico");
+  assert.equal(Number(entregue.valorDiaria), 120.5);
+});
+
 test("cadastro usado não pode ser excluído (só desativado)", async () => {
   assert.equal((await agentes.SUPERVISOR.delete(`/api/armadores/${ids.armador}`)).status, 409);
   const r = await agentes.SUPERVISOR.patch(`/api/armadores/${ids.armador}`).send({ ativo: false });
