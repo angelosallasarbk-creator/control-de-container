@@ -1,0 +1,37 @@
+{
+  "name": "controle-de-container",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:server": "node --watch src/server.js",
+    "dev:web": "npm --prefix web run dev",
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "build": "npm install && npx prisma generate && npx prisma migrate deploy && npm run build:web",
+    "start": "node src/server.js",
+    "test": "node --test --test-concurrency=1 \"src/**/*.test.js\"",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "seed": "node src/seed.js",
+    "criar-admin": "node scripts/criar-admin.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3"
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0",
+    "supertest": "^7.2.2"
+  },
+  "allowScripts": {
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true,
+    "prisma@5.22.0": true
+  }
+}

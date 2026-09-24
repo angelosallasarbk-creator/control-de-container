@@ -1,0 +1,17 @@
+# Postgres só para desenvolvimento local. Porta 5433 para não colidir com o Postgres do
+# projeto Árvore de Decisão (5432).
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: container_user
+      POSTGRES_PASSWORD: container_pass_dev
+      POSTGRES_DB: controle_container
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - controle_container_pg:/var/lib/postgresql/data
+
+volumes:
+  controle_container_pg:

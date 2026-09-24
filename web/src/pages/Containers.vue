@@ -1,0 +1,133 @@
+<script setup>
+import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
+import { api } from "../api.js";
+import { useAuthStore } from "../stores/auth.js";
+import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora } from "../formato.js";
+import NovoContainer from "../components/NovoContainer.vue";
+
+const auth = useAuthStore();
+const router = useRouter();
+const lista = ref([]);
+const grupos = ref([]);
+const carregando = ref(false);
+const erro = ref(null);
+const novoAberto = ref(false);
+const filtro = reactive({ situacao: "ativos", grupoId: "", status: "", busca: "" });
+
+async function carregar() {
+  carregando.value = true;
+  try {
+    lista.value = await api.containers(filtro);
+    erro.value = null;
+  } catch (e) {
+    erro.value = e.message;
+  } finally {
+    carregando.value = false;
+  }
+}
+
+onMounted(async () => {
+  grupos.value = await api.listar("grupos").catch(() => []);
+  carregar();
+});
+
+let atraso = null;
+function buscarComAtraso() {
+  clearTimeout(atraso);
+  atraso = setTimeout(carregar, 350);
+}
+
+function criado(c) {
+  novoAberto.value = false;
+  router.push(`/containers/${c.id}`);
+}
+
+function textoDemurrage(d) {
+  if (!d) return "—";
+  if (d.diasExcedidos > 0) return `+${d.diasExcedidos}d · ${fmtMoeda(d.custo, d.moeda)}`;
+  return d.encerrada ? "no prazo" : `${d.diasRestantes}d livres`;
+}
+</script>
+
+<template>
+  <div class="card">
+    <div class="linha-entre">
+      <div class="filtros">
+        <div class="campo">
+          <label>Buscar</label>
+          <input v-model="filtro.busca" placeholder="Número, booking ou placa" @input="buscarComAtraso" />
+        </div>
+        <div class="campo">
+          <label>Situação</label>
+          <select v-model="filtro.situacao" @change="carregar">
+            <option value="ativos">Ativos</option>
+            <option value="encerrados">Encerrados (entregues/cancelados)</option>
+            <option value="todos">Todos</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label>Cliente / Fábrica</label>
+          <select v-model="filtro.grupoId" @change="carregar">
+            <option value="">Todos</option>
+            <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label>Etapa</label>
+          <select v-model="filtro.status" @change="carregar">
+            <option value="">Todas</option>
+            <option v-for="s in [...FLUXO, 'CANCELADO']" :key="s" :value="s">{{ ROTULO_STATUS[s] }}</option>
+          </select>
+        </div>
+      </div>
+      <button v-if="auth.pode('operar')" class="primario" @click="novoAberto = true">+ Novo container</button>
+    </div>
+  </div>
+
+  <div v-if="erro" class="erro">{{ erro }}</div>
+
+  <div class="card tabela-wrap" style="padding: 0">
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Container</th>
+          <th>Tipo</th>
+          <th>Cliente / Fábrica</th>
+          <th>Armador</th>
+          <th>Etapa</th>
+          <th>Estadia</th>
+          <th>Demurrage</th>
+          <th>Temperatura</th>
+          <th>Deadline</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="c in lista" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
+          <td><span class="ponto" :class="c.semaforo" :title="c.semaforo"></span></td>
+          <td class="mono negrito">{{ c.numero }}<div v-if="c.booking" class="mudo pequeno">BK {{ c.booking }}</div></td>
+          <td>{{ ROTULO_TIPO[c.tipo] }}</td>
+          <td>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</td>
+          <td>{{ c.armador.nome }}</td>
+          <td><span class="chip azul">{{ ROTULO_STATUS[c.status] }}</span></td>
+          <td :class="c.situacao.estadia && `txt-${c.situacao.estadia.situacao}`">
+            <template v-if="c.situacao.estadia">{{ fmtHoras(c.situacao.estadia.horasDecorridas) }} / {{ c.situacao.estadia.metaHoras }}h</template>
+            <span v-else class="mudo">—</span>
+          </td>
+          <td :class="c.situacao.demurrage && `txt-${c.situacao.demurrage.situacao}`">{{ textoDemurrage(c.situacao.demurrage) }}</td>
+          <td>
+            <template v-if="c.situacao.temperatura?.ultima">
+              <span :class="c.situacao.temperatura.foraDaFaixa ? 'txt-VENCIDO' : ''">{{ fmtTemp(c.situacao.temperatura.ultima.temperatura) }}</span>
+            </template>
+            <span v-else class="mudo">{{ c.reefer ? "sem leitura" : "—" }}</span>
+          </td>
+          <td :class="c.situacao.deadline && `txt-${c.situacao.deadline.situacao}`">{{ fmtDataHora(c.deadline) }}</td>
+        </tr>
+        <tr v-if="!lista.length && !carregando"><td colspan="10" class="vazio">Nenhum container encontrado.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <NovoContainer v-if="novoAberto" @fechar="novoAberto = false" @criado="criado" />
+</template>

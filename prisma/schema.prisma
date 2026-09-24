@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Perfil {
+  ADMIN
+  SUPERVISOR
+  OPERADOR
+  VISUALIZACAO
+}
+
+// Ciclo de exportação: retira vazio no porto → ova na fábrica → entrega cheio no terminal.
+enum StatusContainer {
+  PROGRAMADO
+  COLETADO        // retirado no porto: inicia a contagem de demurrage
+  NA_FABRICA      // chegou na fábrica: inicia a contagem de estadia
+  EM_OPERACAO     // em ovação (carregamento) na doca
+  LIBERADO        // ovado e lacrado, aguardando saída
+  SAIU_FABRICA    // encerra a estadia
+  ENTREGUE_PORTO  // entregue no terminal: encerra a demurrage
+  CANCELADO
+}
+
+enum TipoContainer {
+  DRY_20
+  DRY_40
+  HC_40
+  REEFER_20
+  REEFER_40
+}
+
+enum TipoAlerta {
+  ESTADIA
+  DEMURRAGE
+  DEADLINE
+  TEMPERATURA
+  SEM_LEITURA
+}
+
+enum NivelAlerta {
+  ATENCAO
+  CRITICO
+}
+
+enum OrigemLeitura {
+  MANUAL
+  INTEGRACAO
+}
+
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  nome      String
+  senhaHash String
+  perfil    Perfil   @default(VISUALIZACAO)
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+}
+
+// Grupo de operação = Cliente / Fábrica. Cada grupo tem sua meta de estadia.
+model GrupoOperacao {
+  id                   Int         @id @default(autoincrement())
+  cliente              String
+  fabrica              String
+  metaEstadiaHoras     Int
+  alertaEstadiaHoras   Int         @default(6) // avisa quando faltarem X horas para vencer a meta
+  custoEstadiaPorHora  Decimal?    @db.Decimal(12, 2)
+  ativo                Boolean     @default(true)
+  criadoEm             DateTime    @default(now())
+  containers           Container[]
+
+  @@unique([cliente, fabrica])
+}
+
+// Armador = dono do container; define o free time e o valor da diária de demurrage.
+model Armador {
+  id                   Int         @id @default(autoincrement())
+  nome                 String      @unique
+  freeTimeDias         Int
+  valorDiaria          Decimal     @db.Decimal(12, 2)
+  moeda                String      @default("USD")
+  alertaDemurrageDias  Int         @default(2) // avisa quando faltarem X dias para vencer o free time
+  ativo                Boolean     @default(true)
+  criadoEm             DateTime    @default(now())
+  containers           Container[]
+}
+
+// Produto = faixa de temperatura padrão para reefer.
+model Produto {
+  id                 Int         @id @default(autoincrement())
+  nome               String      @unique
+  setpoint           Decimal     @db.Decimal(5, 1)
+  tempMin            Decimal     @db.Decimal(5, 1)
+  tempMax            Decimal     @db.Decimal(5, 1)
+  toleranciaMinutos  Int         @default(30) // fora da faixa por mais que isso vira CRÍTICO
+  ativo              Boolean     @default(true)
+  criadoEm           DateTime    @default(now())
+  containers         Container[]
+}
+
+// Uma "passagem" do container pelo processo (coleta → entrega). O mesmo número físico pode
+// voltar em outra exportação, por isso o número não é único; só pode haver uma passagem ativa.
+model Container {
+  id            Int             @id @default(autoincrement())
+  numero        String
+  tipo          TipoContainer
+  status        StatusContainer @default(PROGRAMADO)
+  grupoId       Int
+  grupo         GrupoOperacao   @relation(fields: [grupoId], references: [id])
+  armadorId     Int
+  armador       Armador         @relation(fields: [armadorId], references: [id])
+  produtoId     Int?
+  produto       Produto?        @relation(fields: [produtoId], references: [id])
+  booking       String?
+  lacre         String?
+  navio         String?
+  deadline      DateTime?       // cut-off de entrega no terminal
+  placa         String?
+  motorista     String?
+  posicaoPatio  String?
+  observacao    String?
+
+  // Prazos copiados dos cadastros no momento da criação: mudar o contrato do armador ou a meta
+  // do grupo depois não altera retroativamente containers já em andamento.
+  metaEstadiaHoras    Int
+  alertaEstadiaHoras  Int
+  custoEstadiaPorHora Decimal? @db.Decimal(12, 2)
+  freeTimeDias        Int
+  valorDiaria         Decimal  @db.Decimal(12, 2)
+  moeda               String
+  alertaDemurrageDias Int
+  setpoint            Decimal? @db.Decimal(5, 1)
+  tempMin             Decimal? @db.Decimal(5, 1)
+  tempMax             Decimal? @db.Decimal(5, 1)
+  toleranciaMinutos   Int?
+
+  coletadoEm        DateTime?
+  chegadaFabricaEm  DateTime?
+  inicioOperacaoEm  DateTime?
+  liberadoEm        DateTime?
+  saidaFabricaEm    DateTime?
+  entreguePortoEm   DateTime?
+  canceladoEm       DateTime?
+
+  criadoEm      DateTime @default(now())
+  criadoPor     String
+  atualizadoEm  DateTime @updatedAt
+
+  eventos   EventoContainer[]
+  leituras  LeituraTemperatura[]
+  alertas   Alerta[]
+
+  @@index([numero])
+  @@index([status])
+  @@index([grupoId])
+}
+
+model EventoContainer {
+  id           Int              @id @default(autoincrement())
+  containerId  Int
+  container    Container        @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  statusDe     StatusContainer?
+  statusPara   StatusContainer
+  ocorridoEm   DateTime         // quando aconteceu de fato (pode ser informado retroativamente)
+  registradoEm DateTime         @default(now())
+  usuarioEmail String
+  observacao   String?
+
+  @@index([containerId])
+}
+
+model LeituraTemperatura {
+  id           Int           @id @default(autoincrement())
+  containerId  Int
+  container    Container     @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  temperatura  Decimal       @db.Decimal(5, 1)
+  lidaEm       DateTime
+  origem       OrigemLeitura
+  fonte        String?       // e-mail do operador ou nome do token de integração
+  registradaEm DateTime      @default(now())
+
+  // Reenvio da mesma leitura (mesmo container e horário) não duplica.
+  @@unique([containerId, lidaEm])
+  @@index([containerId, lidaEm])
+}
+
+model Alerta {
+  id              Int         @id @default(autoincrement())
+  containerId     Int
+  container       Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  tipo            TipoAlerta
+  nivel           NivelAlerta
+  mensagem        String
+  abertoEm        DateTime    @default(now())
+  encerradoEm     DateTime?   // a condição deixou de existir
+  reconhecidoEm   DateTime?
+  reconhecidoPor  String?
+  acaoTomada      String?
+  // Preenchida só enquanto o alerta está aberto ("containerId:tipo:nivel"). O índice único
+  // impede abrir o mesmo alerta duas vezes (idempotência do verificador).
+  chaveAberta     String?     @unique
+
+  @@index([containerId])
+  @@index([encerradoEm])
+}
+
+model TokenIntegracao {
+  id          Int       @id @default(autoincrement())
+  nome        String
+  prefixo     String    // primeiros caracteres, só para identificar na tela
+  tokenHash   String    @unique
+  ativo       Boolean   @default(true)
+  criadoEm    DateTime  @default(now())
+  criadoPor   String
+  ultimoUsoEm DateTime?
+}
+
+model Configuracao {
+  chave String @id
+  valor String
+}
+
+model LogAuditoria {
+  id           Int      @id @default(autoincrement())
+  usuarioEmail String
+  acao         String
+  entidade     String
+  entidadeId   String?
+  descricao    String
+  dadosAntes   String?
+  dadosDepois  String?
+  criadoEm     DateTime @default(now())
+
+  @@index([criadoEm])
+}

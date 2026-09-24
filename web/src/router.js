@@ -1,0 +1,21 @@
+import { createRouter, createWebHistory } from "vue-router";
+
+const routes = [
+  { path: "/", name: "painel", component: () => import("./pages/Painel.vue"), meta: { titulo: "Pátio" } },
+  { path: "/containers", name: "containers", component: () => import("./pages/Containers.vue"), meta: { titulo: "Containers" } },
+  { path: "/containers/:id", name: "ficha", component: () => import("./pages/FichaContainer.vue"), props: true, meta: { titulo: "Container" } },
+  { path: "/alertas", name: "alertas", component: () => import("./pages/Alertas.vue"), meta: { titulo: "Alertas" } },
+  { path: "/cadastros/:recurso", name: "cadastros", component: () => import("./pages/Cadastros.vue"), props: true, meta: { titulo: "Cadastros" } },
+  { path: "/usuarios", name: "usuarios", component: () => import("./pages/Usuarios.vue"), meta: { titulo: "Usuários", acao: "administrar" } },
+  { path: "/integracao", name: "integracao", component: () => import("./pages/Integracao.vue"), meta: { titulo: "Integração", acao: "administrar" } },
+  { path: "/configuracoes", name: "configuracoes", component: () => import("./pages/Configuracoes.vue"), meta: { titulo: "Configurações", acao: "cadastros" } },
+  { path: "/:pathMatch(.*)*", redirect: "/" },
+];
+
+const router = createRouter({ history: createWebHistory(), routes });
+
+router.afterEach((to) => {
+  document.title = to.meta.titulo ? `${to.meta.titulo} · Controle de Container` : "Controle de Container";
+});
+
+export default router;
