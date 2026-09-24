@@ -62,11 +62,24 @@ model Usuario {
   criadoEm  DateTime @default(now())
 }
 
+// Região agrupa fábricas; cada região vira uma aba no Pátio.
+model Regiao {
+  id        Int             @id @default(autoincrement())
+  nome      String          @unique
+  ativo     Boolean         @default(true)
+  criadoEm  DateTime        @default(now())
+  grupos    GrupoOperacao[]
+}
+
 // Grupo de operação = Cliente / Fábrica. Cada grupo tem sua meta de estadia.
+// A região é da fábrica: todos os grupos da mesma fábrica ficam na mesma região
+// (garantido na validação do cadastro, ver routes/cadastros.js).
 model GrupoOperacao {
   id                   Int         @id @default(autoincrement())
   cliente              String
   fabrica              String
+  regiaoId             Int?
+  regiao               Regiao?     @relation(fields: [regiaoId], references: [id])
   metaEstadiaHoras     Int
   alertaEstadiaHoras   Int         @default(6) // avisa quando faltarem X horas para vencer a meta
   custoEstadiaPorHora  Decimal?    @db.Decimal(12, 2)
@@ -75,6 +88,7 @@ model GrupoOperacao {
   containers           Container[]
 
   @@unique([cliente, fabrica])
+  @@index([regiaoId])
 }
 
 // Armador = dono do container; define o free time e o valor da diária de demurrage.

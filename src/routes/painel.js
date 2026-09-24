@@ -11,15 +11,20 @@ const somarPorMoeda = (acc, moeda, valor) => {
   if (valor > 0) acc[moeda] = Math.round(((acc[moeda] ?? 0) + valor) * 100) / 100;
 };
 
-// Visão do pátio: containers ativos agrupados por Cliente / Fábrica, com semáforo e custos.
+// Visão do pátio: containers ativos agrupados por Cliente / Fábrica (com a região da fábrica),
+// com semáforo e custos. A separação em abas por região é feita na tela.
 painelRouter.get("/", asyncHandler(async (_req, res) => {
   const [containers, grupos, alertasAbertos, config] = await Promise.all([
     prisma.container.findMany({
       where: { status: { notIn: STATUS_ENCERRADOS } },
-      include: { grupo: true, armador: true, produto: true, leituras: { orderBy: { lidaEm: "desc" }, take: 50 } },
+      include: { grupo: { include: { regiao: true } }, armador: true, produto: true, leituras: { orderBy: { lidaEm: "desc" }, take: 50 } },
       orderBy: [{ chegadaFabricaEm: "asc" }, { criadoEm: "asc" }],
     }),
-    prisma.grupoOperacao.findMany({ where: { ativo: true }, orderBy: [{ cliente: "asc" }, { fabrica: "asc" }] }),
+    prisma.grupoOperacao.findMany({
+      where: { ativo: true },
+      include: { regiao: true },
+      orderBy: [{ fabrica: "asc" }, { cliente: "asc" }],
+    }),
     prisma.alerta.groupBy({ by: ["containerId", "nivel"], where: { chaveAberta: { not: null } }, _count: true }),
     lerConfiguracao(),
   ]);
@@ -32,22 +37,21 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
   }
 
   const agora = new Date();
-  const porGrupo = new Map(
-    grupos.map((g) => [
-      g.id,
-      {
-        id: g.id,
-        cliente: g.cliente,
-        fabrica: g.fabrica,
-        metaEstadiaHoras: g.metaEstadiaHoras,
-        porStatus: {},
-        semaforo: { VERDE: 0, AMARELO: 0, VERMELHO: 0 },
-        custoDemurrage: {},
-        custoEstadia: 0,
-        containers: [],
-      },
-    ])
-  );
+  const novoGrupo = (g) => ({
+    id: g.id,
+    cliente: g.cliente,
+    fabrica: g.fabrica,
+    regiao: g.regiao ? { id: g.regiao.id, nome: g.regiao.nome } : null,
+    metaEstadiaHoras: g.metaEstadiaHoras,
+    porStatus: {},
+    semaforo: { VERDE: 0, AMARELO: 0, VERMELHO: 0 },
+    alertasCriticos: 0,
+    alertasAtencao: 0,
+    custoDemurrage: {},
+    custoEstadia: 0,
+    containers: [],
+  });
+  const porGrupo = new Map(grupos.map((g) => [g.id, novoGrupo(g)]));
   const totais = {
     ativos: containers.length,
     porStatus: {},
@@ -61,12 +65,7 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
   for (const bruto of containers) {
     const c = montarContainer(bruto, [...bruto.leituras].reverse(), agora, config);
     // Grupo desativado com container ainda ativo continua aparecendo no painel.
-    if (!porGrupo.has(c.grupoId)) {
-      porGrupo.set(c.grupoId, {
-        id: c.grupoId, cliente: c.grupo.cliente, fabrica: c.grupo.fabrica, metaEstadiaHoras: c.grupo.metaEstadiaHoras,
-        porStatus: {}, semaforo: { VERDE: 0, AMARELO: 0, VERMELHO: 0 }, custoDemurrage: {}, custoEstadia: 0, containers: [],
-      });
-    }
+    if (!porGrupo.has(c.grupoId)) porGrupo.set(c.grupoId, novoGrupo(c.grupo));
     const g = porGrupo.get(c.grupoId);
     const alertas = alertasPorContainer.get(c.id) ?? { ATENCAO: 0, CRITICO: 0 };
     const { estadia, demurrage, temperatura } = c.situacao;
@@ -76,9 +75,9 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
       alvo.semaforo[c.semaforo]++;
       if (demurrage) somarPorMoeda(alvo.custoDemurrage, demurrage.moeda, demurrage.custo);
       if (estadia?.custo) alvo.custoEstadia = Math.round((alvo.custoEstadia + estadia.custo) * 100) / 100;
+      alvo.alertasCriticos += alertas.CRITICO;
+      alvo.alertasAtencao += alertas.ATENCAO;
     }
-    totais.alertasCriticos += alertas.CRITICO;
-    totais.alertasAtencao += alertas.ATENCAO;
 
     g.containers.push({
       id: c.id,
@@ -103,5 +102,7 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
     });
   }
 
-  res.json({ geradoEm: agora, totais, grupos: [...porGrupo.values()] });
+  // Regiões ativas viram abas do Pátio, mesmo sem container no momento.
+  const regioes = await prisma.regiao.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } });
+  res.json({ geradoEm: agora, totais, regioes, grupos: [...porGrupo.values()] });
 }));

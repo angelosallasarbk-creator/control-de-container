@@ -125,6 +125,13 @@ tr.clicavel { cursor: pointer; }
 .kpi.vermelho .valor { color: var(--vermelho); }
 .kpi.amarelo .valor { color: var(--amarelo); }
 
+/* Abas de região (Pátio) */
+.abas { display: flex; gap: 4px; border-bottom: 2px solid var(--borda); overflow-x: auto; scrollbar-width: thin; }
+.aba { border: none; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0; background: none; padding: 10px 16px; margin-bottom: -2px; color: var(--texto-2); font-weight: 600; flex-shrink: 0; }
+.aba:hover:not(:disabled) { background: var(--superficie); color: var(--texto); }
+.aba.ativa { color: var(--primaria); border-bottom-color: var(--primaria); background: var(--superficie); }
+.aba-contagem { font-weight: 400; color: var(--texto-2); font-size: 12px; }
+
 /* Pátio */
 .grupo-cabecalho { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .grupo-titulo { font-size: 16px; font-weight: 700; }

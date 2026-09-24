@@ -30,9 +30,11 @@ for (const [email, nome, perfil] of [
   await prisma.usuario.upsert({ where: { email }, create: { email, nome, perfil, senhaHash }, update: {} });
 }
 
-const g1 = await prisma.grupoOperacao.create({ data: { cliente: "Cliente Alfa", fabrica: "Fábrica 1", metaEstadiaHoras: 24, alertaEstadiaHoras: 6 } });
-const g2 = await prisma.grupoOperacao.create({ data: { cliente: "Cliente Beta", fabrica: "Fábrica 1", metaEstadiaHoras: 48, alertaEstadiaHoras: 8, custoEstadiaPorHora: 150 } });
-const g3 = await prisma.grupoOperacao.create({ data: { cliente: "Cliente Gama", fabrica: "Fábrica 2", metaEstadiaHoras: 36, alertaEstadiaHoras: 6 } });
+const sul = await prisma.regiao.create({ data: { nome: "Região Sul" } });
+const sudeste = await prisma.regiao.create({ data: { nome: "Região Sudeste" } });
+const g1 = await prisma.grupoOperacao.create({ data: { cliente: "Cliente Alfa", fabrica: "Fábrica 1", regiaoId: sul.id, metaEstadiaHoras: 24, alertaEstadiaHoras: 6 } });
+const g2 = await prisma.grupoOperacao.create({ data: { cliente: "Cliente Beta", fabrica: "Fábrica 1", regiaoId: sul.id, metaEstadiaHoras: 48, alertaEstadiaHoras: 8, custoEstadiaPorHora: 150 } });
+const g3 = await prisma.grupoOperacao.create({ data: { cliente: "Cliente Gama", fabrica: "Fábrica 2", regiaoId: sudeste.id, metaEstadiaHoras: 36, alertaEstadiaHoras: 6 } });
 
 const a1 = await prisma.armador.create({ data: { nome: "Armador Exemplo A", freeTimeDias: 7, valorDiaria: 120, moeda: "USD", alertaDemurrageDias: 2 } });
 const a2 = await prisma.armador.create({ data: { nome: "Armador Exemplo B", freeTimeDias: 10, valorDiaria: 95, moeda: "USD", alertaDemurrageDias: 3 } });

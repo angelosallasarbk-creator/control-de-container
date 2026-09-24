@@ -26,14 +26,15 @@ Cada etapa registra data/hora real (pode ser retroativa, nunca anterior à etapa
 - **Demurrage conta por dia de calendário (horário de Brasília)**: o dia da coleta é o dia 1; cada dia iniciado após o free time é uma diária, inclusive o dia da entrega. ⚠ Confirme essa regra com o contrato de cada armador. Alguns contam a partir da descarga ou em períodos de 24 h.
 - **Prazos são copiados** do cadastro quando o container é criado. Mudar o armador/grupo depois não afeta containers em andamento. Supervisor pode ajustar os prazos de um container específico (ex.: free time negociado).
 - **Alertas** são abertos e encerrados automaticamente por um verificador (a cada 5 min e logo após qualquer mudança). O mesmo alerta nunca é aberto duas vezes (índice único). Se o alerta passa de Atenção para Crítico, abre-se um novo e o anterior é encerrado. Alguém pode **reconhecer** o alerta, com a ação tomada registrada, mas ele só fecha quando a condição acaba.
+- **Região é da fábrica**: cada Cliente/Fábrica pode ter uma região. Escolher a região de um cliente aplica a mesma região a todos os clientes da mesma fábrica. Um cliente novo de fábrica já cadastrada, criado sem região, herda a região da fábrica. Região com fábricas vinculadas não pode ser excluída, só desativada.
 - Número do container validado pelo padrão **ISO 6346** (dígito verificador). Se o dígito não conferir, o sistema pede confirmação. Só pode existir **uma passagem ativa** por número.
 
 ## Telas
 
-- **Pátio**: indicadores, containers por Cliente/Fábrica divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.
+- **Pátio**: **uma aba por região** ("Todas" + regiões + "Sem região" se houver fábrica sem região), com contagem de containers e de críticos em cada aba. Os indicadores do topo são os da aba escolhida, e a aba fica lembrada. Dentro da aba, containers por Cliente/Fábrica divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.
 - **Containers**: lista com filtros e cadastro. **Ficha**: linha do tempo, prazos, alertas, leitura manual de temperatura com gráfico e histórico.
 - **Alertas**: abertos e histórico. Faixa vermelha no topo + sino + bipe quando surge alerta crítico não reconhecido (consulta a cada 30 s).
-- **Cadastros**: Cliente/Fábrica, Armadores, Produtos. Cadastro já usado não pode ser excluído, só desativado.
+- **Cadastros**: Regiões, Cliente/Fábrica, Armadores, Produtos. Cadastro já usado não pode ser excluído, só desativado.
 - **Usuários**, **Integração** (tokens), **Configurações e log** de auditoria.
 
 ### Perfis

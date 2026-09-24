@@ -82,6 +82,39 @@ test("cadastros: supervisor cria; operador não pode", async () => {
   assert.equal(duplicado.status, 409);
 });
 
+test("regiões: a região é da fábrica — herda na criação, propaga na alteração, não exclui em uso", async () => {
+  assert.equal((await agentes.OPERADOR.post("/api/regioes").send({ nome: "Sul" })).status, 403);
+  const sul = await agentes.SUPERVISOR.post("/api/regioes").send({ nome: "Sul" });
+  assert.equal(sul.status, 201);
+  const norte = await agentes.SUPERVISOR.post("/api/regioes").send({ nome: "Norte" });
+  assert.equal((await agentes.SUPERVISOR.post("/api/regioes").send({ nome: "Sul" })).status, 409, "nome duplicado");
+
+  // Segundo cliente da mesma "Fábrica T", ainda sem região.
+  const g2 = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Cliente U", fabrica: "Fábrica T", metaEstadiaHoras: 12 });
+  assert.equal(g2.body.regiaoId, null);
+
+  // Definir a região em um cliente aplica a todos os clientes da mesma fábrica.
+  const alterado = await agentes.SUPERVISOR.patch(`/api/grupos/${ids.grupo}`).send({ regiaoId: sul.body.id });
+  assert.equal(alterado.status, 200);
+  assert.equal(alterado.body.regiao.nome, "Sul");
+  assert.equal(alterado.body.propagados, 1);
+  assert.equal((await prisma.grupoOperacao.findUnique({ where: { id: g2.body.id } })).regiaoId, sul.body.id);
+
+  // Novo cliente da mesma fábrica (mesmo com maiúsculas diferentes) herda a região.
+  const g3 = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Cliente V", fabrica: "fábrica t", metaEstadiaHoras: 12 });
+  assert.equal(g3.body.regiaoId, sul.body.id);
+
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/grupos/${ids.grupo}`).send({ regiaoId: 999999 })).status, 400, "região inexistente");
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/regioes/${sul.body.id}`)).status, 409, "região com fábricas");
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/regioes/${norte.body.id}`)).status, 204);
+
+  const regioes = await agentes.VISUALIZACAO.get("/api/regioes");
+  assert.equal(regioes.body.find((r) => r.nome === "Sul").emUso, 3);
+  const painel = await agentes.VISUALIZACAO.get("/api/painel");
+  assert.deepEqual(painel.body.regioes.map((r) => r.nome), ["Sul"]);
+  assert.equal(painel.body.grupos.find((g) => g.id === ids.grupo).regiao.nome, "Sul");
+});
+
 test("container: valida número, dígito verificador, reefer sem produto e duplicidade", async () => {
   const base = { tipo: "REEFER_40", grupoId: ids.grupo, armadorId: ids.armador, produtoId: ids.produto };
   assert.equal((await agentes.VISUALIZACAO.post("/api/containers").send({ ...base, numero: "CSQU3054383" })).status, 403);

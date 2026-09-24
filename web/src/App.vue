@@ -75,6 +75,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           <span v-if="resumo?.total" class="chip" :class="resumo.criticos ? 'vermelho' : 'amarelo'">{{ resumo.total }}</span>
         </router-link>
         <div class="lateral-secao">Cadastros</div>
+        <router-link to="/cadastros/regioes">Regiões</router-link>
         <router-link to="/cadastros/grupos">Cliente / Fábrica</router-link>
         <router-link to="/cadastros/armadores">Armadores</router-link>
         <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
@@ -111,7 +112,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         </router-link>
       </header>
       <main class="pagina">
-        <router-view :key="route.fullPath" @alertas-mudaram="atualizarAlertas" />
+        <!-- key = path (não fullPath): trocar só a query, como a aba de região do Pátio, não recria a tela. -->
+        <router-view :key="route.path" @alertas-mudaram="atualizarAlertas" />
       </main>
     </div>
   </div>

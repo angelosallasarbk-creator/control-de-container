@@ -4,17 +4,28 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { fmtMoeda, fmtTemp } from "../formato.js";
 
-// Uma tela para os três cadastros de apoio; a configuração abaixo define colunas e campos.
+// Uma tela para os cadastros de apoio; a configuração abaixo define colunas e campos.
+// Campo com `opcoesDe` é um select alimentado por outro cadastro (ex.: Região em Cliente/Fábrica).
 const props = defineProps({ recurso: { type: String, required: true } });
 const auth = useAuthStore();
 
 const CONFIG = {
+  regioes: {
+    titulo: "Regiões",
+    ajuda: "Cada região ativa vira uma aba no Pátio. Vincule as fábricas à região em Cliente / Fábrica.",
+    rotuloUso: "Clientes/Fábricas",
+    colunas: [{ rotulo: "Região", valor: (r) => r.nome }],
+    campos: [{ chave: "nome", rotulo: "Nome da região", tipo: "text", obrigatorio: true }],
+  },
   grupos: {
     titulo: "Cliente / Fábrica",
-    ajuda: "Cada combinação Cliente / Fábrica é um grupo de operação no pátio, com sua própria meta de estadia.",
+    ajuda:
+      "Cada combinação Cliente / Fábrica é um grupo de operação no pátio, com sua própria meta de estadia. " +
+      "A região é da fábrica: ao escolher a região de um cliente, ela vale para todos os clientes daquela fábrica.",
     colunas: [
       { rotulo: "Cliente", valor: (r) => r.cliente },
       { rotulo: "Fábrica", valor: (r) => r.fabrica },
+      { rotulo: "Região", valor: (r) => r.regiao?.nome ?? "— sem região —" },
       { rotulo: "Meta de estadia", valor: (r) => `${r.metaEstadiaHoras}h` },
       { rotulo: "Alerta antes", valor: (r) => `${r.alertaEstadiaHoras}h` },
       { rotulo: "Custo/h excedida", valor: (r) => (r.custoEstadiaPorHora ? fmtMoeda(r.custoEstadiaPorHora) : "—") },
@@ -22,6 +33,10 @@ const CONFIG = {
     campos: [
       { chave: "cliente", rotulo: "Cliente", tipo: "text", obrigatorio: true },
       { chave: "fabrica", rotulo: "Fábrica", tipo: "text", obrigatorio: true },
+      {
+        chave: "regiaoId", rotulo: "Região", tipo: "select", opcoesDe: "regioes", vazio: "— sem região —",
+        dica: "Deixe vazio num cliente novo de fábrica já cadastrada para herdar a região dela.",
+      },
       { chave: "metaEstadiaHoras", rotulo: "Meta de estadia (horas)", tipo: "number", obrigatorio: true, min: 1 },
       { chave: "alertaEstadiaHoras", rotulo: "Avisar quando faltarem (horas)", tipo: "number", obrigatorio: true, min: 0, padrao: 6 },
       { chave: "custoEstadiaPorHora", rotulo: "Custo por hora excedida (R$, opcional)", tipo: "number", step: "0.01", min: 0 },
@@ -70,6 +85,9 @@ const editando = ref(null); // null | {} (novo) | registro
 const form = ref({});
 const enviando = ref(false);
 
+const aviso = ref(null);
+const opcoesDinamicas = ref({}); // { regioes: [{ valor, rotulo }] }
+
 async function carregar() {
   try {
     lista.value = await api.listar(props.recurso);
@@ -78,12 +96,30 @@ async function carregar() {
     erro.value = e.message;
   }
 }
-onMounted(carregar);
+
+async function carregarOpcoes() {
+  for (const campo of cfg.value?.campos ?? []) {
+    if (!campo.opcoesDe) continue;
+    const registros = await api.listar(campo.opcoesDe).catch(() => []);
+    opcoesDinamicas.value[campo.opcoesDe] = registros.map((r) => ({ valor: r.id, rotulo: r.ativo ? r.nome : `${r.nome} (inativa)` }));
+  }
+}
+
+onMounted(() => {
+  carregar();
+  carregarOpcoes();
+});
+
+function opcoesDoCampo(c) {
+  const lista = c.opcoesDe ? opcoesDinamicas.value[c.opcoesDe] ?? [] : (c.opcoes ?? []).map((o) => ({ valor: o, rotulo: o }));
+  return c.vazio ? [{ valor: "", rotulo: c.vazio }, ...lista] : lista;
+}
 
 function abrir(registro) {
   editando.value = registro ?? {};
   form.value = Object.fromEntries(cfg.value.campos.map((c) => [c.chave, registro ? registro[c.chave] ?? "" : c.padrao ?? ""]));
   erro.value = null;
+  aviso.value = null;
 }
 
 async function salvar() {
@@ -91,9 +127,20 @@ async function salvar() {
   erro.value = null;
   try {
     const dados = { ...form.value };
-    for (const c of cfg.value.campos) if (c.tipo === "number" && dados[c.chave] === "") dados[c.chave] = null;
-    if (editando.value.id) await api.atualizar(props.recurso, editando.value.id, dados);
-    else await api.criar(props.recurso, dados);
+    for (const c of cfg.value.campos) {
+      if (c.tipo === "number" && dados[c.chave] === "") dados[c.chave] = null;
+      if (c.opcoesDe) {
+        const original = editando.value.id ? editando.value[c.chave] ?? "" : "";
+        // Só envia o vínculo se foi escolhido/alterado: em branco num cadastro novo significa
+        // "herdar" (ex.: região da fábrica), não "remover".
+        if (String(dados[c.chave]) === String(original)) delete dados[c.chave];
+        else dados[c.chave] = dados[c.chave] === "" ? null : Number(dados[c.chave]);
+      }
+    }
+    const salvo = editando.value.id
+      ? await api.atualizar(props.recurso, editando.value.id, dados)
+      : await api.criar(props.recurso, dados);
+    if (salvo?.propagados) aviso.value = `Região aplicada também a ${salvo.propagados} outro(s) cliente(s) da fábrica ${salvo.fabrica}.`;
     editando.value = null;
     await carregar();
   } catch (e) {
@@ -113,7 +160,7 @@ async function alternarAtivo(r) {
 }
 
 async function excluir(r) {
-  if (!confirm("Excluir este cadastro? Só é possível se ele nunca foi usado em um container.")) return;
+  if (!confirm("Excluir este cadastro? Só é possível se ele nunca foi usado.")) return;
   try {
     await api.excluir(props.recurso, r.id);
     await carregar();
@@ -129,18 +176,21 @@ async function excluir(r) {
     <div class="card linha-entre">
       <div>
         <h2 style="margin: 0">{{ cfg.titulo }}</h2>
-        <div class="mudo pequeno" style="margin-top: 4px">{{ cfg.ajuda }} Alterações valem para containers novos; os já cadastrados mantêm os prazos da época.</div>
+        <div class="mudo pequeno" style="margin-top: 4px">
+          {{ cfg.ajuda }}<template v-if="!cfg.rotuloUso"> Alterações valem para containers novos; os já cadastrados mantêm os prazos da época.</template>
+        </div>
       </div>
       <button v-if="auth.pode('cadastros')" class="primario" @click="abrir(null)">+ Novo</button>
     </div>
     <div v-if="erro && !editando" class="erro">{{ erro }}</div>
+    <div v-if="aviso" class="sucesso">{{ aviso }}</div>
 
     <div class="card tabela-wrap" style="padding: 0">
       <table>
         <thead>
           <tr>
             <th v-for="col in cfg.colunas" :key="col.rotulo">{{ col.rotulo }}</th>
-            <th>Containers</th>
+            <th>{{ cfg.rotuloUso ?? "Containers" }}</th>
             <th>Situação</th>
             <th v-if="auth.pode('cadastros')"></th>
           </tr>
@@ -148,12 +198,12 @@ async function excluir(r) {
         <tbody>
           <tr v-for="r in lista" :key="r.id" :style="{ opacity: r.ativo ? 1 : 0.55 }">
             <td v-for="col in cfg.colunas" :key="col.rotulo">{{ col.valor(r) }}</td>
-            <td>{{ r._count.containers }}</td>
+            <td>{{ r.emUso }}</td>
             <td><span class="chip" :class="r.ativo ? 'verde' : ''">{{ r.ativo ? "Ativo" : "Inativo" }}</span></td>
             <td v-if="auth.pode('cadastros')" style="text-align: right; white-space: nowrap">
               <button class="pequeno" @click="abrir(r)">Editar</button>
               <button class="pequeno" @click="alternarAtivo(r)">{{ r.ativo ? "Desativar" : "Ativar" }}</button>
-              <button v-if="!r._count.containers" class="pequeno perigo" @click="excluir(r)">Excluir</button>
+              <button v-if="!r.emUso" class="pequeno perigo" @click="excluir(r)">Excluir</button>
             </td>
           </tr>
           <tr v-if="!lista.length"><td :colspan="cfg.colunas.length + 3" class="vazio">Nenhum cadastro ainda.</td></tr>
@@ -168,9 +218,13 @@ async function excluir(r) {
         <div v-for="c in cfg.campos" :key="c.chave" class="campo">
           <label>{{ c.rotulo }}{{ c.obrigatorio ? " *" : "" }}</label>
           <select v-if="c.tipo === 'select'" v-model="form[c.chave]">
-            <option v-for="o in c.opcoes" :key="o" :value="o">{{ o }}</option>
+            <option v-for="o in opcoesDoCampo(c)" :key="o.valor" :value="o.valor">{{ o.rotulo }}</option>
           </select>
           <input v-else v-model="form[c.chave]" :type="c.tipo" :required="c.obrigatorio" :min="c.min" :step="c.step" />
+          <span v-if="c.dica" class="dica">{{ c.dica }}</span>
+          <span v-if="c.opcoesDe === 'regioes' && !opcoesDinamicas.regioes?.length" class="dica">
+            Nenhuma região cadastrada ainda — <router-link to="/cadastros/regioes">cadastrar regiões</router-link>.
+          </span>
         </div>
         <div class="modal-acoes">
           <button type="button" @click="editando = null">Cancelar</button>
