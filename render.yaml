@@ -12,3 +12,11 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      # Primeiro administrador: criado na subida só se o banco não tiver usuários.
+      # Depois do primeiro login, troque a senha pela tela e remova estas variáveis.
+      - key: ADMIN_INICIAL_EMAIL
+        sync: false
+      - key: ADMIN_INICIAL_NOME
+        sync: false
+      - key: ADMIN_INICIAL_SENHA
+        sync: false

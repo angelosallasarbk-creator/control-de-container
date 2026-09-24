@@ -108,7 +108,7 @@ São 33 testes: regras de prazo/temperatura (puras) e API completa contra o banc
    - Build: `npm run build`, que instala, gera o Prisma, aplica as migrations (`migrate deploy`) e compila o front
    - Start: `npm start`
    - Variáveis: `DATABASE_URL`, `JWT_SECRET` (valor aleatório próprio), `NODE_ENV=production`
-3. Crie o primeiro admin (Shell do Render): `npm run criar-admin -- email@empresa.com "Nome" "senha-forte"`
+3. Primeiro admin: preencha `ADMIN_INICIAL_EMAIL`, `ADMIN_INICIAL_NOME` e `ADMIN_INICIAL_SENHA` no Render. Na subida, se o banco não tiver nenhum usuário, o admin é criado (ver log "Admin inicial criado"). Depois do primeiro login, troque a senha em *Usuários* e **remova as três variáveis**. Alternativa com shell: `npm run criar-admin -- email@empresa.com "Nome" "senha-forte"`.
 4. **Não rode `npm run seed` em produção.**
 
 ## Operação e solução de problemas

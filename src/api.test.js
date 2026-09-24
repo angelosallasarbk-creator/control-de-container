@@ -30,6 +30,17 @@ before(async () => {
   ({ sincronizarTodos } = await import("./lib/alertas.js"));
   const { criarApp } = await import("./app.js");
   app = criarApp();
+
+  // Admin inicial por variável de ambiente: cria só com o banco vazio; depois é ignorado.
+  const { criarAdminInicialSeNecessario } = await import("./lib/adminInicial.js");
+  const envAdmin = { ADMIN_INICIAL_EMAIL: " Chefe@Teste.local ", ADMIN_INICIAL_SENHA: "senha-inicial-123", ADMIN_INICIAL_NOME: "Chefe" };
+  assert.equal(await criarAdminInicialSeNecessario({ ...envAdmin, ADMIN_INICIAL_SENHA: "curta" }), null, "senha curta não cria");
+  const inicial = await criarAdminInicialSeNecessario(envAdmin);
+  assert.equal(inicial?.email, "chefe@teste.local");
+  assert.equal(inicial?.perfil, "ADMIN");
+  assert.equal(await criarAdminInicialSeNecessario({ ...envAdmin, ADMIN_INICIAL_EMAIL: "outro@teste.local" }), null, "com usuários, ignora");
+  assert.equal(await prisma.usuario.count(), 1);
+
   const senhaHash = await bcrypt.hash("senha-teste-123", 4);
   for (const perfil of ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO"]) {
     await prisma.usuario.create({ data: { email: `${perfil.toLowerCase()}@teste.local`, nome: perfil, perfil, senhaHash } });

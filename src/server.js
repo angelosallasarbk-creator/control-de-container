@@ -2,6 +2,9 @@ import "dotenv/config";
 import { criarApp } from "./app.js";
 import { purgarLogsExpirados } from "./lib/auditoria.js";
 import { iniciarVerificador } from "./lib/verificador.js";
+import { criarAdminInicialSeNecessario } from "./lib/adminInicial.js";
+
+await criarAdminInicialSeNecessario().catch((err) => console.error("Falha ao criar admin inicial:", err));
 
 const app = criarApp();
 const port = process.env.PORT || 3000;
