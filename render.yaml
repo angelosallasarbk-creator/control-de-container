@@ -2,6 +2,7 @@ services:
   - type: web
     name: controle-de-container
     runtime: node
+    region: oregon # mesma região do Supabase (aws us-west-2): menor latência app ↔ banco
     buildCommand: npm run build
     startCommand: npm start
     healthCheckPath: /api/saude
