@@ -477,6 +477,50 @@ test("etiquetas QR: cada usuário vê, imprime e cancela só as que gerou; contr
   assert.equal((await request(app).get(`/api/qr/codigo/${semPrefixo}`)).status, 401, "exige login");
 });
 
+test("excluir etiquetas selecionadas: uma requisição, só nunca usadas, só do dono, tudo ou nada na conferência", async () => {
+  const sup2 = await logar("supervisor2@teste.local");
+  const lote = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 4 })).body.etiquetas;
+  const [livre, impressa, usada, cancelada] = lote;
+  // "impressa": só impressa, nunca colada/lida → pode excluir.
+  await agentes.SUPERVISOR.post("/api/etiquetas/impressas").send({ ids: [impressa.id] });
+  // "usada": ligada a um container ativo pelo celular → não pode excluir.
+  const armador = await agentes.SUPERVISOR.post("/api/armadores").send({ nome: "Armador Exclusão", freeTimeDias: 10, valorDiaria: 1 });
+  await agentes.OPERADOR.post("/api/containers").send({ numero: "TCLU1111111", confirmarDigito: true, tipo: "DRY_40", grupoId: ids.grupo, armadorId: armador.body.id });
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${usada.token}/vincular`).send({ numero: "TCLU1111111" })).status, 201);
+  // "cancelada" sem uso → pode excluir.
+  await agentes.SUPERVISOR.post(`/api/etiquetas/${cancelada.id}/cancelar`).send({ motivo: "rasgou" });
+  const deOutro = (await sup2.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas[0];
+
+  // Validações.
+  assert.equal((await agentes.VISUALIZACAO.post("/api/etiquetas/excluir").send({ ids: [livre.id] })).status, 403, "sem permissão");
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/excluir").send({ ids: [] })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/excluir").send({ ids: Array.from({ length: 501 }, (_, i) => i + 1) })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/excluir").send({ ids: [livre.id, 999999] })).status, 404);
+  // Misturar etiqueta de outro usuário: recusa TUDO (nada sai).
+  const misto = await agentes.SUPERVISOR.post("/api/etiquetas/excluir").send({ ids: [livre.id, deOutro.id] });
+  assert.equal(misto.status, 403);
+  assert.ok(await prisma.etiquetaQR.findUnique({ where: { id: livre.id } }), "nada foi excluído");
+
+  // Uma requisição com as 4: exclui as 3 nunca usadas, recusa a ligada ao container (com motivo).
+  const r = await agentes.SUPERVISOR.post("/api/etiquetas/excluir").send({ ids: [livre.id, impressa.id, usada.id, cancelada.id, livre.id] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.excluidas.sort(), [livre.codigo, impressa.codigo, cancelada.codigo].sort());
+  assert.equal(r.body.bloqueadas.length, 1);
+  assert.equal(r.body.bloqueadas[0].codigo, usada.codigo);
+  assert.match(r.body.bloqueadas[0].motivo, /ligada ao container TCLU1111111/);
+  assert.equal(await prisma.etiquetaQR.count({ where: { id: { in: [livre.id, impressa.id, cancelada.id] } } }), 0);
+  assert.ok(await prisma.etiquetaQR.findUnique({ where: { id: usada.id } }), "a usada continua");
+  assert.ok(await prisma.etiquetaQR.findUnique({ where: { id: deOutro.id } }), "a do outro usuário continua");
+  // Leitura/container da etiqueta usada intactos; log registrou os códigos.
+  assert.equal((await agentes.OPERADOR.get(`/api/qr/${usada.token}`)).body.etiqueta.estado, "VINCULADA");
+  const log = (await agentes.ADMIN.get("/api/logs?entidade=EtiquetaQR")).body.find((l) => l.acao === "EXCLUIR");
+  assert.match(log.descricao, /3 etiqueta\(s\) QR excluída\(s\).*1 já impressa/);
+
+  // Admin pode excluir etiqueta de qualquer usuário (suporte).
+  const adm = await agentes.ADMIN.post("/api/etiquetas/excluir").send({ ids: [deOutro.id] });
+  assert.deepEqual(adm.body.excluidas, [deOutro.codigo]);
+});
+
 test("permissões por usuário: padrão do perfil, personalizar, valer na hora, desativar bloqueia", async () => {
   // /me traz as permissões efetivas.
   const me = await agentes.OPERADOR.get("/api/auth/me");

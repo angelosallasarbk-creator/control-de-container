@@ -183,6 +183,70 @@ etiquetasRouter.post("/:id/cancelar", requirePermissao("etiquetas.cancelar"), as
   res.json(serializar(depois));
 }));
 
+// Motivo pelo qual uma etiqueta NÃO pode ser excluída (null = pode). Etiqueta que já foi ligada
+// a container ou tem leitura é prova de rastreabilidade: nesse caso o caminho é Cancelar.
+function motivoParaNaoExcluir(e) {
+  if (e.containerId) return `ligada ao container ${e.container?.numero ?? e.containerId} — use Cancelar`;
+  if ((e._count?.leituras ?? 0) > 0) return `tem ${e._count.leituras} leitura(s) registrada(s) — use Cancelar`;
+  return null;
+}
+
+/**
+ * Excluir várias etiquetas em UMA requisição e UM comando no banco (deleteMany), com o padrão
+ * de exclusão em massa segura:
+ *  1. captura os ids pedidos (chave primária) já filtrados pelo dono, dentro da transação;
+ *  2. separa as que podem sair das que não podem (e diz o motivo);
+ *  3. apaga por id E repete as condições no WHERE (sem container, sem leituras, do dono) —
+ *     se algo mudou entre a leitura e o delete (ex.: alguém ligou a etiqueta agora), ela não sai;
+ *  4. ainda na transação, confere: saíram exatamente as esperadas e as recusadas continuam
+ *     existindo. Se não bater, lança erro → rollback, nada é apagado.
+ */
+etiquetasRouter.post("/excluir", requirePermissao("etiquetas.cancelar"), asyncHandler(async (req, res) => {
+  const pedidos = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!pedidos.length) throw erroHttp(400, "Selecione ao menos uma etiqueta.");
+  if (pedidos.length > MAX_POR_LOTE) throw erroHttp(400, `Máximo de ${MAX_POR_LOTE} etiquetas por exclusão.`);
+  const ids = [...new Set(pedidos.map((i) => validarId(i, "Etiqueta")))];
+  const ehAdmin = req.usuario.perfil === "ADMIN";
+  const doDono = ehAdmin ? {} : { lote: { criadoPor: req.usuario.email } };
+
+  const resultado = await prisma.$transaction(async (tx) => {
+    const encontradas = await tx.etiquetaQR.findMany({ where: { id: { in: ids } }, include: INCLUDE });
+    if (encontradas.length !== ids.length) throw erroHttp(404, "Alguma etiqueta selecionada não existe mais. Atualize a tela.");
+    if (!ehAdmin && encontradas.some((e) => e.lote.criadoPor !== req.usuario.email)) {
+      throw erroHttp(403, "Há etiquetas selecionadas que foram geradas por outro usuário. Cada pessoa exclui só as etiquetas que gerou.");
+    }
+    const bloqueadas = encontradas.filter((e) => motivoParaNaoExcluir(e)).map((e) => ({ id: e.id, codigo: e.codigo, motivo: motivoParaNaoExcluir(e) }));
+    const aExcluir = encontradas.filter((e) => !motivoParaNaoExcluir(e));
+    const idsExcluir = aExcluir.map((e) => e.id);
+
+    let apagadas = 0;
+    if (idsExcluir.length) {
+      ({ count: apagadas } = await tx.etiquetaQR.deleteMany({
+        where: { id: { in: idsExcluir }, containerId: null, leituras: { none: {} }, ...doDono },
+      }));
+      // Conferência dentro da transação (nada é confirmado se falhar).
+      const aindaExistem = await tx.etiquetaQR.findMany({ where: { id: { in: ids } }, select: { id: true } });
+      const restantes = new Set(aindaExistem.map((e) => e.id));
+      const sumiuRecusada = bloqueadas.some((b) => !restantes.has(b.id));
+      const sobrouExcluida = idsExcluir.some((id) => restantes.has(id));
+      if (apagadas !== idsExcluir.length || sumiuRecusada || sobrouExcluida) {
+        throw erroHttp(409, "As etiquetas mudaram durante a exclusão (ex.: alguém acabou de usar uma delas). Nada foi excluído — atualize a tela e tente de novo.");
+      }
+      await registrarLog(
+        {
+          usuarioEmail: req.usuario.email, acao: "EXCLUIR", entidade: "EtiquetaQR",
+          descricao: `${apagadas} etiqueta(s) QR excluída(s): ${aExcluir.map((e) => e.codigo).join(", ")}` +
+            (aExcluir.some((e) => e.vezesImpressa > 0) ? ` (${aExcluir.filter((e) => e.vezesImpressa > 0).length} já impressa[s])` : ""),
+          dadosAntes: aExcluir.map((e) => ({ id: e.id, codigo: e.codigo, status: e.status, vezesImpressa: e.vezesImpressa, geradaPor: e.lote.criadoPor })),
+        },
+        tx
+      );
+    }
+    return { excluidas: aExcluir.map((e) => e.codigo), bloqueadas };
+  });
+  res.json(resultado);
+}));
+
 // Arquivo ZPL (linguagem da Zebra) para imprimir direto na impressora de etiquetas.
 etiquetasRouter.post("/zpl", requirePermissao("etiquetas.emitir"), asyncHandler(async (req, res) => {
   const b = req.body ?? {};

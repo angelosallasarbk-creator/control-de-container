@@ -51,8 +51,9 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 3. **1ª leitura** (câmera do celular → página `/q/<token>`, **com login**): número do container (conferido pelo ISO 6346 e precisa estar **ativo**), temperatura (obrigatória em reefer) e data/hora (já vem "agora"). Salvar **liga a etiqueta ao container** e registra a leitura.
 4. **Leituras seguintes:** a página já abre no container, pedindo só temperatura e data/hora. A tela mostra na hora se a leitura está dentro, acima ou abaixo da faixa, e o alerta aparece no sistema.
 5. **Encerramento:** entregue ou cancelado o container, a etiqueta fica "encerrada" e não aceita novas leituras. Etiqueta danificada: numa etiqueta nova, informe o mesmo container e confirme a **substituição** (a antiga é cancelada). Supervisor também pode cancelar uma etiqueta com motivo.
+6. **Excluir selecionadas:** marque uma ou mais etiquetas na lista e use **🗑 Excluir selecionadas**. Todas vão numa **única requisição**, qualquer que seja a quantidade (máx. 500). Só são excluídas as que **nunca foram usadas** (sem container e sem leituras). As usadas ficam como histórico e continuam podendo ser canceladas; a resposta informa quais foram mantidas e por quê. A exclusão é tudo ou nada: se algo mudar no meio, nada é apagado. Ela é irreversível e fica registrada no log. Se a etiqueta já foi impressa, confira se não está colada em algum container.
 
-**Cada usuário vê só as suas etiquetas:** listar, imprimir (navegador e ZPL), marcar como impressa e cancelar valem apenas para as etiquetas dos lotes que a própria pessoa gerou. A regra é aplicada no servidor, então nem uma URL de impressão editada traz etiquetas de outra pessoa. Assim uma fábrica não imprime as etiquetas de outra. O administrador vê as dele por padrão e pode marcar "Ver de todos os usuários" (coluna "Gerada por"). **Ler o QR** continua aberto a qualquer operador logado, porque a etiqueta está no container.
+**Cada usuário vê só as suas etiquetas:** listar, imprimir (navegador e ZPL), marcar como impressa, cancelar e excluir valem apenas para as etiquetas dos lotes que a própria pessoa gerou. A regra é aplicada no servidor, então nem uma URL de impressão editada traz etiquetas de outra pessoa. Assim uma fábrica não imprime as etiquetas de outra. O administrador vê as dele por padrão e pode marcar "Ver de todos os usuários" (coluna "Gerada por"). **Ler o QR** continua aberto a qualquer operador logado, porque a etiqueta está no container.
 
 **Controle de impressão:** cada etiqueta registra quantas vezes foi enviada à impressora, quando e por quem: no ZPL, ao baixar; no navegador, quando a janela de impressão fecha. O navegador não informa se a pessoa cancelou, então isso conta como enviada. Há o filtro "Ainda não impressas", e **reimprimir pede confirmação**, porque a cópia tem o mesmo QR.
 
@@ -85,7 +86,7 @@ Cada perfil tem um **conjunto padrão** de permissões. Em *Configurações → 
 | Desfazer e cancelar etapas | desfazer a última etapa, cancelar container | Supervisor |
 | Editar cadastros | regiões, cliente/fábrica, armadores, produtos, locais | Supervisor |
 | Gerar e imprimir etiquetas | gerar lotes e imprimir (navegador/ZPL) **as próprias** etiquetas | Supervisor |
-| Cancelar etiquetas | inutilizar as próprias etiquetas | Supervisor |
+| Cancelar e excluir etiquetas | inutilizar as próprias etiquetas; excluir as nunca usadas | Supervisor |
 | Registrar leituras pelo celular | ligar etiqueta e registrar temperatura pelo QR/código | Supervisor, Operador |
 | Ver log de auditoria | consultar o histórico de alterações | Supervisor |
 

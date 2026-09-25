@@ -46,6 +46,8 @@ export const api = {
   etiquetas: (params) => request(`/etiquetas${qs(params)}`),
   lotesEtiquetas: () => request("/etiquetas/lotes"),
   gerarEtiquetas: (quantidade) => request("/etiquetas/lotes", { method: "POST", body: { quantidade } }),
+  // Uma única requisição para todas as selecionadas (o servidor separa as que podem sair).
+  excluirEtiquetas: (ids) => request("/etiquetas/excluir", { method: "POST", body: { ids } }),
   marcarImpressas: (ids) => request("/etiquetas/impressas", { method: "POST", body: { ids } }),
   cancelarEtiqueta: (id, motivo) => request(`/etiquetas/${id}/cancelar`, { method: "POST", body: { motivo } }),
   configImpressao: () => request("/etiquetas/impressao"),

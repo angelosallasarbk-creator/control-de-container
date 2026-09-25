@@ -117,25 +117,63 @@ const ordem = useOrdenacao({
   criada: (e) => new Date(e.criadoEm),
 });
 const linhas = computed(() => ordem.ordenar(lista.value));
-const imprimiveis = computed(() => lista.value.filter((e) => e.estado !== "CANCELADA"));
-const todasMarcadas = computed(() => imprimiveis.value.length > 0 && imprimiveis.value.every((e) => selecionadas.value.has(e.id)));
+// A seleção serve para imprimir e para excluir. Imprimir ignora as canceladas; excluir só
+// vale para as nunca usadas (o servidor confere de novo).
+const todasMarcadas = computed(() => lista.value.length > 0 && lista.value.every((e) => selecionadas.value.has(e.id)));
 function alternar(e) {
   const s = new Set(selecionadas.value);
   s.has(e.id) ? s.delete(e.id) : s.add(e.id);
   selecionadas.value = s;
 }
 function alternarTodas() {
-  selecionadas.value = todasMarcadas.value ? new Set() : new Set(imprimiveis.value.map((e) => e.id));
+  selecionadas.value = todasMarcadas.value ? new Set() : new Set(lista.value.map((e) => e.id));
 }
 const selecionadasLista = computed(() => lista.value.filter((e) => selecionadas.value.has(e.id)));
-const exemplo = computed(() => selecionadasLista.value[0] ?? lista.value[0] ?? null);
+const paraImprimir = computed(() => selecionadasLista.value.filter((e) => e.estado !== "CANCELADA"));
+const exemplo = computed(() => paraImprimir.value[0] ?? lista.value.find((e) => e.estado !== "CANCELADA") ?? null);
+
+// ---------- Excluir selecionadas (uma única requisição) ----------
+// Só etiqueta nunca usada (sem container e sem leitura); as usadas ficam como prova — Cancelar.
+const podeExcluir = (e) => !e.container && e.leituras === 0;
+const excluiveis = computed(() => selecionadasLista.value.filter(podeExcluir));
+const naoExcluiveis = computed(() => selecionadasLista.value.filter((e) => !podeExcluir(e)));
+const excluindo = ref(false);
+
+async function excluirSelecionadas() {
+  const alvo = excluiveis.value;
+  if (!alvo.length) return;
+  const impressas = alvo.filter((e) => e.vezesImpressa > 0).length;
+  const texto =
+    `Excluir ${alvo.length} etiqueta(s)? Esta ação não pode ser desfeita.` +
+    (impressas ? `\n\n⚠ ${impressas} já foram impressas: se alguma estiver colada em um container, o QR dela deixará de funcionar.` : "") +
+    (naoExcluiveis.value.length ? `\n\n${naoExcluiveis.value.length} selecionada(s) já foram usadas (container/leituras) e serão mantidas — para essas, use Cancelar.` : "");
+  if (!confirm(texto)) return;
+  excluindo.value = true;
+  erro.value = null;
+  aviso.value = null;
+  try {
+    // Todas as selecionadas vão juntas numa única requisição; o servidor separa e confere.
+    const r = await api.excluirEtiquetas(selecionadasLista.value.map((e) => e.id));
+    const partes = [`${r.excluidas.length} etiqueta(s) excluída(s).`];
+    if (r.bloqueadas.length) {
+      partes.push(`${r.bloqueadas.length} mantida(s): ${r.bloqueadas.slice(0, 5).map((b) => `${b.codigo} (${b.motivo})`).join("; ")}${r.bloqueadas.length > 5 ? "…" : ""}`);
+    }
+    aviso.value = partes.join(" ");
+    selecionadas.value = new Set();
+    await carregar();
+  } catch (e) {
+    erro.value = e.message;
+  } finally {
+    excluindo.value = false;
+  }
+}
 const urlDe = (e) => `${imp.baseUrl.replace(/\/+$/, "")}/q/${e.token}`;
 // Pré-visualização cabe em ~320px de largura.
 const escalaPrevia = computed(() => Math.min(1.6, 320 / (imp.larguraMm * 3.78)));
 
 // Reimprimir gera uma segunda etiqueta igual (mesmo QR) — pede confirmação.
 function confirmarReimpressao() {
-  const ja = selecionadasLista.value.filter((e) => e.vezesImpressa > 0);
+  const ja = paraImprimir.value.filter((e) => e.vezesImpressa > 0);
   if (!ja.length) return true;
   const exemplos = ja.slice(0, 5).map((e) => `${e.codigo} (${e.vezesImpressa}x, última ${fmtDataHora(e.impressaEm)})`).join("\n");
   return confirm(
@@ -146,7 +184,7 @@ function confirmarReimpressao() {
 
 function imprimirNavegador() {
   if (!confirmarReimpressao()) return;
-  const ids = selecionadasLista.value.map((e) => e.id).join(",");
+  const ids = paraImprimir.value.map((e) => e.id).join(",");
   const q = new URLSearchParams({ ids, w: imp.larguraMm, h: imp.alturaMm, base: imp.baseUrl.replace(/\/+$/, "") });
   window.open(`/etiquetas/imprimir?${q}`, "_blank");
 }
@@ -156,7 +194,7 @@ async function baixarZpl() {
   if (!confirmarReimpressao()) return;
   try {
     const zpl = await api.baixarZpl({
-      ids: selecionadasLista.value.map((e) => e.id), larguraMm: imp.larguraMm, alturaMm: imp.alturaMm, dpi: Number(imp.dpi), baseUrl: imp.baseUrl,
+      ids: paraImprimir.value.map((e) => e.id), larguraMm: imp.larguraMm, alturaMm: imp.alturaMm, dpi: Number(imp.dpi), baseUrl: imp.baseUrl,
     });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([zpl], { type: "text/plain" }));
@@ -206,7 +244,7 @@ async function cancelar(e) {
   <!-- Impressão -->
   <div id="painel-impressao" class="card">
     <div class="linha-entre">
-      <h2 style="margin: 0">Imprimir {{ selecionadas.size ? `${selecionadas.size} etiqueta(s) selecionada(s)` : "(selecione na lista abaixo)" }}</h2>
+      <h2 style="margin: 0">Imprimir {{ paraImprimir.length ? `${paraImprimir.length} etiqueta(s) selecionada(s)` : "(selecione na lista abaixo)" }}</h2>
     </div>
     <div class="impressao">
       <div class="grade-form" style="flex: 1">
@@ -283,6 +321,21 @@ async function cancelar(e) {
         Ver de todos os usuários (administrador)
       </label>
     </div>
+    <!-- Barra de ações da seleção -->
+    <div v-if="selecionadas.size" class="barra-selecao">
+      <strong>{{ selecionadasLista.length }} selecionada(s)</strong>
+      <button
+        v-if="auth.pode('etiquetas.cancelar')" class="pequeno perigo" :disabled="!excluiveis.length || excluindo"
+        :title="excluiveis.length ? 'Exclui as selecionadas que nunca foram usadas' : 'Nenhuma selecionada pode ser excluída (já usadas)'"
+        @click="excluirSelecionadas"
+      >
+        🗑 {{ excluindo ? "Excluindo…" : `Excluir selecionadas${naoExcluiveis.length && excluiveis.length ? ` (${excluiveis.length})` : ""}` }}
+      </button>
+      <button class="pequeno" @click="selecionadas = new Set()">Limpar seleção</button>
+      <span v-if="naoExcluiveis.length" class="mudo pequeno">
+        {{ naoExcluiveis.length }} já usada(s) (container/leituras) não pode(m) ser excluída(s) — use Cancelar.
+      </span>
+    </div>
     <div class="tabela-wrap">
       <table>
         <thead>
@@ -301,7 +354,7 @@ async function cancelar(e) {
         </thead>
         <tbody>
           <tr v-for="e in linhas" :key="e.id">
-            <td><input type="checkbox" :checked="selecionadas.has(e.id)" :disabled="e.estado === 'CANCELADA'" :aria-label="`Selecionar ${e.codigo}`" @change="alternar(e)" /></td>
+            <td><input type="checkbox" :checked="selecionadas.has(e.id)" :aria-label="`Selecionar ${e.codigo}`" @change="alternar(e)" /></td>
             <td class="mono negrito">{{ e.codigo }}</td>
             <td>
               <span class="chip" :class="ESTADO[e.estado].cor" :title="ESTADO[e.estado].dica">{{ ESTADO[e.estado].rotulo }}</span>
@@ -337,5 +390,6 @@ async function cancelar(e) {
 <style scoped>
 .impressao { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px; }
 .previa { min-width: 280px; }
+.barra-selecao { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: var(--azul-fundo); border-top: 1px solid var(--borda); }
 .previa-caixa { border: 1px dashed var(--borda); box-shadow: var(--sombra); overflow: hidden; background: #fff; }
 </style>
