@@ -82,7 +82,15 @@ scripts/criar-admin.js      cria o primeiro administrador
 
 ## Rodar localmente
 
-Requisitos: Node 20+, Docker.
+**Jeito rápido (Windows):** dê dois cliques em **`iniciar.bat`**. Ele:
+- abre o Docker Desktop, se preciso, e sobe o banco;
+- instala as dependências na primeira vez;
+- abre a API e a Tela em duas janelas minimizadas;
+- espera o sistema responder e abre http://localhost:5174 no navegador.
+
+Se o sistema já estiver rodando, o script só abre o navegador, sem duplicar janelas. Se a porta 3000 estiver ocupada (ex.: McCain local), ele avisa. Para desligar, feche as janelas "Controle de Container - API" e "Controle de Container - Tela".
+
+**Passo a passo manual.** Requisitos: Node 20+, Docker.
 
 ```bash
 docker compose up -d            # Postgres local na porta 5433
