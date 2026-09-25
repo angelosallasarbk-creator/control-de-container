@@ -18,11 +18,18 @@
   --azul-fundo: #e6f0fb;
   --sombra: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
   --raio: 8px;
-  font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  /* Inter (embutida, ver main.js); Segoe UI é a reserva se a fonte não carregar. */
+  font-family: "Inter Variable", "Inter", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  /* cv11 = "a" de um andar só (mais limpo em tamanho pequeno); ss03 = setas arredondadas. */
+  font-feature-settings: "cv11", "ss03";
   color: var(--texto);
   background: var(--fundo);
   font-size: 14px;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Números de mesma largura onde se compara valor com valor: tabelas, indicadores e prazos. */
+td, th, .kpi .valor, .numeros .valor, .aba-contagem, .chip { font-variant-numeric: tabular-nums; }
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--fundo); }

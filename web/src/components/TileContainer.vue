@@ -22,7 +22,7 @@ const textoDemurrage = computed(() => {
     </div>
     <div class="linha-tile mudo">
       <span>{{ ROTULO_TIPO[c.tipo] }} · {{ c.armador }}</span>
-      <span v-if="c.posicaoPatio">📍 {{ c.posicaoPatio }}</span>
+      <span v-if="c.posicaoPatio" style="white-space: nowrap">📍 {{ c.posicaoPatio }}</span>
     </div>
     <div class="linha-tile"><span class="chip azul">{{ ROTULO_STATUS[c.status] }}</span></div>
 
