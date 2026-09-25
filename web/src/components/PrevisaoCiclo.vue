@@ -19,6 +19,12 @@ const FONTE = {
 };
 
 const cicloDias = computed(() => (props.p?.cicloHoras ?? 0) / 24);
+// Distância total prevista do ciclo = soma dos trechos rodoviários (vazio + cheio).
+const trechosKm = computed(() => (props.p?.trechos ?? []).filter((t) => t.km !== null && t.km !== undefined));
+// Soma os km já arredondados de cada trecho, para o total bater com "178 km + 178 km" da tela.
+const kmTotal = computed(() => trechosKm.value.reduce((soma, t) => soma + Math.round(Number(t.km)), 0));
+const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm(t.km)}`).join(" | "));
+const kmAproximado = computed(() => trechosKm.value.some((t) => t.fonte === "ESTIMADA"));
 </script>
 
 <template>
@@ -39,6 +45,13 @@ const cicloDias = computed(() => (props.p?.cicloHoras ?? 0) / 24);
         <div class="rotulo">Ciclo estimado</div>
         <div class="valor">{{ cicloDias.toFixed(1).replace(".", ",") }} dias</div>
         <div v-if="freeTimeDias !== null" class="pequeno mudo">free time: {{ freeTimeDias }} dias</div>
+      </div>
+      <div v-if="trechosKm.length">
+        <div class="rotulo">Distância total prevista</div>
+        <div class="valor">{{ fmtKm(kmTotal) }}</div>
+        <div class="pequeno mudo" :title="detalheKm">
+          {{ trechosKm.map((t) => fmtKm(t.km)).join(" + ") }}<template v-if="kmAproximado"> · aproximada</template>
+        </div>
       </div>
       <div>
         <div class="rotulo">Entrega prevista</div>
