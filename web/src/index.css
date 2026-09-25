@@ -34,7 +34,12 @@ h3 { font-size: 14px; margin: 0 0 8px; }
 
 /* ---------- Layout ---------- */
 .shell { display: flex; min-height: 100vh; }
-.lateral { width: 220px; flex-shrink: 0; background: var(--lateral); color: var(--lateral-texto); display: flex; flex-direction: column; }
+/* Menu lateral fixo na altura da tela (rola sozinho se o menu crescer). */
+.lateral { width: 220px; flex-shrink: 0; background: var(--lateral); color: var(--lateral-texto); display: flex; flex-direction: column;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; align-self: flex-start; }
+/* Faixa de críticos + barra de título: congelados no topo enquanto a página rola.
+   z-index abaixo dos modais (100) e do menu no celular (50). */
+.cabecalho-fixo { position: sticky; top: 0; z-index: 30; box-shadow: 0 1px 0 var(--borda), 0 2px 6px rgba(16, 24, 40, 0.06); }
 .lateral-marca { padding: 18px 16px; font-weight: 700; font-size: 15px; color: #fff; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); }
 .lateral nav { display: flex; flex-direction: column; padding: 8px; gap: 2px; flex: 1; }
 .lateral nav a { color: var(--lateral-texto); padding: 9px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
@@ -54,6 +59,13 @@ h3 { font-size: 14px; margin: 0 0 8px; }
   .botao-menu { display: inline-flex; }
   .pagina { padding: 16px; }
   .topo { padding: 12px 16px; }
+  /* Cabeçalho fixo no celular: faixa de críticos em uma linha só (sem a lista de containers). */
+  .faixa-critica { padding: 6px 16px; flex-wrap: nowrap; }
+  .faixa-detalhe, .so-desktop { display: none; }
+  .so-celular { display: inline; }
+}
+@media (min-width: 861px) {
+  .so-celular { display: none; }
 }
 
 /* ---------- Componentes ---------- */

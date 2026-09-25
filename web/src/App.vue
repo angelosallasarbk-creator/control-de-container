@@ -96,10 +96,14 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
     </aside>
 
     <div class="conteudo">
+      <!-- Faixa de críticos + título ficam fixos no topo; só o conteúdo da página rola. -->
+      <div class="cabecalho-fixo">
       <div v-if="criticos.length" class="faixa-critica">
         <span>
-          <strong>{{ criticos.length }} alerta(s) crítico(s) sem reconhecimento</strong> —
-          {{ criticos.slice(0, 3).map((a) => `${a.container.numero} (${ROTULO_ALERTA[a.tipo]})`).join(", ") }}{{ criticos.length > 3 ? "…" : "" }}
+          <strong class="so-desktop">{{ criticos.length }} alerta(s) crítico(s) sem reconhecimento</strong>
+          <strong class="so-celular">⚠ {{ criticos.length }} alerta(s) crítico(s)</strong>
+          <span class="faixa-detalhe"> —
+            {{ criticos.slice(0, 3).map((a) => `${a.container.numero} (${ROTULO_ALERTA[a.tipo]})`).join(", ") }}{{ criticos.length > 3 ? "…" : "" }}</span>
         </span>
         <router-link to="/alertas"><button class="pequeno">Ver alertas</button></router-link>
       </div>
@@ -113,6 +117,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           <span v-if="resumo?.naoReconhecidos" class="badge">{{ resumo.naoReconhecidos }}</span>
         </router-link>
       </header>
+      </div>
       <main class="pagina">
         <!-- key = path (não fullPath): trocar só a query, como a aba de região do Pátio, não recria a tela. -->
         <router-view :key="route.path" @alertas-mudaram="atualizarAlertas" />
