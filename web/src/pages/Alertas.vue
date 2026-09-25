@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, inject, onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_ALERTA, ROTULO_STATUS, fmtDataHora, tempoDesde } from "../formato.js";
@@ -7,7 +7,7 @@ import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
 
-const emit = defineEmits(["alertas-mudaram"]);
+const atualizarAlertas = inject("atualizarAlertas", () => {});
 const auth = useAuthStore();
 const lista = ref([]);
 const grupos = ref([]);
@@ -35,7 +35,7 @@ onMounted(async () => {
 function reconhecido() {
   selecionado.value = null;
   carregar();
-  emit("alertas-mudaram");
+  atualizarAlertas();
 }
 
 // Nível: crescente = crítico primeiro. Tratamento: pendentes primeiro no crescente.

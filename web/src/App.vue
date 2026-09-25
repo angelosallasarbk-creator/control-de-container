@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useAuthStore } from "./stores/auth.js";
 import { api } from "./api.js";
@@ -25,34 +25,97 @@ function lerPreferencia() {
     return false;
   }
 }
+function gravarRecolhido(valor) {
+  menuRecolhido.value = valor;
+  try {
+    localStorage.setItem(CHAVE_MENU_RECOLHIDO, valor ? "1" : "0");
+  } catch {
+    // sem armazenamento: só não lembra a escolha
+  }
+}
 function alternarMenu() {
   if (estreita.value) {
     menuAberto.value = !menuAberto.value;
     return;
   }
-  menuRecolhido.value = !menuRecolhido.value;
-  try {
-    localStorage.setItem(CHAVE_MENU_RECOLHIDO, menuRecolhido.value ? "1" : "0");
-  } catch {
-    // sem armazenamento: só não lembra a escolha
-  }
+  if (menuFlutuante.value) return fixarMenu();
+  gravarRecolhido(!menuRecolhido.value);
 }
+// Volta ao modo "menu sempre aberto ao lado do conteúdo".
+function fixarMenu() {
+  menuFlutuante.value = false;
+  gravarRecolhido(false);
+}
+
+// Menu recolhido (tela larga): passar o mouse na borda esquerda abre o menu por cima do
+// conteúdo; clicar fora, Esc ou navegar recolhe de novo. O pequeno atraso evita abrir sem
+// querer quando o mouse só cruza a borda.
+const ATRASO_HOVER_MS = 150;
+const LARGURA_ALCA_PX = 14;
+const menuFlutuante = ref(false);
+let timerHover = null;
+// Ao recolher (Esc, navegação) com o mouse ainda na borda, a alça reaparece debaixo dele e o
+// menu reabriria sozinho. Então o hover fica bloqueado até o mouse sair da borda.
+let hoverBloqueado = false;
+let ultimoX = Infinity;
+const aoMoverMouse = (e) => {
+  ultimoX = e.clientX;
+  if (hoverBloqueado && ultimoX > LARGURA_ALCA_PX) hoverBloqueado = false;
+};
+function recolherFlutuante() {
+  if (!menuFlutuante.value) return;
+  menuFlutuante.value = false;
+  hoverBloqueado = ultimoX <= LARGURA_ALCA_PX;
+}
+function aoEntrarNaAlca() {
+  clearTimeout(timerHover);
+  if (hoverBloqueado) return;
+  timerHover = setTimeout(() => (menuFlutuante.value = true), ATRASO_HOVER_MS);
+}
+function aoSairDaAlca() {
+  clearTimeout(timerHover);
+  hoverBloqueado = false;
+}
+// Clique/toque (e Enter no teclado) na alça abre na hora — é o caminho no celular.
+function abrirPelaAlca() {
+  clearTimeout(timerHover);
+  if (estreita.value) menuAberto.value = true;
+  else menuFlutuante.value = true;
+}
+const refLateral = ref(null);
+const refAlca = ref(null);
+function aoClicarNaPagina(e) {
+  if (!menuFlutuante.value) return;
+  if (refLateral.value?.contains(e.target) || refAlca.value?.contains(e.target) || e.target.closest?.(".botao-menu")) return;
+  recolherFlutuante();
+}
+
 const aoMudarLargura = (e) => {
   estreita.value = e.matches;
   menuAberto.value = false;
+  menuFlutuante.value = false;
 };
 const aoTeclar = (e) => {
-  if (e.key === "Escape" && menuAberto.value) menuAberto.value = false;
+  if (e.key !== "Escape") return;
+  menuAberto.value = false;
+  recolherFlutuante();
 };
 onMounted(() => {
   telaEstreita.addEventListener("change", aoMudarLargura);
   window.addEventListener("keydown", aoTeclar);
+  document.addEventListener("mousedown", aoClicarNaPagina);
+  document.addEventListener("mousemove", aoMoverMouse, { passive: true });
 });
 onBeforeUnmount(() => {
   telaEstreita.removeEventListener("change", aoMudarLargura);
   window.removeEventListener("keydown", aoTeclar);
+  document.removeEventListener("mousedown", aoClicarNaPagina);
+  document.removeEventListener("mousemove", aoMoverMouse);
+  clearTimeout(timerHover);
 });
-const menuVisivel = computed(() => (estreita.value ? menuAberto.value : !menuRecolhido.value));
+const menuVisivel = computed(() => (estreita.value ? menuAberto.value : !menuRecolhido.value || menuFlutuante.value));
+// A alça "›" aparece sempre que o menu está escondido.
+const mostrarAlca = computed(() => (estreita.value ? !menuAberto.value : menuRecolhido.value && !menuFlutuante.value));
 const resumo = ref(null);
 const INTERVALO_ALERTAS_MS = 30000;
 let timer = null;
@@ -96,8 +159,10 @@ watch(
     }
   }
 );
-watch(() => route.fullPath, () => { menuAberto.value = false; atualizarAlertas(); });
+watch(() => route.fullPath, () => { menuAberto.value = false; recolherFlutuante(); atualizarAlertas(); });
 onBeforeUnmount(() => clearInterval(timer));
+// Telas que mudam alertas (ficha, Alertas) pedem para atualizar o sino/faixa na hora.
+provide("atualizarAlertas", atualizarAlertas);
 
 const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 </script>
@@ -107,11 +172,23 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
   <Login v-else-if="auth.usuario === null" />
   <div v-else class="shell" :class="{ 'menu-recolhido': menuRecolhido && !estreita }">
     <div v-if="estreita && menuAberto" class="fundo-menu" aria-hidden="true" @click="menuAberto = false"></div>
-    <aside id="menu-lateral" class="lateral" :class="{ aberta: menuAberto }" :aria-hidden="!menuVisivel" :inert="!menuVisivel || undefined">
+    <button
+      v-if="mostrarAlca" ref="refAlca" type="button" class="alca-menu" aria-label="Abrir menu" aria-controls="menu-lateral"
+      title="Passe o mouse aqui (ou clique) para abrir o menu"
+      @mouseenter="aoEntrarNaAlca" @mouseleave="aoSairDaAlca" @click="abrirPelaAlca"
+    >
+      <span class="alca-seta" aria-hidden="true">›</span>
+    </button>
+    <aside
+      id="menu-lateral" ref="refLateral" class="lateral" :class="{ aberta: menuAberto, flutuante: menuFlutuante }"
+      :aria-hidden="!menuVisivel" :inert="!menuVisivel || undefined"
+    >
       <div class="lateral-marca">
         <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="2" fill="#4a8fdc" /><path d="M8 11v10M13 11v10M18 11v10M23 11v10" stroke="#fff" stroke-width="2" /></svg>
         <span class="espaco">Controle de Container</span>
         <button v-if="estreita" class="fechar-menu" aria-label="Fechar menu" @click="menuAberto = false">✕</button>
+        <!-- Flutuando por cima (tela larga), o menu cobre o ☰; o 📌 o fixa aberto de novo. -->
+        <button v-else-if="menuFlutuante" class="fechar-menu" title="Manter menu aberto" aria-label="Manter menu aberto" @click="fixarMenu">📌</button>
       </div>
       <nav>
         <router-link to="/">Pátio</router-link>
@@ -170,7 +247,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
       </div>
       <main class="pagina">
         <!-- key = path (não fullPath): trocar só a query, como a aba de região do Pátio, não recria a tela. -->
-        <router-view :key="route.path" @alertas-mudaram="atualizarAlertas" />
+        <router-view :key="route.path" />
       </main>
     </div>
   </div>

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, inject, onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import {
@@ -11,7 +11,7 @@ import PrevisaoCiclo from "../components/PrevisaoCiclo.vue";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 
 const props = defineProps({ id: { type: String, required: true } });
-const emit = defineEmits(["alertas-mudaram"]);
+const atualizarAlertas = inject("atualizarAlertas", () => {});
 const auth = useAuthStore();
 
 const c = ref(null);
@@ -43,7 +43,7 @@ async function executar(fn, sucesso) {
     c.value = await fn();
     mensagem.value = sucesso;
     modal.value = null;
-    emit("alertas-mudaram");
+    atualizarAlertas();
     setTimeout(() => (mensagem.value = null), 4000);
   } catch (e) {
     erro.value = e.message;
@@ -139,7 +139,7 @@ function salvarEdicao() {
 function reconhecido() {
   modal.value = null;
   carregar();
-  emit("alertas-mudaram");
+  atualizarAlertas();
 }
 </script>
 

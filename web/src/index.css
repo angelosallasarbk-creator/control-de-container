@@ -39,6 +39,23 @@ h3 { font-size: 14px; margin: 0 0 8px; }
   position: sticky; top: 0; height: 100vh; overflow-y: auto; align-self: flex-start; transition: margin-left .2s ease; }
 /* Tela larga com o menu recolhido: ele desliza para fora pela esquerda e o conteúdo ocupa a largura toda. */
 .shell.menu-recolhido .lateral { margin-left: -220px; }
+/* Recolhido + mouse na borda: o menu abre POR CIMA do conteúdo (não empurra a página). */
+.shell.menu-recolhido .lateral.flutuante { position: fixed; left: 0; top: 0; margin-left: 0; z-index: 50; box-shadow: 4px 0 16px rgba(0, 0, 0, .25); }
+
+/* Alça na borda esquerda: faixa invisível de 14px na altura toda (área do mouse) com a aba "›". */
+.alca-menu {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 14px; z-index: 35;
+  padding: 0; border: none; border-radius: 0; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: flex-start;
+}
+.alca-menu:hover:not(:disabled) { background: rgba(19, 38, 61, .08); }
+.alca-seta {
+  width: 18px; height: 56px; display: flex; align-items: center; justify-content: center;
+  background: var(--lateral); color: #fff; font-size: 20px; font-weight: 700; line-height: 1;
+  border-radius: 0 6px 6px 0; box-shadow: 1px 0 4px rgba(0, 0, 0, .2);
+  transition: width .15s;
+}
+.alca-menu:hover .alca-seta, .alca-menu:focus-visible .alca-seta { width: 24px; }
 /* Faixa de críticos + barra de título: congelados no topo enquanto a página rola.
    z-index abaixo dos modais (100) e do menu no celular (50). */
 .cabecalho-fixo { position: sticky; top: 0; z-index: 30; box-shadow: 0 1px 0 var(--borda), 0 2px 6px rgba(16, 24, 40, 0.06); }
