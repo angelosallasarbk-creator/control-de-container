@@ -9,7 +9,8 @@ import EtiquetaVisual from "../components/EtiquetaVisual.vue";
 const route = useRoute();
 const larguraMm = Number(route.query.w) || 50;
 const alturaMm = Number(route.query.h) || 30;
-const base = String(route.query.base || window.location.origin).replace(/\/+$/, "");
+// Endereço dentro do QR: sempre o de Configurações → Etiquetas QR (lido do servidor).
+const base = ref("");
 const etiquetas = ref([]);
 const erro = ref(null);
 const aviso = ref(null);
@@ -37,6 +38,9 @@ onMounted(async () => {
   try {
     const ids = String(route.query.ids || "");
     if (!ids) throw new Error("Nenhuma etiqueta selecionada.");
+    const { urlPublica } = await api.configImpressao();
+    if (!urlPublica) throw new Error("O endereço do sistema para o QR não está configurado. Um administrador deve preenchê-lo em Configurações → Etiquetas QR.");
+    base.value = urlPublica.replace(/\/+$/, "");
     const pedidas = ids.split(",").length;
     // O servidor só devolve etiquetas do próprio usuário (e não canceladas ficam de fora aqui).
     etiquetas.value = (await api.etiquetas({ ids })).filter((e) => e.estado !== "CANCELADA");

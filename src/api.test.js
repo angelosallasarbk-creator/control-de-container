@@ -409,20 +409,25 @@ test("etiquetas QR: gerar, ligar ao container, ler, substituir, encerrar e ZPL",
   const lista = await agentes.SUPERVISOR.get("/api/etiquetas?estado=ENCERRADA");
   assert.deepEqual(lista.body.map((x) => x.codigo), [e2.codigo]);
 
-  // ZPL e endereço do QR.
-  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://x.y" })).status, 403, "operador sem 'Gerar e imprimir etiquetas'");
-  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "sem-protocolo" })).status, 400);
-  // Quem gerou (supervisor) imprime; e1 está cancelada (substituída) e fica fora do ZPL.
-  const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
-  assert.equal(zpl.status, 200);
-  assert.equal(zpl.text.match(/\^XA/g).length, 1);
-  assert.ok(zpl.text.includes(`http://192.168.0.10:5174/q/${e2.token}`));
+  // ZPL e endereço do QR: sempre o de Configurações; sem ele, não imprime.
+  const pedido = { ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203 };
+  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send(pedido)).status, 403, "operador sem 'Gerar e imprimir etiquetas'");
+  const semEndereco = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send(pedido);
+  assert.equal(semEndereco.status, 400);
+  assert.match(semEndereco.body.erro, /Configurações → Etiquetas QR/);
   assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, urlPublica: "192.168.0.10:5174" })).status, 400);
   const cfg = await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, urlPublica: "http://192.168.0.10:5174/" });
   assert.equal(cfg.body.urlPublica, "http://192.168.0.10:5174");
   const imp = await agentes.OPERADOR.get("/api/etiquetas/impressao");
   assert.equal(imp.body.urlPublica, "http://192.168.0.10:5174");
   assert.ok(imp.body.modelos.some((m) => m.chave === "50x30"));
+  // Quem gerou (supervisor) imprime; e1 está cancelada (substituída) e fica fora do ZPL.
+  // Um endereço mandado pelo navegador (ex.: lembrado de antes) é ignorado.
+  const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ...pedido, baseUrl: "http://10.0.0.99:5174" });
+  assert.equal(zpl.status, 200);
+  assert.equal(zpl.text.match(/\^XA/g).length, 1);
+  assert.ok(zpl.text.includes(`http://192.168.0.10:5174/q/${e2.token}`));
+  assert.ok(!zpl.text.includes("10.0.0.99"), "endereço do navegador não entra no QR");
 });
 
 test("etiquetas QR: cada usuário vê, imprime e cancela só as que gerou; controle de impressão", async () => {
@@ -449,13 +454,13 @@ test("etiquetas QR: cada usuário vê, imprime e cancela só as que gerou; contr
   assert.ok((await sup2.get("/api/etiquetas/lotes")).body.every((l) => l.criadoPor === "supervisor2@teste.local"));
 
   // ZPL / marcar impressa / cancelar etiquetas de outro: recusado.
-  const zplOutro = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [meu[0].id, deOutro[0].id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
+  const zplOutro = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [meu[0].id, deOutro[0].id], larguraMm: 50, alturaMm: 30, dpi: 203 });
   assert.equal(zplOutro.status, 403);
   assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/impressas").send({ ids: [deOutro[0].id] })).status, 403);
   assert.equal((await agentes.SUPERVISOR.post(`/api/etiquetas/${deOutro[0].id}/cancelar`).send({ motivo: "teste" })).status, 403);
 
   // Controle de impressão: ZPL e navegador contam; filtro "não impressas".
-  const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [meu[0].id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
+  const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [meu[0].id], larguraMm: 50, alturaMm: 30, dpi: 203 });
   assert.equal(zpl.status, 200);
   assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/impressas").send({ ids: [meu[0].id] })).status, 204);
   const depois = (await agentes.SUPERVISOR.get(`/api/etiquetas?ids=${meu[0].id}`)).body[0];
@@ -545,7 +550,7 @@ test("permissões por usuário: padrão do perfil, personalizar, valer na hora, 
   const loteOp = await agentes.OPERADOR.post("/api/etiquetas/lotes").send({ quantidade: 1 });
   assert.equal(loteOp.status, 201, "liberado sem precisar sair e entrar");
   assert.equal(loteOp.body.etiquetas[0].geradaPor, "operador@teste.local");
-  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [loteOp.body.etiquetas[0].id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" })).status, 200);
+  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [loteOp.body.etiquetas[0].id], larguraMm: 50, alturaMm: 30, dpi: 203 })).status, 200);
   assert.equal((await agentes.OPERADOR.post(`/api/etiquetas/${loteOp.body.etiquetas[0].id}/cancelar`).send({ motivo: "x" })).status, 403, "cancelar é outra permissão");
 
   // Retirar "Operar containers": não cadastra mais container nem reconhece alerta.

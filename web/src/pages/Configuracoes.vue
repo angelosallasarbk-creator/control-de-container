@@ -75,12 +75,16 @@ const logsFiltrados = computed(() => {
 });
 watch(aba, (a) => a === "log" && carregarLogs());
 
+// IPs desta máquina na rede: sugestões para o endereço do QR ao testar sem publicar.
+const sugestoesEndereco = ref([]);
+
 onMounted(async () => {
   try {
     aplicar(await api.configuracao());
   } catch (e) {
     erro.value = e.message;
   }
+  if (podeEditar.value) api.configImpressao().then((r) => (sugestoesEndereco.value = r.sugestoes ?? [])).catch(() => {});
   if (aba.value === "log") carregarLogs();
 });
 </script>
@@ -166,10 +170,14 @@ onMounted(async () => {
     <div class="grade-form">
       <div class="campo" style="grid-column: 1 / -1">
         <label>Endereço do sistema para o celular (vai dentro do QR)</label>
-        <input v-model.trim="cfg.urlPublica" placeholder="http://192.168.0.10:5174  ou  https://meusistema.onrender.com" :disabled="!podeEditar" />
+        <input v-model.trim="cfg.urlPublica" list="sugestoes-endereco" placeholder="https://meusistema.onrender.com" :disabled="!podeEditar" />
+        <datalist id="sugestoes-endereco">
+          <option v-for="s in sugestoesEndereco" :key="s.url" :value="s.url">{{ s.rotulo }}</option>
+        </datalist>
         <span class="dica">
-          Teste na rede local: IP deste computador + porta 5174 (o celular no mesmo Wi-Fi). Ao publicar online, troque pelo endereço
-          https — etiquetas impressas antes continuam com o endereço antigo. Vazio = a tela de impressão sugere o IP da rede.
+          Todas as etiquetas (navegador e ZPL) usam este endereço — a tela de Etiquetas não pede outro. Sistema publicado: o endereço
+          https dele. Teste na rede local: IP deste computador + porta (o celular no mesmo Wi-Fi). Etiquetas impressas antes de uma troca
+          continuam com o endereço antigo. Vazio = ninguém consegue imprimir.
         </span>
       </div>
     </div>

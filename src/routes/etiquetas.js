@@ -71,6 +71,13 @@ function enderecosDaRede() {
   return ips.sort((a, b) => a.virtual - b.virtual);
 }
 
+const SEM_ENDERECO = "O endereço do sistema para o QR não está configurado. Um administrador deve preenchê-lo em Configurações → Etiquetas QR.";
+async function enderecoConfigurado() {
+  const { urlPublica } = await lerConfiguracao();
+  if (!urlPublica) throw erroHttp(400, SEM_ENDERECO);
+  return urlPublica;
+}
+
 // Registra que as etiquetas foram enviadas à impressora (vezes, quando, quem) + log.
 async function marcarImpressas(req, ids, meio) {
   if (!ids.length) return;
@@ -123,7 +130,8 @@ etiquetasRouter.get("/lotes", asyncHandler(async (req, res) => {
   res.json(lotes.map(({ _count, ...l }) => ({ ...l, total: _count.etiquetas })));
 }));
 
-// Dados para a tela de impressão: modelos de etiqueta, DPIs, endereço configurado e sugestões.
+// Dados para a tela de impressão: modelos de etiqueta, DPIs e endereço configurado.
+// "sugestoes" (IPs da rede) aparecem só em Configurações, para quem define o endereço.
 etiquetasRouter.get("/impressao", asyncHandler(async (_req, res) => {
   const config = await lerConfiguracao();
   const porta = process.env.PORT || 3000;
@@ -255,8 +263,9 @@ etiquetasRouter.post("/zpl", requirePermissao("etiquetas.emitir"), asyncHandler(
   const larguraMm = decimal(b.larguraMm, "Largura (mm)", { obrigatorio: true, min: 20, max: 200 });
   const alturaMm = decimal(b.alturaMm, "Altura (mm)", { obrigatorio: true, min: 15, max: 300 });
   const dpi = Number(umDe(String(b.dpi ?? 203), DPI_SUPORTADOS.map(String), "Resolução (dpi)"));
-  const baseUrl = texto(b.baseUrl, "Endereço do sistema", { obrigatorio: true, max: 200 });
-  if (!/^https?:\/\/[^\s/]+(:\d+)?\/?$/i.test(baseUrl)) throw erroHttp(400, "Endereço do sistema inválido (ex.: http://192.168.0.10:5174).");
+  // O endereço dentro do QR vem SEMPRE de Configurações (nunca do navegador), para nenhuma
+  // etiqueta sair com um endereço antigo/local lembrado na máquina de quem imprime.
+  const baseUrl = await enderecoConfigurado();
   const etiquetas = (await etiquetasDoUsuario(req, ids)).filter((e) => e.status !== "CANCELADA");
   if (!etiquetas.length) throw erroHttp(400, "As etiquetas selecionadas estão canceladas.");
   const zpl = zplDoLote(etiquetas.map((e) => ({ codigo: e.codigo, url: urlDaEtiqueta(baseUrl, e.token) })), { larguraMm, alturaMm, dpi });

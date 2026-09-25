@@ -29,9 +29,12 @@ const ESTADO = {
 // ---------- Impressão (preferências lembradas no navegador) ----------
 const CHAVE_PREFS = "cc_impressao_etiquetas";
 const cfgImpressao = ref({ modelos: [], dpis: [203, 300, 600], urlPublica: "", sugestoes: [] });
-const imp = reactive({ modelo: "50x30", larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "" });
+const imp = reactive({ modelo: "50x30", larguraMm: 50, alturaMm: 30, dpi: 203 });
 try {
-  Object.assign(imp, JSON.parse(localStorage.getItem(CHAVE_PREFS) || "{}"));
+  // "baseUrl" de versões antigas é descartado: o endereço agora vem só de Configurações.
+  const { baseUrl: descartado, ...prefs } = JSON.parse(localStorage.getItem(CHAVE_PREFS) || "{}");
+  Object.assign(imp, prefs);
+  if (descartado !== undefined) localStorage.setItem(CHAVE_PREFS, JSON.stringify(imp));
 } catch {
   // sem preferências salvas
 }
@@ -46,10 +49,13 @@ watch(() => imp.modelo, (m) => {
   const modelo = cfgImpressao.value.modelos.find((x) => x.chave === m);
   if (modelo) Object.assign(imp, { larguraMm: modelo.larguraMm, alturaMm: modelo.alturaMm });
 });
+// Endereço que vai dentro do QR: sempre o de Configurações → Etiquetas QR.
+const configCarregada = ref(false);
+const baseUrl = computed(() => cfgImpressao.value.urlPublica || "");
 const enderecoProblema = computed(() => {
-  if (!imp.baseUrl) return "Informe o endereço que o celular vai abrir.";
-  if (!/^https?:\/\/[^\s/]+(:\d+)?\/?$/i.test(imp.baseUrl)) return "Endereço inválido (ex.: http://192.168.0.10:5174).";
-  if (/\/\/(localhost|127\.0\.0\.1)/i.test(imp.baseUrl)) return "\"localhost\" só funciona neste computador — o celular não abre. Use o IP da rede ou o endereço online.";
+  if (!configCarregada.value) return null;
+  if (!baseUrl.value) return "O endereço do sistema para o QR ainda não foi configurado — sem ele não dá para imprimir.";
+  if (/\/\/(localhost|127\.0\.0\.1)/i.test(baseUrl.value)) return "O endereço configurado usa \"localhost\", que o celular não abre.";
   return null;
 });
 
@@ -75,7 +81,7 @@ onBeforeUnmount(() => document.removeEventListener("visibilitychange", aoVoltarP
 onMounted(async () => {
   try {
     cfgImpressao.value = await api.configImpressao();
-    if (!imp.baseUrl) imp.baseUrl = cfgImpressao.value.urlPublica || cfgImpressao.value.sugestoes[0]?.url || window.location.origin;
+    configCarregada.value = true;
   } catch (e) {
     erro.value = e.message;
   }
@@ -167,7 +173,7 @@ async function excluirSelecionadas() {
     excluindo.value = false;
   }
 }
-const urlDe = (e) => `${imp.baseUrl.replace(/\/+$/, "")}/q/${e.token}`;
+const urlDe = (e) => `${baseUrl.value.replace(/\/+$/, "")}/q/${e.token}`;
 // Pré-visualização cabe em ~320px de largura.
 const escalaPrevia = computed(() => Math.min(1.6, 320 / (imp.larguraMm * 3.78)));
 
@@ -185,7 +191,7 @@ function confirmarReimpressao() {
 function imprimirNavegador() {
   if (!confirmarReimpressao()) return;
   const ids = paraImprimir.value.map((e) => e.id).join(",");
-  const q = new URLSearchParams({ ids, w: imp.larguraMm, h: imp.alturaMm, base: imp.baseUrl.replace(/\/+$/, "") });
+  const q = new URLSearchParams({ ids, w: imp.larguraMm, h: imp.alturaMm });
   window.open(`/etiquetas/imprimir?${q}`, "_blank");
 }
 
@@ -194,7 +200,7 @@ async function baixarZpl() {
   if (!confirmarReimpressao()) return;
   try {
     const zpl = await api.baixarZpl({
-      ids: paraImprimir.value.map((e) => e.id), larguraMm: imp.larguraMm, alturaMm: imp.alturaMm, dpi: Number(imp.dpi), baseUrl: imp.baseUrl,
+      ids: paraImprimir.value.map((e) => e.id), larguraMm: imp.larguraMm, alturaMm: imp.alturaMm, dpi: Number(imp.dpi),
     });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([zpl], { type: "text/plain" }));
@@ -263,33 +269,25 @@ async function cancelar(e) {
             <option v-for="d in cfgImpressao.dpis" :key="d" :value="d">{{ d }} dpi{{ d === 203 ? " (mais comum)" : "" }}</option>
           </select>
         </div>
-        <div class="campo" style="grid-column: 1 / -1">
-          <label>Endereço que o celular vai abrir (vai dentro do QR)</label>
-          <input v-model.trim="imp.baseUrl" list="sugestoes-endereco" placeholder="http://192.168.0.10:5174" />
-          <datalist id="sugestoes-endereco">
-            <option v-if="cfgImpressao.urlPublica" :value="cfgImpressao.urlPublica">Configurado no sistema</option>
-            <option v-for="s in cfgImpressao.sugestoes" :key="s.url" :value="s.url">{{ s.rotulo }}</option>
-          </datalist>
-          <span v-if="enderecoProblema" class="dica txt-VENCIDO">{{ enderecoProblema }}</span>
-          <span v-else class="dica">
-            Teste na rede local: o IP deste computador (o celular precisa estar no mesmo Wi-Fi). Quando publicar online, troque pelo endereço
-            online <strong>antes</strong> de imprimir — etiquetas já impressas continuam apontando para o endereço antigo.
-          </span>
+        <div v-if="enderecoProblema" class="campo erro" style="grid-column: 1 / -1; margin: 0">
+          {{ enderecoProblema }}
+          <router-link v-if="auth.pode('administrar')" to="/configuracoes?aba=etiquetas">Configurar agora</router-link>
+          <span v-else>Peça a um administrador (Configurações → Etiquetas QR).</span>
         </div>
       </div>
       <div class="previa">
         <div class="mudo pequeno" style="margin-bottom: 6px">Pré-visualização ({{ imp.larguraMm }} × {{ imp.alturaMm }} mm)</div>
-        <div v-if="exemplo" class="previa-caixa" :style="{ width: `${imp.larguraMm * 3.78 * escalaPrevia}px`, height: `${imp.alturaMm * 3.78 * escalaPrevia}px` }">
+        <div v-if="exemplo && baseUrl" class="previa-caixa" :style="{ width: `${imp.larguraMm * 3.78 * escalaPrevia}px`, height: `${imp.alturaMm * 3.78 * escalaPrevia}px` }">
           <div :style="{ transform: `scale(${escalaPrevia})`, transformOrigin: 'top left' }">
             <EtiquetaVisual :codigo="exemplo.codigo" :url="urlDe(exemplo)" :largura-mm="imp.larguraMm" :altura-mm="imp.alturaMm" />
           </div>
         </div>
-        <div v-else class="mudo pequeno">Gere etiquetas para ver a prévia.</div>
+        <div v-else class="mudo pequeno">{{ exemplo ? "A prévia aparece depois de configurar o endereço do QR." : "Gere etiquetas para ver a prévia." }}</div>
       </div>
     </div>
     <div class="linha" style="margin-top: 12px">
-      <button class="primario" :disabled="!auth.pode('etiquetas.emitir') || !selecionadas.size || !!enderecoProblema" @click="imprimirNavegador">🖨 Imprimir pelo navegador</button>
-      <button :disabled="!auth.pode('etiquetas.emitir') || !selecionadas.size || !!enderecoProblema" @click="baixarZpl">⬇ Baixar arquivo ZPL (Zebra)</button>
+      <button class="primario" :disabled="!auth.pode('etiquetas.emitir') || !paraImprimir.length || !baseUrl || !!enderecoProblema" @click="imprimirNavegador">🖨 Imprimir pelo navegador</button>
+      <button :disabled="!auth.pode('etiquetas.emitir') || !paraImprimir.length || !baseUrl || !!enderecoProblema" @click="baixarZpl">⬇ Baixar arquivo ZPL (Zebra)</button>
       <span class="mudo pequeno">
         Navegador: escolha a Zebra e o mesmo tamanho de papel na janela de impressão, margens "Nenhuma", escala 100%.
         ZPL: envie o arquivo direto à impressora (ex.: Zebra Setup Utilities → "Enviar arquivo").
