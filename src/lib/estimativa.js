@@ -75,7 +75,8 @@ function nivelRisco(folgaHoras, limiteAtencaoHoras) {
  * c: container (datas, status, freeTimeDias, valorDiaria, moeda, deadline, metaEstadiaHoras)
  * ctx: { kmIda, fonteIda, kmVolta, fonteVolta, filaEntregaHoras, tempoFabricaHoras, fonteTempoFabrica, amostrasFabrica }
  * cfg: { rodagemInicioMin, rodagemFimMin, kmPorDia, riscoFolgaHoras }
- * Container PROGRAMADO é simulado como "se a coleta fosse agora" (hipotetico = true).
+ * Container PROGRAMADO é simulado com a coleta na data programada (ou agora, se não houver ou já
+ * tiver passado) — hipotetico = true.
  */
 export function estimarCiclo(c, ctx, agora, cfg) {
   if (["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)) return null;
@@ -92,7 +93,8 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   // Evento futuro nunca é previsto no passado: se já devia ter acontecido e não aconteceu, é "agora".
   const futuro = (d) => maisTarde(d, agora);
 
-  const coleta = aconteceu(c.coletadoEm) ?? agora;
+  // Ainda não coletado: simula a coleta na data programada (ou agora, se ela já passou/não existe).
+  const coleta = aconteceu(c.coletadoEm) ?? futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
   const chegadaFabrica = aconteceu(c.chegadaFabricaEm) ?? futuro(chegadaDoTrecho(coleta, ctx.kmIda, cfg));
   const saidaFabrica = aconteceu(c.saidaFabricaEm) ?? futuro(new Date(chegadaFabrica.getTime() + ctx.tempoFabricaHoras * HORA));
   const chegadaPorto = futuro(chegadaDoTrecho(saidaFabrica, ctx.kmVolta, cfg));
@@ -119,6 +121,8 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   return {
     disponivel: true,
     hipotetico,
+    // Coleta usada na simulação (programada ou agora) — só quando ainda não coletado.
+    coletaSimulada: hipotetico ? coleta : null,
     trechos,
     previsaoChegadaFabrica: chegadaFabrica,
     previsaoSaidaFabrica: saidaFabrica,

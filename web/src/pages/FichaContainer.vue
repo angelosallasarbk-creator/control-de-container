@@ -172,22 +172,50 @@ function irPara(chave) {
   }
 }
 
-// ----- Etapas (planejado × realizado) -----
+// ----- Etapas: Planejado (plano congelado) × ETA (previsão atualizada) × Realizado -----
+// Tolerância (Configurações → Geral): realizado até X min depois do planejado ainda conta como "no prazo".
+const TOLERANCIA_MIN = computed(() => c.value?.toleranciaPlanejadoMinutos ?? 60);
+const ETA_DA_ETAPA = {
+  COLETADO: (x) => x.coletaSimulada,
+  NA_FABRICA: (x) => x.previsaoChegadaFabrica,
+  SAIU_FABRICA: (x) => x.previsaoSaidaFabrica,
+  ENTREGUE_PORTO: (x) => x.previsaoEntrega,
+};
+const minutosEntre = (a, b) => (new Date(a) - new Date(b)) / 60000;
 const etapas = computed(() => {
   if (!c.value) return [];
   const atual = FLUXO.indexOf(c.value.status);
+  const cancelado = c.value.status === "CANCELADO";
+  const agora = new Date();
   return FLUXO.map((etapa, i) => {
     const realizado = etapa === "PROGRAMADO" ? c.value.criadoEm : c.value[CAMPO_DATA[etapa]];
-    const planejado = etapa === "COLETADO" ? c.value.coletaProgramadaEm : null;
+    const feita = Boolean(realizado) && (cancelado || i <= atual);
+    // Sem plano congelado (sem trajeto completo), a coleta programada vale como planejado da coleta.
+    const planejado = c.value.planejamento?.[etapa] ?? (etapa === "COLETADO" ? c.value.coletaProgramadaEm : null);
+    const eta = !feita && !cancelado && p.value && ETA_DA_ETAPA[etapa] ? ETA_DA_ETAPA[etapa](p.value) : null;
+    let situacao = "futura";
+    let desvioMin = null;
+    if (feita) {
+      desvioMin = planejado ? minutosEntre(realizado, planejado) : null;
+      situacao = desvioMin !== null && desvioMin > TOLERANCIA_MIN.value ? "atrasou" : "ok";
+    } else if (!cancelado && planejado && minutosEntre(agora, planejado) > TOLERANCIA_MIN.value) {
+      situacao = "pendenteAtrasada";
+      desvioMin = minutosEntre(agora, planejado);
+    } else if (!cancelado && i === atual + 1) {
+      situacao = "pendente";
+    }
+    const etaDesvioMin = eta && planejado ? minutosEntre(eta, planejado) : null;
     return {
-      etapa, nome: rotuloEtapa(c.value, etapa), planejado, realizado,
-      feita: Boolean(realizado) && (c.value.status === "CANCELADO" || i <= atual),
+      etapa, nome: rotuloEtapa(c.value, etapa), planejado, eta, realizado, feita, situacao, desvioMin, etaDesvioMin,
       atual: i === atual,
-      pendente: c.value.status !== "CANCELADO" && i === atual + 1,
-      atrasada: etapa === "COLETADO" && s.value.atrasoColeta?.atrasada ? s.value.atrasoColeta.situacao : null,
     };
   });
 });
+const fmtDesvio = (min) => `+${fmtHoras(min / 60)}`;
+
+// ----- Visão geral: "Situação da operação" (etapa atual → próxima, com prazo e atraso) -----
+const proximaEtapa = computed(() => (proximo.value ? etapas.value.find((e) => e.etapa === proximo.value) : null));
+const temperaturaAtual = computed(() => (c.value?.reefer ? s.value.temperatura ?? null : null));
 
 // ----- Menu "⋮" -----
 const menuAberto = ref(false);
@@ -434,6 +462,67 @@ function reconhecido() {
         <!-- Visão geral -->
         <div v-if="aba === 'geral'" class="geral">
           <div class="coluna">
+            <div class="card situacao-op">
+              <h2 style="margin-bottom: 2px">Situação da operação</h2>
+              <p class="mudo" style="margin: 0 0 12px">Acompanhe o estágio atual e a próxima etapa programada.</p>
+              <div class="sit-caixa">
+                <div class="sit-trilha">
+                  <div class="sit-passo">
+                    <span class="sit-ponto cheio"></span>
+                    <div><div class="sit-rotulo">Etapa atual</div><div class="sit-nome">{{ rotuloEtapa(c, c.status) }}</div></div>
+                  </div>
+                  <div v-if="proximaEtapa" class="sit-passo">
+                    <span class="sit-ponto"></span>
+                    <div><div class="sit-rotulo">Próxima etapa</div><div class="sit-nome">{{ proximaEtapa.nome }}</div></div>
+                  </div>
+                  <div v-else class="sit-passo">
+                    <span class="sit-ponto"></span>
+                    <div><div class="sit-rotulo">Próxima etapa</div><div class="sit-nome mudo">{{ c.status === "CANCELADO" ? "Cancelado" : "Ciclo encerrado" }}</div></div>
+                  </div>
+                </div>
+
+                <dl v-if="proximaEtapa" class="sit-detalhes">
+                  <dt>{{ proximaEtapa.planejado ? "Programada para" : "Prevista para" }}</dt>
+                  <dd>
+                    <Icone nome="calendario" :tamanho="16" />
+                    {{ proximaEtapa.planejado ? fmtDataHora(proximaEtapa.planejado) : proximaEtapa.eta ? fmtDataHora(proximaEtapa.eta) : "—" }}
+                  </dd>
+                  <dt>Situação</dt>
+                  <dd><span class="chip amarelo">Pendente</span></dd>
+                  <dt>Atraso</dt>
+                  <dd>
+                    <span v-if="proximaEtapa.situacao === 'pendenteAtrasada'" class="chip laranja"><Icone nome="relogio" :tamanho="14" /> Atraso de {{ fmtHoras(proximaEtapa.desvioMin / 60) }}</span>
+                    <span v-else-if="proximaEtapa.planejado" class="chip verde">No prazo</span>
+                    <span v-else class="mudo">—</span>
+                  </dd>
+                  <dd v-if="auth.pode('containers.operar')" class="sit-acao">
+                    <button class="primario" @click="abrirAvancar"><Icone nome="caminhao" :tamanho="18" /> {{ acaoEtapa(c, proximo) }}</button>
+                  </dd>
+                </dl>
+                <div v-else class="sit-detalhes mudo">
+                  {{ c.status === "CANCELADO" ? `Cancelado em ${fmtDataHora(c.canceladoEm)}.` : `Entregue em ${fmtDataHora(c.entreguePortoEm)}.` }}
+                </div>
+
+                <div v-if="c.reefer" class="sit-temp">
+                  <div class="sit-temp-linha">
+                    <span class="sit-floco"><Icone nome="floco" :tamanho="34" /></span>
+                    <div>
+                      <div class="sit-temp-rotulo">Temperatura</div>
+                      <div class="sit-temp-valor" :class="temperaturaAtual?.foraDaFaixa ? 'txt-VENCIDO' : temperaturaAtual?.ultima ? 'txt-OK' : 'mudo'">
+                        {{ temperaturaAtual?.ultima ? fmtTemp(temperaturaAtual.ultima.temperatura) : "—" }}
+                      </div>
+                    </div>
+                  </div>
+                  <span v-if="temperaturaAtual?.foraDaFaixa" class="sit-faixa fora"><Icone nome="exclamacao" :tamanho="18" /> Fora da faixa</span>
+                  <span v-else-if="temperaturaAtual?.ultima" class="sit-faixa dentro"><Icone nome="ok" :tamanho="18" /> Dentro da faixa</span>
+                  <span v-else class="mudo pequeno">Sem leitura</span>
+                  <div class="mudo pequeno">
+                    Faixa {{ fmtTemp(c.tempMin) }} a {{ fmtTemp(c.tempMax) }}<template v-if="temperaturaAtual?.ultima"> · há {{ tempoDesde(temperaturaAtual.ultima.lidaEm) }}</template>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="card">
               <h2>Alertas abertos</h2>
               <table v-if="alertasAbertos.length">
@@ -517,26 +606,50 @@ function reconhecido() {
           <p class="mudo" style="margin: 0 0 14px">Acompanhe o status e os horários de cada etapa da operação.</p>
           <div class="tabela-wrap">
             <table class="fluxo">
-              <thead><tr><th>Etapa</th><th>Planejado</th><th>Realizado</th></tr></thead>
+              <thead><tr><th>Etapa</th><th>Planejado</th><th>ETA</th><th>Realizado</th></tr></thead>
               <tbody>
                 <tr v-for="(e, i) in etapas" :key="e.etapa" :class="{ feita: e.feita, atual: e.atual }">
                   <td>
-                    <span class="marco" :class="{ feita: e.feita, atrasada: e.atrasada, ultimo: i === etapas.length - 1 }"></span>
+                    <span class="marco" :class="{ feita: e.feita, atrasada: e.situacao === 'pendenteAtrasada', ultimo: i === etapas.length - 1 }"></span>
                     <span class="nome-etapa">{{ e.nome }}</span>
-                    <span v-if="e.atrasada" class="chip" :class="e.atrasada === 'VENCIDO' ? 'vermelho' : 'amarelo'" style="margin-left: 8px">Atrasada</span>
+                    <span v-if="e.situacao === 'pendenteAtrasada'" class="chip amarelo" style="margin-left: 8px">Atrasada</span>
                   </td>
                   <td>{{ e.planejado ? fmtDataHora(e.planejado) : "—" }}</td>
                   <td>
-                    <template v-if="e.feita">{{ fmtDataHora(e.realizado) }}</template>
-                    <span v-else-if="e.pendente && (e.planejado || e.atrasada)" class="chip amarelo">Pendente</span>
+                    <template v-if="e.eta">
+                      <span :class="e.etaDesvioMin > TOLERANCIA_MIN ? 'txt-VENCIDO' : ''">{{ fmtDataHora(e.eta) }}</span>
+                      <div v-if="e.etaDesvioMin > TOLERANCIA_MIN" class="pequeno txt-VENCIDO">{{ fmtDesvio(e.etaDesvioMin) }} do planejado</div>
+                    </template>
                     <template v-else>—</template>
+                  </td>
+                  <td class="realizado" :class="`r-${e.situacao}`">
+                    <span class="r-conteudo">
+                      <span v-if="e.feita">
+                        {{ fmtDataHora(e.realizado) }}
+                        <div v-if="e.situacao === 'atrasou'" class="pequeno">{{ fmtDesvio(e.desvioMin) }} do planejado</div>
+                      </span>
+                      <span v-else-if="e.situacao === 'pendenteAtrasada'">Pendente<div class="pequeno">{{ fmtDesvio(e.desvioMin) }} do planejado</div></span>
+                      <span v-else-if="e.situacao === 'pendente'" class="mudo">Pendente</span>
+                      <span v-else>—</span>
+                      <Icone v-if="e.situacao === 'ok'" nome="ok" :tamanho="22" />
+                      <Icone v-else-if="e.situacao === 'atrasou' || e.situacao === 'pendenteAtrasada'" nome="relogio" :tamanho="22" />
+                    </span>
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
+          <p class="mudo pequeno" style="margin: 10px 0 0">
+            <template v-if="c.planejamento">
+              <strong>Planejado</strong>: primeira previsão do ciclo, gravada em {{ fmtDataHora(c.planejamento.geradoEm) }} e que não muda mais.
+            </template>
+            <template v-else><strong>Planejado</strong>: é gravado na primeira previsão completa (precisa do trajeto com retirada, carregamento e entrega).</template>
+            <strong>ETA</strong>: previsão atualizada com o que já aconteceu. <strong>Realizado</strong>: o que foi registrado — verde no prazo, vermelho com mais de {{ fmtHoras(TOLERANCIA_MIN / 60) }} de atraso sobre o planejado
+            (tolerância em Configurações → Geral).
+          </p>
         </div>
 
+        <!-- (fim da aba Etapas) -->
         <!-- Trajeto -->
         <div v-if="aba === 'trajeto'" class="card">
           <div class="linha-entre" style="margin-bottom: 10px; flex-wrap: wrap; gap: 8px">
@@ -781,6 +894,33 @@ function reconhecido() {
 .abas-ficha button:hover:not(:disabled) { background: none; color: var(--primaria); }
 .abas-ficha button.ativa { color: var(--primaria); border-bottom-color: var(--primaria); font-weight: 700; }
 
+/* Situação da operação — o layout acompanha a largura do próprio quadro (container query),
+   que varia com o menu lateral e a coluna da Visão geral, não só com a tela. */
+.situacao-op { container-type: inline-size; }
+.sit-caixa { display: grid; grid-template-columns: minmax(170px, auto) minmax(0, 1fr) auto; gap: 0; border: 1px solid var(--borda); border-radius: 10px; background: var(--superficie-2); }
+.sit-caixa > * { padding: 16px 18px; }
+.sit-caixa > * + * { border-left: 1px solid var(--borda); }
+.sit-trilha { display: flex; flex-direction: column; gap: 22px; position: relative; }
+.sit-passo { display: flex; gap: 12px; align-items: flex-start; position: relative; }
+.sit-ponto { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #8a97a8; background: var(--superficie); margin-top: 12px; flex-shrink: 0; position: relative; z-index: 1; }
+.sit-ponto.cheio { background: var(--primaria); border-color: var(--primaria); }
+.sit-passo:first-child .sit-ponto::after { content: ""; position: absolute; left: 4px; top: 12px; width: 2px; height: 48px; background: var(--primaria); }
+.sit-rotulo { font-size: 12px; color: var(--texto-2); }
+.sit-nome { font-size: 17px; font-weight: 700; }
+.sit-detalhes { display: grid; grid-template-columns: auto 1fr; gap: 10px 16px; align-items: center; margin: 0; align-content: start; }
+.sit-detalhes dt { font-size: 13px; color: var(--texto-2); white-space: nowrap; }
+.sit-detalhes dd { margin: 0; display: flex; align-items: center; gap: 6px; }
+.sit-acao { grid-column: 1 / -1; margin-top: 4px !important; }
+.chip.laranja { background: #fde7cf; color: #b45309; display: inline-flex; align-items: center; gap: 4px; }
+.sit-temp { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; min-width: 210px; }
+.sit-temp-linha { display: flex; gap: 12px; align-items: center; }
+.sit-floco { color: var(--primaria); display: inline-flex; padding: 8px; border: 1px solid var(--borda); border-radius: 10px; background: var(--superficie); }
+.sit-temp-rotulo { font-size: 13px; font-weight: 700; color: var(--texto-2); }
+.sit-temp-valor { font-size: 28px; font-weight: 800; line-height: 1.1; }
+.sit-faixa { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font-weight: 600; }
+.sit-faixa.fora { background: var(--vermelho-fundo); color: var(--vermelho); border: 1px solid #f4b4b4; }
+.sit-faixa.dentro { background: var(--verde-fundo); color: var(--verde); border: 1px solid #b7e2c7; }
+
 /* Visão geral */
 .geral { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .coluna { display: flex; flex-direction: column; gap: 14px; }
@@ -797,8 +937,24 @@ function reconhecido() {
 .marco.feita::after { background: var(--primaria); }
 .marco.ultimo::after { display: none; }
 .fluxo tr.atual .nome-etapa { font-weight: 700; }
+/* Realizado × Planejado: verde = no prazo (até 1h de tolerância); vermelho = atrasou ou está atrasado */
+.realizado .r-conteudo { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.realizado.r-ok { background: var(--verde-fundo); color: var(--verde); }
+.realizado.r-ok .r-conteudo > span:first-child { color: var(--texto); }
+.realizado.r-atrasou, .realizado.r-pendenteAtrasada { background: var(--vermelho-fundo); color: var(--vermelho); }
 .nome-etapa { font-weight: 500; }
 
+@container (max-width: 760px) {
+  /* Temperatura desce para baixo */
+  .sit-caixa { grid-template-columns: minmax(160px, auto) minmax(0, 1fr); }
+  .sit-temp { grid-column: 1 / -1; border-left: none !important; border-top: 1px solid var(--borda); flex-direction: row; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+}
+@container (max-width: 560px) {
+  /* Tudo empilhado */
+  .sit-caixa { grid-template-columns: 1fr; }
+  .sit-caixa > * + * { border-left: none !important; border-top: 1px solid var(--borda); }
+  .sit-temp { grid-column: auto; }
+}
 @media (max-width: 1100px) {
   .mestre-detalhe { grid-template-columns: 1fr; }
   .so-largo { display: none; }

@@ -270,7 +270,8 @@ export function alertasDesejados(c, situacao) {
   // DEMURRAGE/DEADLINE de verdade já está aberto e o "risco" seria redundante.
   const p = situacao.previsao;
   if (p?.disponivel) {
-    const seColetarAgora = p.hipotetico ? "Mesmo coletando agora, a" : "A";
+    const naProgramada = p.hipotetico && p.coletaSimulada && new Date(p.coletaSimulada) - Date.now() > 60e3; // mensagem gerada na hora
+    const seColetarAgora = p.hipotetico ? (naProgramada ? `Coletando na data programada (${fmtQuando(p.coletaSimulada)}), a` : "Mesmo coletando agora, a") : "A";
     if (demurrage?.situacao !== "VENCIDO" && ["ATENCAO", "CRITICO"].includes(p.riscoDemurrage)) {
       alertas.push({
         tipo: "RISCO_DEMURRAGE",

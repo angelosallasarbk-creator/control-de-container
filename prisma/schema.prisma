@@ -224,6 +224,9 @@ model Container {
   navio         String?
   deadline      DateTime?       // cut-off de entrega no terminal
   coletaProgramadaEm DateTime?  // data/hora programada da coleta (passou sem coleta → alerta de atraso)
+  // Plano congelado: primeira previsão completa (coleta, chegada, saída, entrega), gravada uma vez
+  // e nunca alterada — base do "Planejado" × "Realizado" da aba Etapas.
+  planejamento  Json?
   placa         String?
   motorista     String?
   posicaoPatio  String?

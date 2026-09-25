@@ -73,8 +73,14 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
   - **À direita,** o cabeçalho com número, etapa, tipo e rota, a ação da próxima etapa, Editar e o menu ⋮ (desfazer ou cancelar).
   - **Faixas coloridas** do que exige ação agora: atraso na coleta, temperatura fora da faixa, leitura atrasada, estadia, demurrage e deadline.
   - **Seis indicadores:** ciclo estimado, distância total, ETA, folga do free time, estadia e deadline.
-  - **Abas:** Visão geral (alertas abertos, prazos e dados), Etapas (fluxo planejado × realizado), Trajeto, Temperatura (leitura manual e gráfico) e Histórico. A aba escolhida fica lembrada.
+  - **Abas:** Visão geral (alertas abertos, prazos e dados), Etapas (Planejado × ETA × Realizado, ver abaixo), Trajeto, Temperatura (leitura manual e gráfico) e Histórico. A aba escolhida fica lembrada.
   - **Tela estreita:** mostra só o detalhe, com "← Containers".
+  - **Aba Etapas:**
+    - **Planejado:** é o plano congelado, gravado na primeira previsão completa do ciclo. Isso acontece no cadastro, ou quando o trajeto for completado depois, desde que o container ainda não tenha chegado ao carregamento. O plano parte da coleta programada, se houver, e **nunca muda**.
+    - **ETA:** é a previsão atualizada com o que já aconteceu, a mesma da aba Trajeto. Aparece em vermelho, com "+Xh", quando passa do planejado.
+    - **Realizado:** é o que foi registrado por um usuário ou de forma automática. Fica verde com ✓ quando está no prazo e vermelho com ⏱ quando atrasou ou está pendente depois do planejado. A tolerância é ajustável em *Configurações → Geral* ("Tolerância do no prazo nas etapas", padrão 60 min).
+- **Menu:** as seções Cadastros e Administração recolhem e expandem. O estado fica lembrado, e a seção da tela aberta fica sempre visível.
+- **Previsão de container "Programado":** a simulação parte da **coleta programada**. Se ela não existir ou já tiver passado, parte de agora.
 - **Alertas**: abertos e histórico. Faixa vermelha no topo + sino + bipe quando surge alerta crítico não reconhecido (consulta a cada 30 s).
 - **Custo estimado**: custo de estadia e demurrage por **abas de Região** e, dentro delas, **abas de Ponto de Carregamento** (mais a "Visão geral"). Tem filtro de período (30/90 dias, 6/12 meses, mês atual/anterior, personalizado); indicadores; gráfico de tendência empilhado estadia × demurrage (por dia, semana ou mês, conforme o período); ranking por Ponto de Carregamento; **principais impactos** gerados automaticamente (estadia × demurrage, concentração por cliente e por armador, etapa em que o tempo foi perdido, estouros de meta, variação entre as metades do período, horas sem custo/h); detalhamento por container com tempo em cada trecho e exportação CSV (Excel).
   - O custo é lançado **no dia em que ocorre**: cada diária de demurrage no dia cobrado, cada hora além da meta de estadia no dia em que passou. Containers ativos contam até agora; cancelados não entram.

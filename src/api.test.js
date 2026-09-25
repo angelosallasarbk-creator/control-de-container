@@ -928,3 +928,60 @@ test("mensagem do alerta aberto acompanha o tempo (não fica congelada no texto 
   assert.match(depois.mensagem, /atrasada há 2h/);
   await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste" });
 });
+
+test("plano congelado: gravado na primeira previsão completa e nunca alterado", async () => {
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const g = await ativo("grupos");
+  const a = await ativo("armadores");
+  // +30h: bem longe de "agora", para a janela de rodagem (5h–22h) não igualar as previsões.
+  const programada = new Date(Date.now() + 30 * 3600e3);
+  // Sem trajeto: ainda não há previsão, então não há plano.
+  const semRota = await agentes.ADMIN.post("/api/containers").send({ numero: "PLNU8000008", confirmarDigito: true, tipo: "DRY_40", grupoId: g, armadorId: a, coletaProgramadaEm: programada });
+  assert.equal(semRota.status, 201);
+  assert.equal(semRota.body.planejamento, null);
+  // Trajeto completado depois (ainda programado): o plano nasce aí.
+  const comRota = await agentes.OPERADOR.patch(`/api/containers/${semRota.body.id}`).send({ portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos });
+  assert.equal(comRota.status, 200);
+  const plano = comRota.body.planejamento;
+  assert.ok(plano?.geradoEm, "plano gerado ao completar o trajeto");
+  assert.equal(new Date(plano.COLETADO).getTime(), programada.getTime(), "coleta planejada = coleta programada");
+  assert.ok(new Date(plano.NA_FABRICA) > new Date(plano.COLETADO) && new Date(plano.SAIU_FABRICA) > new Date(plano.NA_FABRICA) && new Date(plano.ENTREGUE_PORTO) > new Date(plano.SAIU_FABRICA));
+  assert.equal(new Date(comRota.body.situacao.previsao.previsaoEntrega).getTime(), new Date(plano.ENTREGUE_PORTO).getTime(), "no início, ETA = plano");
+
+  // Mudanças depois (reprogramar a coleta, registrar etapas) não mexem no plano; o ETA muda.
+  await agentes.OPERADOR.patch(`/api/containers/${semRota.body.id}`).send({ coletaProgramadaEm: new Date(Date.now() + 10 * 3600e3) });
+  const coletou = await agentes.OPERADOR.post(`/api/containers/${semRota.body.id}/avancar`).send({ statusPara: "COLETADO" });
+  assert.equal(coletou.status, 200);
+  assert.deepEqual(coletou.body.planejamento, plano, "plano não muda");
+  assert.notEqual(new Date(coletou.body.situacao.previsao.previsaoChegadaFabrica).getTime(), new Date(plano.NA_FABRICA).getTime(), "ETA atualizado com a coleta real");
+  await agentes.ADMIN.post(`/api/containers/${semRota.body.id}/cancelar`).send({ motivo: "fim do teste do plano" });
+});
+
+test("plano com coleta programada já vencida: todo o plano parte dela (chegada planejada < ETA)", async () => {
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const g = await ativo("grupos");
+  const a = await ativo("armadores");
+  const programada = new Date(Date.now() - 30 * 3600e3);
+  const c = await agentes.ADMIN.post("/api/containers").send({
+    numero: "PLNU9000009", confirmarDigito: true, tipo: "DRY_40", grupoId: g, armadorId: a, coletaProgramadaEm: programada,
+    portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos,
+  });
+  assert.equal(c.status, 201);
+  const plano = c.body.planejamento;
+  assert.equal(new Date(plano.COLETADO).getTime(), programada.getTime());
+  assert.ok(new Date(plano.NA_FABRICA) < new Date(c.body.situacao.previsao.previsaoChegadaFabrica), "chegada planejada antes do ETA (a coleta atrasou)");
+  assert.ok(new Date(plano.NA_FABRICA) > programada, "chegada planejada depois da coleta planejada");
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste" });
+});
+
+test("tolerância do planejado: configurável em Configurações e enviada com o container", async () => {
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  assert.equal(cfg.toleranciaPlanejadoMinutos, 60, "padrão 60 min");
+  const algum = (await agentes.ADMIN.get("/api/containers?situacao=todos")).body[0];
+  assert.equal((await agentes.ADMIN.get(`/api/containers/${algum.id}`)).body.toleranciaPlanejadoMinutos, 60);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, toleranciaPlanejadoMinutos: -5 })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.put("/api/configuracao").send({ ...cfg, toleranciaPlanejadoMinutos: 90 })).status, 403, "só administrador");
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, toleranciaPlanejadoMinutos: 180 })).body.toleranciaPlanejadoMinutos, 180);
+  assert.equal((await agentes.ADMIN.get(`/api/containers/${algum.id}`)).body.toleranciaPlanejadoMinutos, 180);
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+});

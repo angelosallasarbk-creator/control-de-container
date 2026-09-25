@@ -3,6 +3,7 @@ import { lerConfiguracao } from "./configuracao.js";
 import { calcularSituacao, alertasDesejados, STATUS_ENCERRADOS } from "./prazos.js";
 import { estimarCiclo } from "./estimativa.js";
 import { montarContextos, configRodagem } from "./previsao.js";
+import { congelarPlanoSeFaltar } from "./planejamento.js";
 
 // Leituras suficientes para achar o início de uma sequência fora da faixa sem carregar o histórico todo.
 const LEITURAS_AVALIADAS = 200;
@@ -29,6 +30,11 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
   const cfg = config ?? (await lerConfiguracao());
   const [leituras, contextos] = await Promise.all([leiturasRecentes(containerId), montarContextos([container], cfg)]);
   const previsao = estimarCiclo(container, contextos.get(containerId), agora, configRodagem(cfg));
+  // O plano parte da coleta programada mesmo que ela já tenha passado (a previsão "ao vivo" não
+  // simula no passado): assim coleta, chegada, saída e entrega planejadas ficam coerentes entre si.
+  const basePlano = !container.coletadoEm && container.coletaProgramadaEm ? new Date(container.coletaProgramadaEm) : null;
+  const previsaoPlano = basePlano && basePlano < agora ? estimarCiclo(container, contextos.get(containerId), basePlano, configRodagem(cfg)) : previsao;
+  await congelarPlanoSeFaltar(container, previsaoPlano, agora);
   const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao, cfg.atrasoColetaCriticoHoras);
   const desejados = alertasDesejados(container, situacao);
   const chavesDesejadas = new Set(desejados.map((a) => chaveAlerta(containerId, a.tipo, a.nivel)));

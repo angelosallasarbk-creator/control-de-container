@@ -43,6 +43,8 @@ export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = nul
     portoEntrega: c.portoEntrega ? decimaisParaNumero(c.portoEntrega, CAMPOS_LOCAL) : c.portoEntrega,
     // Nome das etapas conforme o tipo dos locais (ex.: COLETADO → "Coleta ferroviária").
     rotulosEtapa: rotulosDasEtapas(c),
+    // Configurações → Geral: tolerância do "no prazo" na aba Etapas (planejado × realizado).
+    toleranciaPlanejadoMinutos: config.toleranciaPlanejadoMinutos,
     situacao,
     semaforo: semaforo(situacao),
   };

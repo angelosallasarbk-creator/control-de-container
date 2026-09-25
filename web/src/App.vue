@@ -196,6 +196,32 @@ function trocarVisao(valor) {
   if (valor === "tabela" && route.name !== "containers") router.push("/containers");
 }
 
+// Seções do menu recolhíveis (Cadastros, Administração): estado lembrado neste navegador; a
+// seção da tela aberta fica sempre expandida para o item ativo não sumir.
+const CHAVE_SECOES = "cc_menu_secoes";
+const SECAO_DA_ROTA = [
+  ["cadastros", ["/cadastros", "/locais"]],
+  ["administracao", ["/usuarios", "/integracao", "/configuracoes"]],
+];
+function lerSecoes() {
+  try {
+    return JSON.parse(localStorage.getItem(CHAVE_SECOES) || "{}");
+  } catch {
+    return {};
+  }
+}
+const secoes = ref(lerSecoes());
+const secaoDaRota = computed(() => SECAO_DA_ROTA.find(([, prefixos]) => prefixos.some((p) => route.path.startsWith(p)))?.[0]);
+const secaoAberta = (nome) => secaoDaRota.value === nome || secoes.value[nome] !== false;
+function alternarSecao(nome) {
+  secoes.value = { ...secoes.value, [nome]: !secaoAberta(nome) };
+  try {
+    localStorage.setItem(CHAVE_SECOES, JSON.stringify(secoes.value));
+  } catch {
+    // sem armazenamento: só não lembra
+  }
+}
+
 const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 </script>
 
@@ -234,20 +260,34 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           Alertas
           <span v-if="resumo?.total" class="chip" :class="resumo.criticos ? 'vermelho' : 'amarelo'">{{ resumo.total }}</span>
         </router-link>
-        <router-link to="/custos">Custo estimado</router-link>
         <router-link to="/etiquetas" :class="{ ativo: route.path.startsWith('/etiquetas') }">Etiquetas QR</router-link>
         <router-link to="/leitura">Registrar pelo código</router-link>
-        <div class="lateral-secao">Cadastros</div>
-        <router-link to="/cadastros/regioes">Regiões</router-link>
-        <router-link to="/locais">Locais</router-link>
-        <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
-        <router-link to="/cadastros/armadores">Armadores</router-link>
-        <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
+        <router-link to="/custos">Custo estimado</router-link>
+        <button
+          type="button" class="lateral-secao" :aria-expanded="secaoAberta('cadastros')" aria-controls="menu-cadastros"
+          @click="alternarSecao('cadastros')"
+        >
+          <span>Cadastros</span><span class="seta-secao" :class="{ aberta: secaoAberta('cadastros') }" aria-hidden="true">›</span>
+        </button>
+        <div v-show="secaoAberta('cadastros')" id="menu-cadastros" class="sub-itens">
+          <router-link to="/cadastros/regioes">Regiões</router-link>
+          <router-link to="/locais">Locais</router-link>
+          <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
+          <router-link to="/cadastros/armadores">Armadores</router-link>
+          <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
+        </div>
         <template v-if="auth.pode('administrar') || auth.pode('auditoria.ver')">
-          <div class="lateral-secao">Administração</div>
-          <router-link v-if="auth.pode('administrar')" to="/usuarios">Usuários</router-link>
-          <router-link v-if="auth.pode('administrar')" to="/integracao">Integração</router-link>
-          <router-link to="/configuracoes">Configurações e log</router-link>
+          <button
+            type="button" class="lateral-secao" :aria-expanded="secaoAberta('administracao')" aria-controls="menu-administracao"
+            @click="alternarSecao('administracao')"
+          >
+            <span>Administração</span><span class="seta-secao" :class="{ aberta: secaoAberta('administracao') }" aria-hidden="true">›</span>
+          </button>
+          <div v-show="secaoAberta('administracao')" id="menu-administracao" class="sub-itens">
+            <router-link v-if="auth.pode('administrar')" to="/usuarios">Usuários</router-link>
+            <router-link v-if="auth.pode('administrar')" to="/integracao">Integração</router-link>
+            <router-link to="/configuracoes">Configurações e log</router-link>
+          </div>
         </template>
         </template>
       </nav>

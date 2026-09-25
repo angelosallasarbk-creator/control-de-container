@@ -100,3 +100,15 @@ test("sem locais ou sem distância: indica o que falta", () => {
   assert.match(semKm.faltando[0], /distância retirada/);
   assert.equal(estimarCiclo({ ...base, status: "ENTREGUE_PORTO" }, ctx(1, 1), new Date(), cfg), null);
 });
+
+test("programado com coleta futura: a simulação parte da data programada", () => {
+  const agora = brt("2026-10-10T08:00:00");
+  const c = { ...base, coletaProgramadaEm: brt("2026-10-12T06:00:00") };
+  const p = estimarCiclo(c, ctx(180, 100), agora, cfg);
+  assert.equal(p.hipotetico, true);
+  assert.equal(p.trechos[0].inicio.getTime(), brt("2026-10-12T06:00:00").getTime());
+  assert.equal(p.coletaSimulada.getTime(), brt("2026-10-12T06:00:00").getTime());
+  // Programada já passou: simula a partir de agora.
+  const atrasado = estimarCiclo({ ...base, coletaProgramadaEm: brt("2026-10-09T06:00:00") }, ctx(180, 100), agora, cfg);
+  assert.equal(atrasado.trechos[0].inicio.getTime(), agora.getTime());
+});

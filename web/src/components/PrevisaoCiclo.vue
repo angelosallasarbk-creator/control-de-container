@@ -38,7 +38,7 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
       <span class="chip" :class="COR[p.riscoDemurrage]">Demurrage: {{ TEXTO_RISCO[p.riscoDemurrage] }}</span>
       <span v-if="p.riscoDeadline" class="chip" :class="COR[p.riscoDeadline]">Deadline: {{ TEXTO_RISCO[p.riscoDeadline] }}</span>
       <span class="mudo pequeno">
-        {{ p.hipotetico ? "Simulação: se coletar agora" : "Previsão atualizada com as etapas já registradas" }}
+        {{ p.hipotetico ? (p.coletaSimulada && new Date(p.coletaSimulada) - Date.now() > 60000 ? `Simulação: coleta na data programada (${fmtDataHora(p.coletaSimulada)})` : "Simulação: se coletar agora") : "Previsão atualizada com as etapas já registradas" }}
       </span>
     </div>
 

@@ -109,6 +109,11 @@ onMounted(async () => {
         <span class="dica">Vale para reefer em ovação ou liberado. Passou disso sem leitura: alerta de Atenção; o dobro: Crítico. 0 desliga.</span>
       </div>
       <div class="campo">
+        <label>Tolerância do "no prazo" nas etapas (minutos)</label>
+        <input v-model.number="cfg.toleranciaPlanejadoMinutos" type="number" min="0" max="10080" step="5" required :disabled="!podeEditar" />
+        <span class="dica">Aba Etapas do container: realizado até este tempo depois do planejado fica verde (no prazo); passou disso, vermelho.</span>
+      </div>
+      <div class="campo">
         <label>Atraso na coleta vira crítico após (horas)</label>
         <input v-model.number="cfg.atrasoColetaCriticoHoras" type="number" min="0" max="720" step="0.5" required :disabled="!podeEditar" />
         <span class="dica">Passou da "coleta programada" sem coleta registrada: alerta de Atenção na hora; depois destas horas, Crítico.</span>
