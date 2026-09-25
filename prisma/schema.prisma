@@ -58,6 +58,16 @@ enum NivelAlerta {
 enum OrigemLeitura {
   MANUAL
   INTEGRACAO
+  QRCODE // lançada pelo celular lendo a etiqueta do container
+}
+
+// LIVRE = impressa, ainda sem container; VINCULADA = ligada a uma passagem de container;
+// CANCELADA = substituída/inutilizada. "Encerrada" não é gravada: é deduzida quando o container
+// da etiqueta foi entregue ou cancelado (a etiqueta vai colada nele e vale para uma viagem).
+enum StatusEtiqueta {
+  LIVRE
+  VINCULADA
+  CANCELADA
 }
 
 model Usuario {
@@ -223,6 +233,7 @@ model Container {
   eventos   EventoContainer[]
   leituras  LeituraTemperatura[]
   alertas   Alerta[]
+  etiquetas EtiquetaQR[]
 
   @@index([numero])
   @@index([status])
@@ -253,10 +264,49 @@ model LeituraTemperatura {
   origem       OrigemLeitura
   fonte        String?       // e-mail do operador ou nome do token de integração
   registradaEm DateTime      @default(now())
+  // Leitura pela etiqueta QR: qual etiqueta e (se o celular permitiu) onde foi feita.
+  etiquetaId   Int?
+  etiqueta     EtiquetaQR?   @relation(fields: [etiquetaId], references: [id])
+  latitude     Decimal?      @db.Decimal(9, 6)
+  longitude    Decimal?      @db.Decimal(9, 6)
+  precisaoM    Int?
 
   // Reenvio da mesma leitura (mesmo container e horário) não duplica.
   @@unique([containerId, lidaEm])
   @@index([containerId, lidaEm])
+}
+
+// Lote de etiquetas geradas de uma vez (para reimprimir e rastrear quem gerou).
+model LoteEtiquetas {
+  id          Int          @id @default(autoincrement())
+  quantidade  Int
+  criadoEm    DateTime     @default(now())
+  criadoPor   String
+  etiquetas   EtiquetaQR[]
+}
+
+// Etiqueta QR colada no container. O QR leva uma URL com o `token` (longo, impossível de
+// adivinhar); o `codigo` curto (ex.: CC-7K3F9P) vai impresso para leitura humana/digitação.
+model EtiquetaQR {
+  id            Int            @id @default(autoincrement())
+  codigo        String         @unique
+  token         String         @unique
+  loteId        Int
+  lote          LoteEtiquetas  @relation(fields: [loteId], references: [id])
+  status        StatusEtiqueta @default(LIVRE)
+  containerId   Int?
+  container     Container?     @relation(fields: [containerId], references: [id])
+  vinculadaEm   DateTime?
+  vinculadaPor  String?
+  canceladaEm   DateTime?
+  canceladaPor  String?
+  motivoCancelamento String?
+  criadoEm      DateTime       @default(now())
+  leituras      LeituraTemperatura[]
+
+  @@index([containerId])
+  @@index([loteId])
+  @@index([status])
 }
 
 model Alerta {

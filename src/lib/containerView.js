@@ -1,6 +1,7 @@
 import { calcularSituacao, semaforo, ehReefer } from "./prazos.js";
 import { estimarCiclo } from "./estimativa.js";
 import { configRodagem } from "./previsao.js";
+import { LIMITE_ATRASO_MIN } from "./leituras.js";
 
 const CAMPOS_DECIMAIS = ["custoEstadiaPorHora", "valorDiaria", "setpoint", "tempMin", "tempMax"];
 export const CAMPOS_LOCAL = ["latitude", "longitude", "filaHoras"];
@@ -15,7 +16,13 @@ export function decimaisParaNumero(obj, campos = CAMPOS_DECIMAIS) {
 }
 
 export function serializarLeitura(l) {
-  return { ...l, temperatura: Number(l.temperatura) };
+  const atrasoMin = Math.round((new Date(l.registradaEm) - new Date(l.lidaEm)) / 60000);
+  return {
+    ...decimaisParaNumero(l, ["temperatura", "latitude", "longitude"]),
+    // Horário digitado muito antes de o dado chegar ao sistema (ver LIMITE_ATRASO_MIN).
+    atrasoMin,
+    lancadaComAtraso: atrasoMin > LIMITE_ATRASO_MIN,
+  };
 }
 
 // leiturasAsc: leituras do container da mais antiga para a mais recente.

@@ -10,6 +10,8 @@ import { painelRouter } from "./routes/painel.js";
 import { alertasRouter } from "./routes/alertas.js";
 import { custosRouter } from "./routes/custos.js";
 import { locaisRouter, rotasRouter } from "./routes/locais.js";
+import { etiquetasRouter } from "./routes/etiquetas.js";
+import { qrRouter } from "./routes/qr.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
@@ -39,6 +41,8 @@ export function criarApp() {
   app.use("/api/custos", custosRouter);
   app.use("/api/locais", locaisRouter);
   app.use("/api/rotas", rotasRouter);
+  app.use("/api/etiquetas", etiquetasRouter);
+  app.use("/api/qr", qrRouter);
   app.use("/api/tokens", tokensRouter);
   app.use("/api/usuarios", usuariosRouter);
   app.use("/api/configuracao", configuracaoRouter);

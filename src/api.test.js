@@ -324,6 +324,105 @@ test("cadastro usado não pode ser excluído (só desativado)", async () => {
   assert.equal(r.body.ativo, false);
 });
 
+test("etiquetas QR: gerar, ligar ao container, ler, substituir, encerrar e ZPL", async () => {
+  // Gerar lote: só supervisor/admin.
+  assert.equal((await agentes.VISUALIZACAO.post("/api/etiquetas/lotes").send({ quantidade: 2 })).status, 403);
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 0 })).status, 400);
+  const lote = await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 3 });
+  assert.equal(lote.status, 201);
+  assert.equal(lote.body.etiquetas.length, 3);
+  const [e1, e2, e3] = lote.body.etiquetas;
+  assert.match(e1.codigo, /^CC-[2-9A-HJKMNP-Z]{6}$/);
+  assert.equal(e1.estado, "LIVRE");
+
+  assert.equal((await agentes.OPERADOR.get("/api/qr/token-invalido")).status, 404);
+  assert.equal((await agentes.OPERADOR.get(`/api/qr/${"x".repeat(22)}`)).status, 404);
+  assert.equal((await request(app).get(`/api/qr/${e1.token}`)).status, 401, "exige login");
+  const aberta = await agentes.OPERADOR.get(`/api/qr/${e1.token}`);
+  assert.equal(aberta.body.etiqueta.estado, "LIVRE");
+  assert.equal(aberta.body.podeRegistrar, true);
+  assert.equal((await agentes.VISUALIZACAO.get(`/api/qr/${e1.token}`)).body.podeRegistrar, false);
+
+  // Container reefer ativo para ligar.
+  const armador = await agentes.SUPERVISOR.post("/api/armadores").send({ nome: "Armador QR", freeTimeDias: 10, valorDiaria: 100 });
+  const coleta = new Date(Date.now() - 6 * 3600e3);
+  const cont = await agentes.OPERADOR.post("/api/containers").send({
+    numero: "TGHU9876543", confirmarDigito: true, tipo: "REEFER_40", grupoId: ids.grupo, armadorId: armador.body.id, produtoId: ids.produto, coletadoEm: coleta,
+  });
+  assert.equal(cont.status, 201);
+
+  assert.equal((await agentes.VISUALIZACAO.post(`/api/qr/${e1.token}/vincular`).send({ numero: "TGHU9876543", temperatura: -18 })).status, 403);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e1.token}/vincular`).send({ numero: "ABCU1234567", temperatura: -18 })).status, 404, "container não ativo");
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e1.token}/vincular`).send({ numero: "TGHU9876543" })).status, 400, "reefer exige temperatura");
+  const ligada = await agentes.OPERADOR.post(`/api/qr/${e1.token}/vincular`).send({ numero: "tghu 987654 3", temperatura: "-18,2", latitude: -23.95, longitude: -46.31, precisaoM: 12 });
+  assert.equal(ligada.status, 201);
+  assert.equal(ligada.body.etiqueta.estado, "VINCULADA");
+  assert.equal(ligada.body.container.numero, "TGHU9876543");
+  assert.equal(ligada.body.resultado, "OK");
+  const leitura = await prisma.leituraTemperatura.findFirst({ where: { containerId: cont.body.id }, orderBy: { id: "desc" } });
+  assert.equal(leitura.origem, "QRCODE");
+  assert.equal(leitura.fonte, "operador@teste.local");
+  assert.equal(leitura.etiquetaId, e1.id);
+  assert.equal(Number(leitura.latitude), -23.95);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e1.token}/vincular`).send({ numero: "TGHU9876543", temperatura: -18 })).status, 409, "já ligada");
+
+  // Leituras seguintes pela etiqueta. (Temperatura só é monitorada a partir da chegada na
+  // fábrica — antes o reefer está vazio —, então registra a chegada primeiro.)
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${cont.body.id}/avancar`).send({ statusPara: "NA_FABRICA", ocorridoEm: new Date(Date.now() - 4 * 3600e3) })).status, 200);
+  const url = `/api/qr/${e1.token}/leituras`;
+  assert.equal((await agentes.OPERADOR.post(url).send({ temperatura: -18, lidaEm: new Date(Date.now() + 3600e3) })).status, 400, "futuro");
+  assert.equal((await agentes.OPERADOR.post(url).send({ temperatura: -18, lidaEm: new Date(coleta.getTime() - 3600e3) })).status, 400, "antes da coleta");
+  const fora = await agentes.OPERADOR.post(url).send({ temperatura: -10 });
+  assert.equal(fora.status, 201);
+  assert.equal(fora.body.resultado, "ACIMA");
+  assert.ok(await prisma.alerta.findFirst({ where: { containerId: cont.body.id, tipo: "TEMPERATURA", chaveAberta: { not: null } } }), "alerta de temperatura aberto");
+  const atrasada = new Date(Date.now() - 3 * 3600e3);
+  assert.equal((await agentes.OPERADOR.post(url).send({ temperatura: -18, lidaEm: atrasada })).status, 201);
+  assert.equal((await agentes.OPERADOR.post(url).send({ temperatura: -18, lidaEm: atrasada })).status, 409, "mesma leitura não duplica");
+  const ficha = await agentes.OPERADOR.get(`/api/containers/${cont.body.id}`);
+  const lAtrasada = ficha.body.leituras.find((l) => new Date(l.lidaEm).getTime() === atrasada.getTime());
+  assert.equal(lAtrasada.lancadaComAtraso, true, "lançada 3h depois fica sinalizada");
+  assert.equal(lAtrasada.etiqueta.codigo, e1.codigo);
+  assert.deepEqual(ficha.body.etiquetas.map((x) => x.codigo), [e1.codigo]);
+
+  // Substituição: container já tem etiqueta → pede confirmação; confirmando, a antiga é cancelada.
+  const sem = await agentes.OPERADOR.post(`/api/qr/${e2.token}/vincular`).send({ numero: "TGHU9876543", temperatura: -18, lidaEm: new Date(Date.now() - 60e3) });
+  assert.equal(sem.status, 409);
+  assert.equal(sem.body.codigo, "ETIQUETA_EXISTENTE");
+  assert.equal(sem.body.etiquetaAnterior, e1.codigo);
+  const troca = await agentes.OPERADOR.post(`/api/qr/${e2.token}/vincular`).send({ numero: "TGHU9876543", temperatura: -18, lidaEm: new Date(Date.now() - 60e3), substituir: true });
+  assert.equal(troca.status, 201);
+  assert.equal((await agentes.OPERADOR.get(`/api/qr/${e1.token}`)).body.etiqueta.estado, "CANCELADA");
+  assert.equal((await agentes.OPERADOR.post(url).send({ temperatura: -18 })).status, 409, "etiqueta substituída não recebe leitura");
+
+  // Cancelar etiqueta livre (só supervisor) impede o uso.
+  assert.equal((await agentes.OPERADOR.post(`/api/etiquetas/${e3.id}/cancelar`).send({ motivo: "rasgou" })).status, 403);
+  assert.equal((await agentes.SUPERVISOR.post(`/api/etiquetas/${e3.id}/cancelar`).send({ motivo: "rasgou" })).status, 200);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e3.token}/vincular`).send({ numero: "TGHU9876543", temperatura: -18 })).status, 409);
+
+  // Entregue no porto: etiqueta passa a "encerrada" e não recebe leitura.
+  for (const statusPara of ["EM_OPERACAO", "LIBERADO", "SAIU_FABRICA", "ENTREGUE_PORTO"]) {
+    assert.equal((await agentes.OPERADOR.post(`/api/containers/${cont.body.id}/avancar`).send({ statusPara })).status, 200, statusPara);
+  }
+  assert.equal((await agentes.OPERADOR.get(`/api/qr/${e2.token}`)).body.etiqueta.estado, "ENCERRADA");
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e2.token}/leituras`).send({ temperatura: -18 })).status, 409);
+  const lista = await agentes.SUPERVISOR.get("/api/etiquetas?estado=ENCERRADA");
+  assert.deepEqual(lista.body.map((x) => x.codigo), [e2.codigo]);
+
+  // ZPL e endereço do QR.
+  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "sem-protocolo" })).status, 400);
+  const zpl = await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
+  assert.equal(zpl.status, 200);
+  assert.equal(zpl.text.match(/\^XA/g).length, 2);
+  assert.ok(zpl.text.includes(`http://192.168.0.10:5174/q/${e1.token}`));
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, urlPublica: "192.168.0.10:5174" })).status, 400);
+  const cfg = await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, urlPublica: "http://192.168.0.10:5174/" });
+  assert.equal(cfg.body.urlPublica, "http://192.168.0.10:5174");
+  const imp = await agentes.OPERADOR.get("/api/etiquetas/impressao");
+  assert.equal(imp.body.urlPublica, "http://192.168.0.10:5174");
+  assert.ok(imp.body.modelos.some((m) => m.chave === "50x30"));
+});
+
 test("locais: tipos, coordenadas validadas e busca de endereço sem chave", async () => {
   assert.equal((await agentes.OPERADOR.post("/api/locais").send({ nome: "X", tipo: "PORTO" })).status, 403);
   // Coordenadas trocadas (lat/lon invertidas) caem fora do Brasil.

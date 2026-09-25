@@ -12,6 +12,7 @@ async function request(path, options = {}) {
     const erro = new Error(corpo.erro || `Erro ${res.status} em ${path}`);
     erro.status = res.status;
     erro.codigo = corpo.codigo;
+    erro.dados = corpo;
     throw erro;
   }
   if (res.status === 204) return null;
@@ -41,6 +42,24 @@ export const api = {
   registrarLeitura: (id, dados) => request(`/containers/${id}/leituras`, { method: "POST", body: dados }),
 
   custos: (params) => request(`/custos${qs(params)}`),
+
+  etiquetas: (params) => request(`/etiquetas${qs(params)}`),
+  lotesEtiquetas: () => request("/etiquetas/lotes"),
+  gerarEtiquetas: (quantidade) => request("/etiquetas/lotes", { method: "POST", body: { quantidade } }),
+  cancelarEtiqueta: (id, motivo) => request(`/etiquetas/${id}/cancelar`, { method: "POST", body: { motivo } }),
+  configImpressao: () => request("/etiquetas/impressao"),
+  // ZPL volta como texto (arquivo para a Zebra), não JSON.
+  baixarZpl: async (dados) => {
+    const res = await fetch(`${BASE}/etiquetas/zpl`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).erro || `Erro ${res.status}`);
+    return res.text();
+  },
+
+  qr: (token) => request(`/qr/${token}`),
+  qrVincular: (token, dados) => request(`/qr/${token}/vincular`, { method: "POST", body: dados }),
+  qrLeitura: (token, dados) => request(`/qr/${token}/leituras`, { method: "POST", body: dados }),
 
   locais: (params) => request(`/locais${qs(params)}`),
   criarLocal: (dados) => request("/locais", { method: "POST", body: dados }),

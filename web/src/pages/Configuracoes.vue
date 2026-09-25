@@ -5,7 +5,7 @@ import { useAuthStore } from "../stores/auth.js";
 import { fmtDataHora, minutosParaHora, horaParaMinutos } from "../formato.js";
 
 const auth = useAuthStore();
-const cfg = reactive({ intervaloLeituraMinutos: null, cotacaoUSD: 0, cotacaoEUR: 0 });
+const cfg = reactive({ intervaloLeituraMinutos: null, cotacaoUSD: 0, cotacaoEUR: 0, urlPublica: "" });
 // Janela de rodagem editada como "HH:MM" e gravada em minutos desde 00:00.
 const inicioRodagem = ref("05:00");
 const fimRodagem = ref("22:00");
@@ -64,6 +64,18 @@ async function salvar() {
         <label>Cotação do euro (R$ por € 1)</label>
         <input v-model="cfg.cotacaoEUR" type="number" min="0" step="0.0001" :disabled="!auth.pode('administrar')" />
         <span class="dica">Só se algum armador cobrar em euro.</span>
+      </div>
+    </div>
+
+    <h2 style="margin-top: 20px">Etiquetas QR</h2>
+    <div class="grade-form">
+      <div class="campo" style="grid-column: 1 / -1">
+        <label>Endereço do sistema para o celular (vai dentro do QR)</label>
+        <input v-model.trim="cfg.urlPublica" placeholder="http://192.168.0.10:5174  ou  https://meusistema.onrender.com" :disabled="!auth.pode('administrar')" />
+        <span class="dica">
+          Teste na rede local: IP deste computador + porta 5174 (o celular no mesmo Wi-Fi). Ao publicar online, troque pelo endereço
+          https — etiquetas impressas antes continuam com o endereço antigo. Vazio = a tela de impressão sugere o IP da rede.
+        </span>
       </div>
     </div>
 

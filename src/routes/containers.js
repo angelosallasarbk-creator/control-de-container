@@ -10,6 +10,7 @@ import { validarNumeroContainer } from "../lib/iso6346.js";
 import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib/validacao.js";
 import { montarContextos } from "../lib/previsao.js";
+import { registrarLeitura } from "../lib/leituras.js";
 import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
 
 export const containersRouter = Router();
@@ -93,13 +94,14 @@ async function detalhe(containerId) {
         // ocorridoEm embaralharia etapas registradas no mesmo minuto da criação.
         eventos: { orderBy: { id: "asc" } },
         alertas: { orderBy: { abertoEm: "desc" } },
+        etiquetas: { select: { id: true, codigo: true, status: true, vinculadaEm: true, vinculadaPor: true, canceladaEm: true, motivoCancelamento: true }, orderBy: { id: "asc" } },
       },
     }),
     lerConfiguracao(),
   ]);
   if (!c) throw erroHttp(404, "Container não encontrado.");
   const [leituras, contextos] = await Promise.all([
-    prisma.leituraTemperatura.findMany({ where: { containerId }, orderBy: { lidaEm: "asc" } }),
+    prisma.leituraTemperatura.findMany({ where: { containerId }, orderBy: { lidaEm: "asc" }, include: { etiqueta: { select: { codigo: true } } } }),
     montarContextos([c], config),
   ]);
   return { ...montarContainer(c, leituras, new Date(), config, contextos.get(c.id)), leituras: leituras.map(serializarLeitura) };
@@ -384,27 +386,9 @@ containersRouter.post("/:id/cancelar", requireRole(...PERMISSOES.cadastros), asy
 containersRouter.post("/:id/leituras", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   const c = await buscarContainer(containerId);
-  if (!ehReefer(c.tipo)) throw erroHttp(400, "Leitura de temperatura só se aplica a container reefer.");
-  if (STATUS_ENCERRADOS.includes(c.status)) throw erroHttp(409, "Container encerrado não recebe novas leituras.");
   const temperatura = decimal(req.body?.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 });
   const lidaEm = dataHora(req.body?.lidaEm, "Horário da leitura") ?? new Date();
-  if (lidaEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "O horário da leitura não pode estar no futuro.");
-
-  try {
-    await prisma.leituraTemperatura.create({
-      data: { containerId, temperatura, lidaEm, origem: "MANUAL", fonte: req.usuario.email },
-    });
-  } catch (err) {
-    if (err.code === "P2002") throw erroHttp(409, "Já existe uma leitura registrada nesse mesmo horário.");
-    throw err;
-  }
-  await registrarLog({
-    usuarioEmail: req.usuario.email,
-    acao: "LEITURA",
-    entidade: "Container",
-    entidadeId: containerId,
-    descricao: `Container ${c.numero}: leitura manual ${temperatura.toFixed(1)}°C`,
-  });
+  await registrarLeitura({ container: c, temperatura, lidaEm, origem: "MANUAL", usuarioEmail: req.usuario.email });
   await sincronizarAlertas(containerId);
   res.status(201).json(await detalhe(containerId));
 }));

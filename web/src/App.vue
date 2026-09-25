@@ -170,6 +170,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 <template>
   <div v-if="auth.usuario === undefined" class="vazio">Carregando…</div>
   <Login v-else-if="auth.usuario === null" />
+  <!-- Celular (QR) e folha de impressão: sem menu/cabeçalho. Depois do login continua na mesma URL. -->
+  <router-view v-else-if="route.meta.layout === 'simples'" />
   <div v-else class="shell" :class="{ 'menu-recolhido': menuRecolhido && !estreita }">
     <div v-if="estreita && menuAberto" class="fundo-menu" aria-hidden="true" @click="menuAberto = false"></div>
     <button
@@ -198,6 +200,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           <span v-if="resumo?.total" class="chip" :class="resumo.criticos ? 'vermelho' : 'amarelo'">{{ resumo.total }}</span>
         </router-link>
         <router-link to="/custos">Custo estimado</router-link>
+        <router-link to="/etiquetas" :class="{ ativo: route.path.startsWith('/etiquetas') }">Etiquetas QR</router-link>
         <div class="lateral-secao">Cadastros</div>
         <router-link to="/cadastros/regioes">Regiões</router-link>
         <router-link to="/locais">Locais (fábricas e portos)</router-link>

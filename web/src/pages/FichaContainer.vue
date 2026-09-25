@@ -20,6 +20,7 @@ const mensagem = ref(null);
 const enviando = ref(false);
 const modal = ref(null); // "avancar" | "cancelar" | "editar" | { alerta }
 
+const ORIGEM_LEITURA = { MANUAL: "Manual", INTEGRACAO: "Automática", QRCODE: "QR" };
 const CAMPO_DATA = {
   COLETADO: "coletadoEm", NA_FABRICA: "chegadaFabricaEm", EM_OPERACAO: "inicioOperacaoEm",
   LIBERADO: "liberadoEm", SAIU_FABRICA: "saidaFabricaEm", ENTREGUE_PORTO: "entreguePortoEm",
@@ -85,15 +86,18 @@ const motivoCancelamento = ref("");
 const cancelar = () => executar(() => api.cancelar(c.value.id, motivoCancelamento.value), "Container cancelado.");
 
 // ----- Temperatura -----
-const leitura = reactive({ temperatura: "", lidaEm: paraInputLocal() });
+// Campo sem segundos: sem edição, grava o instante exato (evita colisão de leituras no mesmo minuto).
+const leitura = reactive({ temperatura: "", lidaEm: paraInputLocal(), editado: false });
 function registrarLeitura() {
+  const lidaEm = leitura.editado ? deInputLocal(leitura.lidaEm) : new Date().toISOString();
   executar(
-    () => api.registrarLeitura(c.value.id, { temperatura: leitura.temperatura, lidaEm: deInputLocal(leitura.lidaEm) }),
+    () => api.registrarLeitura(c.value.id, { temperatura: leitura.temperatura, lidaEm }),
     "Leitura registrada."
   ).then(() => {
     if (!erro.value) {
       leitura.temperatura = "";
       leitura.lidaEm = paraInputLocal();
+      leitura.editado = false;
     }
   });
 }
@@ -288,7 +292,7 @@ function reconhecido() {
           </div>
           <div class="campo">
             <label>Horário da leitura</label>
-            <input v-model="leitura.lidaEm" type="datetime-local" required />
+            <input v-model="leitura.lidaEm" type="datetime-local" required @input="leitura.editado = true" />
           </div>
           <button type="submit" class="primario" :disabled="enviando">Registrar leitura</button>
         </form>
@@ -299,12 +303,22 @@ function reconhecido() {
         <details v-if="c.leituras.length" style="margin-top: 10px">
           <summary class="pequeno">Ver leituras ({{ c.leituras.length }})</summary>
           <table class="pequeno">
-            <thead><tr><th>Horário</th><th>Temperatura</th><th>Origem</th></tr></thead>
+            <thead><tr><th>Horário</th><th>Temperatura</th><th>Origem</th><th>Registro</th></tr></thead>
             <tbody>
               <tr v-for="l in leiturasDesc" :key="l.id">
                 <td>{{ fmtDataHora(l.lidaEm) }}</td>
                 <td :class="l.temperatura < c.tempMin || l.temperatura > c.tempMax ? 'txt-VENCIDO' : ''">{{ fmtTemp(l.temperatura) }}</td>
-                <td>{{ l.origem === "MANUAL" ? "Manual" : "Automática" }} · {{ l.fonte }}</td>
+                <td>
+                  {{ ORIGEM_LEITURA[l.origem] }}<template v-if="l.etiqueta"> <span class="mono">{{ l.etiqueta.codigo }}</span></template> · {{ l.fonte }}
+                  <a
+                    v-if="l.latitude !== null" :href="`https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.longitude}#map=18/${l.latitude}/${l.longitude}`"
+                    target="_blank" rel="noopener" :title="`Local da leitura (precisão ~${l.precisaoM ?? '?'} m)`"
+                  >📍</a>
+                </td>
+                <td>
+                  <span v-if="l.lancadaComAtraso" class="chip amarelo" :title="`Digitada ${fmtHoras(l.atrasoMin / 60)} depois do horário informado`">lançada com atraso</span>
+                  <span v-else class="mudo">{{ fmtDataHora(l.registradaEm) }}</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -322,6 +336,18 @@ function reconhecido() {
           <dt>Posição no pátio</dt><dd>{{ c.posicaoPatio || "—" }}</dd>
           <dt>Observação</dt><dd style="white-space: pre-wrap">{{ c.observacao || "—" }}</dd>
           <dt>Cadastrado por</dt><dd>{{ c.criadoPor }} em {{ fmtDataHora(c.criadoEm) }}</dd>
+          <dt>Etiqueta QR</dt>
+          <dd>
+            <template v-if="c.etiquetas?.length">
+              <div v-for="e in c.etiquetas" :key="e.id">
+                <span class="mono negrito">{{ e.codigo }}</span>
+                <span class="chip" :class="e.status === 'CANCELADA' ? 'vermelho' : 'verde'" style="margin-left: 6px">{{ e.status === "CANCELADA" ? "cancelada" : "ativa" }}</span>
+                <span class="mudo pequeno"> · ligada {{ fmtDataHora(e.vinculadaEm) }} por {{ e.vinculadaPor }}</span>
+                <div v-if="e.motivoCancelamento" class="mudo pequeno">{{ e.motivoCancelamento }}</div>
+              </div>
+            </template>
+            <span v-else class="mudo">nenhuma — <router-link to="/etiquetas">gerar etiquetas</router-link></span>
+          </dd>
         </dl>
 
         <h3 style="margin-top: 18px">Histórico de etapas</h3>

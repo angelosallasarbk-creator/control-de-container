@@ -33,6 +33,13 @@ configuracaoRouter.put("/", requireRole(...PERMISSOES.administrar), asyncHandler
   if ("filaPortoHorasPadrao" in b) rota.filaPortoHorasPadrao = decimal(b.filaPortoHorasPadrao, "Fila padrão no porto (h)", { obrigatorio: true, min: 0, max: 240 });
   if ("fatorLinhaReta" in b) rota.fatorLinhaReta = decimal(b.fatorLinhaReta, "Fator da estimativa em linha reta", { obrigatorio: true, min: 1, max: 3 });
   if ("riscoFolgaHoras" in b) rota.riscoFolgaHoras = decimal(b.riscoFolgaHoras, "Folga mínima para alertar risco (h)", { obrigatorio: true, min: 0, max: 720 });
+  if ("urlPublica" in b) {
+    const url = String(b.urlPublica ?? "").trim().replace(/\/+$/, "");
+    if (url && !/^https?:\/\/[^\s/]+(:\d+)?$/i.test(url)) {
+      throw erroHttp(400, "Endereço do sistema inválido. Use só o endereço, sem caminho — ex.: http://192.168.0.10:5174 ou https://meusistema.onrender.com");
+    }
+    rota.urlPublica = url;
+  }
   const inicio = rota.rodagemInicioMin ?? antes.rodagemInicioMin;
   const fim = rota.rodagemFimMin ?? antes.rodagemFimMin;
   if (fim - inicio < 60) throw erroHttp(400, "A janela de rodagem precisa ter pelo menos 1 hora (fim depois do início).");

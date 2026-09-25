@@ -40,6 +40,22 @@ Cada container pode ter o **trajeto**: porto de retirada (vazio) → local de ca
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos do Pátio.
 
+## Etiquetas QR (leitura pelo celular)
+
+Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container** e vale para **uma viagem**.
+
+1. **Gerar** (menu *Etiquetas QR*; supervisor/admin): informe a quantidade. Cada etiqueta recebe um **token aleatório de 128 bits**, que vai na URL do QR e não pode ser "adivinhado", e um **código curto** impresso (ex.: `CC-7K3F9P`, sem 0/O/1/I/L).
+2. **Imprimir** (impressora de etiquetas tipo Zebra, **tamanho ajustável**: modelos 50×25 até 100×150 mm ou medida livre):
+   - **Pelo navegador:** cada etiqueta vira uma página no tamanho exato (`@page`). Na impressão, escolha a Zebra, o mesmo tamanho de papel, margens "Nenhuma" e escala 100%.
+   - **Arquivo ZPL** (linguagem nativa da Zebra, 203/300/600 dpi): envie direto à impressora. O QR usa correção de erro M e sobe para Q/H quando a etiqueta tem espaço, aguentando até ~30% de sujeira ou risco.
+3. **1ª leitura** (câmera do celular → página `/q/<token>`, **com login**): número do container (conferido pelo ISO 6346 e precisa estar **ativo**), temperatura (obrigatória em reefer) e data/hora (já vem "agora"). Salvar **liga a etiqueta ao container** e registra a leitura.
+4. **Leituras seguintes:** a página já abre no container, pedindo só temperatura e data/hora. A tela mostra na hora se a leitura está dentro, acima ou abaixo da faixa, e o alerta aparece no sistema.
+5. **Encerramento:** entregue ou cancelado o container, a etiqueta fica "encerrada" e não aceita novas leituras. Etiqueta danificada: numa etiqueta nova, informe o mesmo container e confirme a **substituição** (a antiga é cancelada). Supervisor também pode cancelar uma etiqueta com motivo.
+
+**Confiança nos dados:** cada leitura grava quem registrou, a etiqueta usada, o horário informado e o horário real do registro. Leitura com horário digitado **mais de 2h antes** de chegar ao sistema aparece como **"lançada com atraso"** na ficha. Com o sistema em **https**, o celular pode enviar a **localização** da leitura (📍 na ficha). A mesma leitura nunca entra duas vezes.
+
+**Endereço dentro do QR** (*Configurações → Etiquetas QR* ou na tela de impressão): para **testar na rede local**, use o IP deste computador e a porta 5174 (ex.: `http://192.168.0.132:5174`), com o celular no mesmo Wi-Fi. A tela de impressão sugere o IP e avisa que `localhost` não funciona no celular. **Ao publicar online, troque para o endereço https antes de imprimir**, porque etiquetas já impressas continuam apontando para o endereço antigo.
+
 ## Telas
 
 - **Pátio**: **uma aba por região** ("Todas" + regiões + "Sem região" se houver fábrica sem região), com contagem de containers e de críticos em cada aba. Os indicadores do topo são os da aba escolhida, e a aba fica lembrada. Dentro da aba, containers por Cliente/Fábrica divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.
