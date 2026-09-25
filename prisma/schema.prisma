@@ -283,6 +283,9 @@ model LoteEtiquetas {
   criadoEm    DateTime     @default(now())
   criadoPor   String
   etiquetas   EtiquetaQR[]
+
+  // Cada usuário só vê/imprime as etiquetas dos lotes que ele gerou.
+  @@index([criadoPor])
 }
 
 // Etiqueta QR colada no container. O QR leva uma URL com o `token` (longo, impossível de
@@ -301,6 +304,10 @@ model EtiquetaQR {
   canceladaEm   DateTime?
   canceladaPor  String?
   motivoCancelamento String?
+  // Controle de impressão: evita imprimir a mesma etiqueta duas vezes sem perceber.
+  vezesImpressa Int            @default(0)
+  impressaEm    DateTime?
+  impressaPor   String?
   criadoEm      DateTime       @default(now())
   leituras      LeituraTemperatura[]
 

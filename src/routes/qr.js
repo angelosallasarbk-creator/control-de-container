@@ -60,6 +60,16 @@ function avaliar(container, temperatura) {
   return "OK";
 }
 
+// Reserva quando o QR não abre (etiqueta riscada, IP do teste mudou…): a pessoa digita o código
+// curto impresso (CC-XXXXXX, com ou sem "CC-") e segue para a mesma tela da etiqueta.
+qrRouter.get("/codigo/:codigo", asyncHandler(async (req, res) => {
+  const bruto = String(req.params.codigo).toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^CC/, "");
+  if (!/^[A-Z0-9]{6}$/.test(bruto)) throw erroHttp(400, "Código inválido. Formato: CC- seguido de 6 letras/números (ex.: CC-7K3F9P).");
+  const e = await prisma.etiquetaQR.findUnique({ where: { codigo: `CC-${bruto}` }, select: { token: true, codigo: true } });
+  if (!e) throw erroHttp(404, `Etiqueta CC-${bruto} não encontrada. Confira o código impresso.`);
+  res.json(e);
+}));
+
 qrRouter.get("/:token", asyncHandler(async (req, res) => {
   res.json(await resumo(await buscarEtiqueta(req.params.token), req.usuario));
 }));

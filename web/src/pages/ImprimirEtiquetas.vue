@@ -12,17 +12,38 @@ const alturaMm = Number(route.query.h) || 30;
 const base = String(route.query.base || window.location.origin).replace(/\/+$/, "");
 const etiquetas = ref([]);
 const erro = ref(null);
+const aviso = ref(null);
 const pronto = ref(false);
+
+// Ao fechar a janela de impressão, registra que estas etiquetas foram impressas (para avisar
+// antes de uma reimpressão). O navegador não diz se a pessoa cancelou — conta como enviada.
+let registrado = false;
+async function aposImprimir() {
+  if (registrado || !etiquetas.value.length) return;
+  registrado = true;
+  try {
+    await api.marcarImpressas(etiquetas.value.map((e) => e.id));
+  } catch (e) {
+    erro.value = `Não foi possível registrar a impressão: ${e.message}`;
+  }
+}
 
 const estiloPagina = document.createElement("style");
 estiloPagina.textContent = `@page { size: ${larguraMm}mm ${alturaMm}mm; margin: 0; } @media print { html, body { margin: 0; padding: 0; background: #fff; } }`;
 
 onMounted(async () => {
   document.head.appendChild(estiloPagina);
+  window.addEventListener("afterprint", aposImprimir);
   try {
     const ids = String(route.query.ids || "");
     if (!ids) throw new Error("Nenhuma etiqueta selecionada.");
+    const pedidas = ids.split(",").length;
+    // O servidor só devolve etiquetas do próprio usuário (e não canceladas ficam de fora aqui).
     etiquetas.value = (await api.etiquetas({ ids })).filter((e) => e.estado !== "CANCELADA");
+    if (etiquetas.value.length < pedidas) {
+      aviso.value = `${pedidas - etiquetas.value.length} etiqueta(s) ficaram de fora: são de outro usuário ou estão canceladas.`;
+    }
+    if (!etiquetas.value.length) throw new Error("Nenhuma etiqueta para imprimir.");
     await nextTick();
     // Espera os QR (SVG) serem gerados antes de abrir a janela de impressão.
     setTimeout(() => {
@@ -33,7 +54,10 @@ onMounted(async () => {
     erro.value = e.message;
   }
 });
-onBeforeUnmount(() => estiloPagina.remove());
+onBeforeUnmount(() => {
+  estiloPagina.remove();
+  window.removeEventListener("afterprint", aposImprimir);
+});
 
 const imprimir = () => window.print();
 const resumo = computed(() => `${etiquetas.value.length} etiqueta(s) · ${larguraMm} × ${alturaMm} mm`);
@@ -47,6 +71,7 @@ const resumo = computed(() => `${etiquetas.value.length} etiqueta(s) · ${largur
       Na janela de impressão: escolha a impressora <strong>Zebra</strong>, tamanho do papel <strong>{{ larguraMm }} × {{ alturaMm }} mm</strong>
       (ou o da etiqueta instalada), margens <strong>Nenhuma</strong> e escala <strong>100%</strong>. Desmarque "Cabeçalhos e rodapés".
     </div>
+    <div v-if="aviso" class="aviso" style="margin-top: 8px">{{ aviso }}</div>
     <div v-if="erro" class="erro" style="margin-top: 8px">{{ erro }}</div>
   </div>
   <div class="folha">

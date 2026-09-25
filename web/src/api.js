@@ -46,6 +46,7 @@ export const api = {
   etiquetas: (params) => request(`/etiquetas${qs(params)}`),
   lotesEtiquetas: () => request("/etiquetas/lotes"),
   gerarEtiquetas: (quantidade) => request("/etiquetas/lotes", { method: "POST", body: { quantidade } }),
+  marcarImpressas: (ids) => request("/etiquetas/impressas", { method: "POST", body: { ids } }),
   cancelarEtiqueta: (id, motivo) => request(`/etiquetas/${id}/cancelar`, { method: "POST", body: { motivo } }),
   configImpressao: () => request("/etiquetas/impressao"),
   // ZPL volta como texto (arquivo para a Zebra), não JSON.
@@ -58,6 +59,7 @@ export const api = {
   },
 
   qr: (token) => request(`/qr/${token}`),
+  qrPorCodigo: (codigo) => request(`/qr/codigo/${encodeURIComponent(codigo.trim())}`),
   qrVincular: (token, dados) => request(`/qr/${token}/vincular`, { method: "POST", body: dados }),
   qrLeitura: (token, dados) => request(`/qr/${token}/leituras`, { method: "POST", body: dados }),
 

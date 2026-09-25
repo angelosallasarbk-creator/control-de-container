@@ -411,16 +411,69 @@ test("etiquetas QR: gerar, ligar ao container, ler, substituir, encerrar e ZPL",
 
   // ZPL e endereço do QR.
   assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "sem-protocolo" })).status, 400);
-  const zpl = await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
+  // Quem gerou (supervisor) imprime; e1 está cancelada (substituída) e fica fora do ZPL.
+  const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
   assert.equal(zpl.status, 200);
-  assert.equal(zpl.text.match(/\^XA/g).length, 2);
-  assert.ok(zpl.text.includes(`http://192.168.0.10:5174/q/${e1.token}`));
+  assert.equal(zpl.text.match(/\^XA/g).length, 1);
+  assert.ok(zpl.text.includes(`http://192.168.0.10:5174/q/${e2.token}`));
   assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, urlPublica: "192.168.0.10:5174" })).status, 400);
   const cfg = await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, urlPublica: "http://192.168.0.10:5174/" });
   assert.equal(cfg.body.urlPublica, "http://192.168.0.10:5174");
   const imp = await agentes.OPERADOR.get("/api/etiquetas/impressao");
   assert.equal(imp.body.urlPublica, "http://192.168.0.10:5174");
   assert.ok(imp.body.modelos.some((m) => m.chave === "50x30"));
+});
+
+test("etiquetas QR: cada usuário vê, imprime e cancela só as que gerou; controle de impressão", async () => {
+  // Segundo supervisor (outra fábrica).
+  const outro = await agentes.ADMIN.post("/api/usuarios").send({ email: "supervisor2@teste.local", nome: "Supervisor Fábrica 2", perfil: "SUPERVISOR", senha: "senha-teste-123" });
+  assert.equal(outro.status, 201);
+  const sup2 = await logar("supervisor2@teste.local");
+
+  const meu = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 2 })).body.etiquetas;
+  const deOutro = (await sup2.post("/api/etiquetas/lotes").send({ quantidade: 2 })).body.etiquetas;
+  assert.equal(meu[0].geradaPor, "supervisor@teste.local");
+
+  // Lista: cada um só vê as suas.
+  const listaSup = (await agentes.SUPERVISOR.get("/api/etiquetas")).body.map((e) => e.id);
+  const listaSup2 = (await sup2.get("/api/etiquetas")).body.map((e) => e.id);
+  assert.ok(meu.every((e) => listaSup.includes(e.id)) && !deOutro.some((e) => listaSup.includes(e.id)), "supervisor 1 não vê as do 2");
+  assert.deepEqual(listaSup2.sort(), deOutro.map((e) => e.id).sort(), "supervisor 2 vê só as dele");
+  // Pedir por id as de outro (folha de impressão com URL editada) não traz nada.
+  assert.equal((await agentes.SUPERVISOR.get(`/api/etiquetas?ids=${deOutro.map((e) => e.id).join(",")}`)).body.length, 0);
+  // Mesmo "todos=1" só vale para admin.
+  assert.equal((await agentes.SUPERVISOR.get("/api/etiquetas?todos=1")).body.some((e) => e.geradaPor === "supervisor2@teste.local"), false);
+  assert.equal((await agentes.ADMIN.get("/api/etiquetas")).body.some((e) => e.geradaPor === "supervisor2@teste.local"), false, "admin: por padrão só as dele");
+  assert.equal((await agentes.ADMIN.get("/api/etiquetas?todos=1")).body.some((e) => e.geradaPor === "supervisor2@teste.local"), true, "admin com 'todos' vê tudo");
+  assert.ok((await sup2.get("/api/etiquetas/lotes")).body.every((l) => l.criadoPor === "supervisor2@teste.local"));
+
+  // ZPL / marcar impressa / cancelar etiquetas de outro: recusado.
+  const zplOutro = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [meu[0].id, deOutro[0].id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
+  assert.equal(zplOutro.status, 403);
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/impressas").send({ ids: [deOutro[0].id] })).status, 403);
+  assert.equal((await agentes.SUPERVISOR.post(`/api/etiquetas/${deOutro[0].id}/cancelar`).send({ motivo: "teste" })).status, 403);
+
+  // Controle de impressão: ZPL e navegador contam; filtro "não impressas".
+  const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [meu[0].id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
+  assert.equal(zpl.status, 200);
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/impressas").send({ ids: [meu[0].id] })).status, 204);
+  const depois = (await agentes.SUPERVISOR.get(`/api/etiquetas?ids=${meu[0].id}`)).body[0];
+  assert.equal(depois.vezesImpressa, 2);
+  assert.equal(depois.impressaPor, "supervisor@teste.local");
+  const naoImpressas = (await agentes.SUPERVISOR.get("/api/etiquetas?impressao=nao")).body.map((e) => e.id);
+  assert.ok(naoImpressas.includes(meu[1].id) && !naoImpressas.includes(meu[0].id));
+
+  // Ler o QR continua aberto a qualquer operador (a etiqueta está no container).
+  assert.equal((await agentes.OPERADOR.get(`/api/qr/${deOutro[0].token}`)).status, 200);
+
+  // Reserva pelo código curto digitado (com/sem "CC-", minúsculas).
+  const semPrefixo = deOutro[0].codigo.replace("CC-", "").toLowerCase();
+  const porCodigo = await agentes.OPERADOR.get(`/api/qr/codigo/${semPrefixo}`);
+  assert.equal(porCodigo.status, 200);
+  assert.equal(porCodigo.body.token, deOutro[0].token);
+  assert.equal((await agentes.OPERADOR.get("/api/qr/codigo/CC-ZZZZZZ")).status, 404);
+  assert.equal((await agentes.OPERADOR.get("/api/qr/codigo/abc")).status, 400);
+  assert.equal((await request(app).get(`/api/qr/codigo/${semPrefixo}`)).status, 401, "exige login");
 });
 
 test("locais: tipos, coordenadas validadas e busca de endereço sem chave", async () => {

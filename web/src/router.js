@@ -9,6 +9,7 @@ const routes = [
   { path: "/etiquetas", name: "etiquetas", component: () => import("./pages/Etiquetas.vue"), meta: { titulo: "Etiquetas QR" } },
   // Telas sem menu lateral: folha de impressão e página do celular aberta pelo QR.
   { path: "/etiquetas/imprimir", name: "imprimir-etiquetas", component: () => import("./pages/ImprimirEtiquetas.vue"), meta: { titulo: "Imprimir etiquetas", layout: "simples" } },
+  { path: "/leitura", name: "leitura-codigo", component: () => import("./pages/LeituraPorCodigo.vue"), meta: { titulo: "Registrar pelo código", layout: "simples" } },
   { path: "/q/:token", name: "leitura-qr", component: () => import("./pages/LeituraQR.vue"), props: true, meta: { titulo: "Registrar leitura", layout: "simples" } },
   { path: "/locais", name: "locais", component: () => import("./pages/Locais.vue"), meta: { titulo: "Locais" } },
   { path: "/cadastros/:recurso", name: "cadastros", component: () => import("./pages/Cadastros.vue"), props: true, meta: { titulo: "Cadastros" } },

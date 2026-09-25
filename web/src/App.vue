@@ -201,6 +201,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         </router-link>
         <router-link to="/custos">Custo estimado</router-link>
         <router-link to="/etiquetas" :class="{ ativo: route.path.startsWith('/etiquetas') }">Etiquetas QR</router-link>
+        <router-link to="/leitura">Registrar pelo código</router-link>
         <div class="lateral-secao">Cadastros</div>
         <router-link to="/cadastros/regioes">Regiões</router-link>
         <router-link to="/locais">Locais (fábricas e portos)</router-link>

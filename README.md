@@ -52,9 +52,15 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 4. **Leituras seguintes:** a página já abre no container, pedindo só temperatura e data/hora. A tela mostra na hora se a leitura está dentro, acima ou abaixo da faixa, e o alerta aparece no sistema.
 5. **Encerramento:** entregue ou cancelado o container, a etiqueta fica "encerrada" e não aceita novas leituras. Etiqueta danificada: numa etiqueta nova, informe o mesmo container e confirme a **substituição** (a antiga é cancelada). Supervisor também pode cancelar uma etiqueta com motivo.
 
+**Cada usuário vê só as suas etiquetas:** listar, imprimir (navegador e ZPL), marcar como impressa e cancelar valem apenas para as etiquetas dos lotes que a própria pessoa gerou. A regra é aplicada no servidor, então nem uma URL de impressão editada traz etiquetas de outra pessoa. Assim uma fábrica não imprime as etiquetas de outra. O administrador vê as dele por padrão e pode marcar "Ver de todos os usuários" (coluna "Gerada por"). **Ler o QR** continua aberto a qualquer operador logado, porque a etiqueta está no container.
+
+**Controle de impressão:** cada etiqueta registra quantas vezes foi enviada à impressora, quando e por quem: no ZPL, ao baixar; no navegador, quando a janela de impressão fecha. O navegador não informa se a pessoa cancelou, então isso conta como enviada. Há o filtro "Ainda não impressas", e **reimprimir pede confirmação**, porque a cópia tem o mesmo QR.
+
+**Registrar pelo código** (menu, ou `/leitura` no celular): se o QR não abrir (etiqueta riscada, ou IP do teste que mudou), digite o código curto impresso (`CC-7K3F9P`, com ou sem "CC-") e siga para a mesma tela.
+
 **Confiança nos dados:** cada leitura grava quem registrou, a etiqueta usada, o horário informado e o horário real do registro. Leitura com horário digitado **mais de 2h antes** de chegar ao sistema aparece como **"lançada com atraso"** na ficha. Com o sistema em **https**, o celular pode enviar a **localização** da leitura (📍 na ficha). A mesma leitura nunca entra duas vezes.
 
-**Endereço dentro do QR** (*Configurações → Etiquetas QR* ou na tela de impressão): para **testar na rede local**, use o IP deste computador e a porta 5174 (ex.: `http://192.168.0.132:5174`), com o celular no mesmo Wi-Fi. A tela de impressão sugere o IP e avisa que `localhost` não funciona no celular. **Ao publicar online, troque para o endereço https antes de imprimir**, porque etiquetas já impressas continuam apontando para o endereço antigo.
+**Endereço dentro do QR** (*Configurações → Etiquetas QR* ou na tela de impressão): para **testar na rede local**, use o IP deste computador e a porta 5174 (ex.: `http://192.168.0.132:5174`), com o celular no mesmo Wi-Fi. A tela de impressão sugere o IP e avisa que `localhost` não funciona no celular. **Ao publicar online, troque para o endereço https antes de imprimir**, porque etiquetas já impressas continuam apontando para o endereço antigo. ⚠ No teste local, o IP costuma ser dado pelo roteador (DHCP) e **muda** (ex.: trocar do cabo para o Wi-Fi mudou de `.132` para `.249`), e aí as etiquetas impressas param de abrir. Para testes longos, reserve um IP fixo para o computador no roteador; senão, use "Registrar pelo código".
 
 ## Telas
 

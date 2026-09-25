@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { fmtDataHora } from "../formato.js";
@@ -12,7 +12,9 @@ const lista = ref([]);
 const erro = ref(null);
 const aviso = ref(null);
 const carregando = ref(false);
-const filtro = reactive({ estado: "", busca: "" });
+// todos: só administrador (ver as etiquetas de todos os usuários, para suporte).
+const filtro = reactive({ estado: "", impressao: "", busca: "", todos: "" });
+const ehAdmin = computed(() => auth.usuario?.perfil === "ADMIN");
 const selecionadas = ref(new Set());
 const quantidade = ref(10);
 const gerando = ref(false);
@@ -63,6 +65,13 @@ async function carregar() {
   }
 }
 
+// A impressão pelo navegador acontece em outra aba: ao voltar para esta, atualiza a coluna "Impressa".
+function aoVoltarParaAba() {
+  if (document.visibilityState === "visible") carregar();
+}
+onMounted(() => document.addEventListener("visibilitychange", aoVoltarParaAba));
+onBeforeUnmount(() => document.removeEventListener("visibilitychange", aoVoltarParaAba));
+
 onMounted(async () => {
   try {
     cfgImpressao.value = await api.configImpressao();
@@ -103,6 +112,8 @@ const ordem = useOrdenacao({
   container: (e) => e.container?.numero ?? null,
   ligada: (e) => (e.vinculadaEm ? new Date(e.vinculadaEm) : null),
   leituras: (e) => e.leituras,
+  impressa: (e) => e.vezesImpressa,
+  geradaPor: (e) => e.geradaPor,
   criada: (e) => new Date(e.criadoEm),
 });
 const linhas = computed(() => ordem.ordenar(lista.value));
@@ -122,7 +133,19 @@ const urlDe = (e) => `${imp.baseUrl.replace(/\/+$/, "")}/q/${e.token}`;
 // Pré-visualização cabe em ~320px de largura.
 const escalaPrevia = computed(() => Math.min(1.6, 320 / (imp.larguraMm * 3.78)));
 
+// Reimprimir gera uma segunda etiqueta igual (mesmo QR) — pede confirmação.
+function confirmarReimpressao() {
+  const ja = selecionadasLista.value.filter((e) => e.vezesImpressa > 0);
+  if (!ja.length) return true;
+  const exemplos = ja.slice(0, 5).map((e) => `${e.codigo} (${e.vezesImpressa}x, última ${fmtDataHora(e.impressaEm)})`).join("\n");
+  return confirm(
+    `${ja.length} etiqueta(s) selecionada(s) JÁ FORAM IMPRESSAS:\n${exemplos}${ja.length > 5 ? "\n…" : ""}\n\n` +
+      "Reimprimir cria cópias com o mesmo QR. Cole só uma de cada no container e descarte a outra. Reimprimir mesmo assim?"
+  );
+}
+
 function imprimirNavegador() {
+  if (!confirmarReimpressao()) return;
   const ids = selecionadasLista.value.map((e) => e.id).join(",");
   const q = new URLSearchParams({ ids, w: imp.larguraMm, h: imp.alturaMm, base: imp.baseUrl.replace(/\/+$/, "") });
   window.open(`/etiquetas/imprimir?${q}`, "_blank");
@@ -130,6 +153,7 @@ function imprimirNavegador() {
 
 async function baixarZpl() {
   erro.value = null;
+  if (!confirmarReimpressao()) return;
   try {
     const zpl = await api.baixarZpl({
       ids: selecionadasLista.value.map((e) => e.id), larguraMm: imp.larguraMm, alturaMm: imp.alturaMm, dpi: Number(imp.dpi), baseUrl: imp.baseUrl,
@@ -139,6 +163,7 @@ async function baixarZpl() {
     link.download = `etiquetas-${imp.larguraMm}x${imp.alturaMm}mm-${imp.dpi}dpi.zpl`;
     link.click();
     URL.revokeObjectURL(link.href);
+    await carregar(); // atualiza "Impressa"
   } catch (e) {
     erro.value = e.message;
   }
@@ -163,6 +188,11 @@ async function cancelar(e) {
       <div class="mudo pequeno" style="margin-top: 4px">
         Cada etiqueta vai colada em um container e vale para uma viagem. Na primeira leitura pelo celular, a pessoa informa o número do
         container e a temperatura; nas seguintes, só a temperatura. O login é exigido.
+      </div>
+      <div class="pequeno" style="margin-top: 6px">
+        🔒 <strong>{{ filtro.todos ? "Mostrando as etiquetas de todos os usuários." : "Você vê e imprime apenas as etiquetas que você gerou." }}</strong>
+        {{ " " }}<span class="mudo">Assim uma fábrica não imprime as etiquetas de outra. QR não abriu? Use
+          <router-link to="/leitura">Registrar pelo código</router-link> com o código impresso.</span>
       </div>
     </div>
     <form v-if="auth.pode('cadastros')" class="linha" @submit.prevent="gerar">
@@ -239,7 +269,19 @@ async function cancelar(e) {
           <option v-for="(e, v) in ESTADO" :key="v" :value="v">{{ e.rotulo }}</option>
         </select>
       </div>
+      <div class="campo">
+        <label>Impressão</label>
+        <select v-model="filtro.impressao" @change="carregar">
+          <option value="">Todas</option>
+          <option value="nao">Ainda não impressas</option>
+          <option value="sim">Já impressas</option>
+        </select>
+      </div>
       <div class="campo"><label>Buscar</label><input v-model="filtro.busca" placeholder="Código da etiqueta ou nº do container" /></div>
+      <label v-if="ehAdmin" class="linha pequeno" style="gap: 6px; padding-bottom: 8px">
+        <input type="checkbox" :checked="filtro.todos === '1'" @change="filtro.todos = $event.target.checked ? '1' : ''; selecionadas = new Set(); carregar()" />
+        Ver de todos os usuários (administrador)
+      </label>
     </div>
     <div class="tabela-wrap">
       <table>
@@ -251,6 +293,8 @@ async function cancelar(e) {
             <ThOrdenavel chave="container" :ordem="ordem">Container</ThOrdenavel>
             <ThOrdenavel chave="ligada" :ordem="ordem">Ligada em</ThOrdenavel>
             <ThOrdenavel chave="leituras" :ordem="ordem">Leituras</ThOrdenavel>
+            <ThOrdenavel chave="impressa" :ordem="ordem" titulo="Quantas vezes foi enviada para a impressora">Impressa</ThOrdenavel>
+            <ThOrdenavel v-if="filtro.todos" chave="geradaPor" :ordem="ordem">Gerada por</ThOrdenavel>
             <ThOrdenavel chave="criada" :ordem="ordem">Gerada em</ThOrdenavel>
             <th></th>
           </tr>
@@ -269,13 +313,21 @@ async function cancelar(e) {
             </td>
             <td class="pequeno">{{ fmtDataHora(e.vinculadaEm) }}<div v-if="e.vinculadaPor" class="mudo">{{ e.vinculadaPor }}</div></td>
             <td>{{ e.leituras }}</td>
+            <td class="pequeno">
+              <span v-if="!e.vezesImpressa" class="chip azul">não impressa</span>
+              <template v-else>
+                <span class="chip" :class="e.vezesImpressa > 1 ? 'amarelo' : 'verde'" :title="e.vezesImpressa > 1 ? 'Impressa mais de uma vez: pode haver cópia' : ''">{{ e.vezesImpressa }}×</span>
+                <div class="mudo">{{ fmtDataHora(e.impressaEm) }}</div>
+              </template>
+            </td>
+            <td v-if="filtro.todos" class="pequeno">{{ e.geradaPor }}</td>
             <td class="pequeno">{{ fmtDataHora(e.criadoEm) }}</td>
             <td style="text-align: right; white-space: nowrap">
               <a :href="`/q/${e.token}`" target="_blank" rel="noopener" class="pequeno" title="Abre a página que o celular vê">abrir</a>
               <button v-if="auth.pode('cadastros') && ['LIVRE', 'VINCULADA'].includes(e.estado)" class="pequeno perigo" style="margin-left: 8px" @click="cancelar(e)">Cancelar</button>
             </td>
           </tr>
-          <tr v-if="!lista.length && !carregando"><td colspan="8" class="vazio">Nenhuma etiqueta ainda. {{ auth.pode("cadastros") ? "Informe a quantidade e clique em Gerar etiquetas." : "" }}</td></tr>
+          <tr v-if="!lista.length && !carregando"><td :colspan="filtro.todos ? 10 : 9" class="vazio">Nenhuma etiqueta ainda. {{ auth.pode("cadastros") ? "Informe a quantidade e clique em Gerar etiquetas." : "" }}</td></tr>
         </tbody>
       </table>
     </div>
