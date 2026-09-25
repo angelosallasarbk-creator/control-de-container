@@ -35,7 +35,28 @@ export const ROTULO_ALERTA = {
   DEADLINE: "Deadline",
   TEMPERATURA: "Temperatura",
   SEM_LEITURA: "Sem leitura",
+  RISCO_DEMURRAGE: "Risco de demurrage",
+  RISCO_DEADLINE: "Risco de deadline",
 };
+
+export const ROTULO_TIPO_LOCAL = { FABRICA: "Fábrica", ARMAZEM: "Armazém", PORTO: "Porto / Terminal" };
+
+// Minutos desde 00:00 ↔ "HH:MM" (janela de rodagem nas Configurações).
+export const minutosParaHora = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+export const horaParaMinutos = (h) => {
+  const [hh, mm] = String(h).split(":").map(Number);
+  return hh * 60 + (mm || 0);
+};
+
+export const fmtKm = (km) => (km === null || km === undefined ? "—" : `${Number(km).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`);
+
+// Folga em horas → texto ("2,5 dias" / "10h" / "-6h").
+export function fmtFolga(h) {
+  if (h === null || h === undefined) return "—";
+  const sinal = h < 0 ? "-" : "";
+  const abs = Math.abs(h);
+  return abs >= 48 ? `${sinal}${(abs / 24).toFixed(1).replace(".", ",")} dias` : `${sinal}${Math.round(abs)}h`;
+}
 
 export const ROTULO_PERFIL = {
   ADMIN: "Administrador",

@@ -6,6 +6,7 @@ const routes = [
   { path: "/containers/:id", name: "ficha", component: () => import("./pages/FichaContainer.vue"), props: true, meta: { titulo: "Container" } },
   { path: "/custos", name: "custos", component: () => import("./pages/CustoEstimado.vue"), meta: { titulo: "Custo estimado" } },
   { path: "/alertas", name: "alertas", component: () => import("./pages/Alertas.vue"), meta: { titulo: "Alertas" } },
+  { path: "/locais", name: "locais", component: () => import("./pages/Locais.vue"), meta: { titulo: "Locais" } },
   { path: "/cadastros/:recurso", name: "cadastros", component: () => import("./pages/Cadastros.vue"), props: true, meta: { titulo: "Cadastros" } },
   { path: "/usuarios", name: "usuarios", component: () => import("./pages/Usuarios.vue"), meta: { titulo: "Usuários", acao: "administrar" } },
   { path: "/integracao", name: "integracao", component: () => import("./pages/Integracao.vue"), meta: { titulo: "Integração", acao: "administrar" } },

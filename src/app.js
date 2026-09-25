@@ -9,6 +9,7 @@ import { containersRouter } from "./routes/containers.js";
 import { painelRouter } from "./routes/painel.js";
 import { alertasRouter } from "./routes/alertas.js";
 import { custosRouter } from "./routes/custos.js";
+import { locaisRouter, rotasRouter } from "./routes/locais.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
@@ -36,6 +37,8 @@ export function criarApp() {
   app.use("/api/painel", painelRouter);
   app.use("/api/alertas", alertasRouter);
   app.use("/api/custos", custosRouter);
+  app.use("/api/locais", locaisRouter);
+  app.use("/api/rotas", rotasRouter);
   app.use("/api/tokens", tokensRouter);
   app.use("/api/usuarios", usuariosRouter);
   app.use("/api/configuracao", configuracaoRouter);
@@ -49,7 +52,11 @@ export function criarApp() {
   // Precisa ser o último: o middleware de erro só recebe o que vier antes dele.
   app.use((err, _req, res, _next) => {
     if (err.type === "entity.parse.failed") return res.status(400).json({ erro: "JSON inválido no corpo da requisição." });
-    if (err.status && err.status < 500) return res.status(err.status).json({ erro: err.message });
+    // 4xx e os 502/503 que o próprio código cria (serviço externo fora/não configurado) têm
+    // mensagem pensada para o usuário; qualquer outro erro vira "erro interno" genérico.
+    if (err.status && (err.status < 500 || err.status === 502 || err.status === 503)) {
+      return res.status(err.status).json({ erro: err.message });
+    }
     console.error(err);
     res.status(500).json({ erro: "Erro interno no servidor." });
   });

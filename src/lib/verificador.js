@@ -1,4 +1,17 @@
 import { sincronizarTodos } from "./alertas.js";
+import { prisma } from "./prisma.js";
+import { STATUS_ENCERRADOS } from "./prazos.js";
+import { garantirDistancias, paresDoContainer } from "./rotas.js";
+
+// Calcula (e guarda) as distâncias que ainda faltam para os containers ativos — ex.: local
+// que ganhou coordenadas depois, ou estimativa em linha reta a ser trocada pela rota real.
+async function completarDistancias() {
+  const ativos = await prisma.container.findMany({
+    where: { status: { notIn: STATUS_ENCERRADOS } },
+    select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true },
+  });
+  await garantirDistancias(ativos.flatMap(paresDoContainer));
+}
 
 let rodando = false;
 
@@ -9,6 +22,7 @@ export async function executarVerificacao() {
   rodando = true;
   const inicio = Date.now();
   try {
+    await completarDistancias().catch((err) => console.error("Verificador: falha ao completar distâncias:", err.message));
     const r = await sincronizarTodos();
     if (r.abertos || r.encerrados) {
       console.log(

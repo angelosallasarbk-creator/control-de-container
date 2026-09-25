@@ -29,6 +29,17 @@ Cada etapa registra data/hora real (pode ser retroativa, nunca anterior à etapa
 - **Região é da fábrica**: cada Cliente/Fábrica pode ter uma região. Escolher a região de um cliente aplica a mesma região a todos os clientes da mesma fábrica. Um cliente novo de fábrica já cadastrada, criado sem região, herda a região da fábrica. Região com fábricas vinculadas não pode ser excluída, só desativada.
 - Número do container validado pelo padrão **ISO 6346** (dígito verificador). Se o dígito não conferir, o sistema pede confirmação. Só pode existir **uma passagem ativa** por número.
 
+## Previsão de rota e risco de demurrage
+
+Cada container pode ter o **trajeto**: porto de retirada (vazio) → local de carregamento (fábrica ou armazém) → porto de entrega (cheio). Com ele o sistema prevê a entrega no porto e compara com o free time e o deadline.
+
+- **Locais** (*Cadastros → Locais*): fábricas, armazéns e portos/terminais com coordenadas. A tela tem busca de endereço, que prioriza a UF digitada, marca "⚠ outra UF" e mostra o link "ver no mapa"; confira sempre, porque o serviço às vezes traz nomes parecidos de outro estado. Também dá para colar a coordenada copiada do Google Maps. Cada porto pode ter seu **tempo de fila/gate**. O Cliente/Fábrica tem um **local de carregamento padrão**, e o container já vem com ele.
+- **Distância**: pelo **OpenRouteService** (perfil caminhão, plano gratuito, `ORS_API_KEY`), calculada **uma vez por par e guardada** (`DistanciaRota`). O ponto é aproximado à via mais próxima até 5 km. Sem chave ou com falha do serviço, usa linha reta × fator (Configurações) e marca "aproximada"; o verificador tenta de novo depois. Mudar a coordenada de um local descarta e recalcula as distâncias dele.
+- **Tempo**: do ORS usa-se **só a distância**. O tempo segue a regra configurável (*Configurações → Previsão de rota*): **janela diária de rodagem** (padrão 05:00–22:00) e **km máximos por dia** (padrão 500). Fora da janela o caminhão fica parado; roda todos os dias, inclusive fim de semana e feriado. Somam-se o **tempo no local de carregamento** (percentil 80 do histórico real dos últimos 180 dias, com no mínimo 3 passagens; senão, a meta de estadia) e a **fila no porto de entrega**.
+- **Previsão viva**: etapas já registradas usam as datas reais. Um evento atrasado (ex.: caminhão que já devia ter chegado) é previsto para "agora", nunca para o passado. Container **Programado** é simulado "se coletar agora" e, com deadline, mostra **até quando coletar**.
+- **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
+- Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos do Pátio.
+
 ## Telas
 
 - **Pátio**: **uma aba por região** ("Todas" + regiões + "Sem região" se houver fábrica sem região), com contagem de containers e de críticos em cada aba. Os indicadores do topo são os da aba escolhida, e a aba fica lembrada. Dentro da aba, containers por Cliente/Fábrica divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.

@@ -1,7 +1,8 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
 import { ROTULO_TIPO, paraInputLocal, deInputLocal, fmtTemp, fmtMoeda } from "../formato.js";
+import PrevisaoCiclo from "./PrevisaoCiclo.vue";
 
 const emit = defineEmits(["fechar", "criado"]);
 
@@ -14,21 +15,63 @@ const pedirConfirmacaoDigito = ref(false);
 
 const f = reactive({
   numero: "", tipo: "REEFER_40", grupoId: "", armadorId: "", produtoId: "",
+  portoRetiradaId: "", localCarregamentoId: "", portoEntregaId: "",
   booking: "", navio: "", deadline: "", placa: "", motorista: "", lacre: "", posicaoPatio: "", observacao: "",
   jaColetado: false, coletadoEm: paraInputLocal(),
 });
+const locais = ref([]);
 
 onMounted(async () => {
   try {
-    [grupos.value, armadores.value, produtos.value] = await Promise.all([
+    [grupos.value, armadores.value, produtos.value, locais.value] = await Promise.all([
       api.listar("grupos", { ativos: 1 }),
       api.listar("armadores", { ativos: 1 }),
       api.listar("produtos", { ativos: 1 }),
+      api.locais({ ativos: 1 }),
     ]);
   } catch (e) {
     erro.value = e.message;
   }
 });
+
+const portos = computed(() => locais.value.filter((l) => l.tipo === "PORTO"));
+const carregamentos = computed(() => locais.value.filter((l) => l.tipo !== "PORTO"));
+
+// Local de carregamento vem do Cliente/Fábrica escolhido (pode ser trocado, ex.: armazém).
+watch(() => f.grupoId, () => {
+  if (grupo.value?.localId) f.localCarregamentoId = grupo.value.localId;
+});
+// Porto de entrega costuma ser o mesmo da retirada: preenche se ainda estiver vazio.
+watch(() => f.portoRetiradaId, (novo) => {
+  if (novo && !f.portoEntregaId) f.portoEntregaId = novo;
+});
+
+// Simulação "se coletar agora" assim que o trajeto estiver completo.
+const simulacao = ref(null);
+const simulando = ref(false);
+let seqSimulacao = 0;
+watch(
+  () => [f.portoRetiradaId, f.localCarregamentoId, f.portoEntregaId, f.grupoId, f.armadorId, f.deadline],
+  async () => {
+    if (!f.portoRetiradaId || !f.localCarregamentoId || !f.portoEntregaId) {
+      simulacao.value = null;
+      return;
+    }
+    const seq = ++seqSimulacao;
+    simulando.value = true;
+    try {
+      const r = await api.estimarRota({
+        portoRetiradaId: f.portoRetiradaId, localCarregamentoId: f.localCarregamentoId, portoEntregaId: f.portoEntregaId,
+        grupoId: f.grupoId, armadorId: f.armadorId, deadline: deInputLocal(f.deadline),
+      });
+      if (seq === seqSimulacao) simulacao.value = r;
+    } catch (e) {
+      if (seq === seqSimulacao) simulacao.value = { disponivel: false, faltando: [e.message] };
+    } finally {
+      if (seq === seqSimulacao) simulando.value = false;
+    }
+  }
+);
 
 const reefer = computed(() => f.tipo.startsWith("REEFER"));
 const grupo = computed(() => grupos.value.find((g) => g.id === Number(f.grupoId)));
@@ -46,6 +89,9 @@ async function salvar(confirmarDigito = false) {
       grupoId: Number(f.grupoId) || null,
       armadorId: Number(f.armadorId) || null,
       produtoId: reefer.value ? Number(f.produtoId) || null : null,
+      portoRetiradaId: Number(f.portoRetiradaId) || null,
+      localCarregamentoId: Number(f.localCarregamentoId) || null,
+      portoEntregaId: Number(f.portoEntregaId) || null,
       booking: f.booking, navio: f.navio, placa: f.placa, motorista: f.motorista, lacre: f.lacre,
       posicaoPatio: f.posicaoPatio, observacao: f.observacao,
       deadline: deInputLocal(f.deadline),
@@ -115,6 +161,39 @@ async function salvar(confirmarDigito = false) {
           </select>
           <span v-if="produto" class="dica">Setpoint {{ fmtTemp(produto.setpoint) }} · faixa {{ fmtTemp(produto.tempMin) }} a {{ fmtTemp(produto.tempMax) }}</span>
         </div>
+      </div>
+
+      <h3 style="margin-bottom: 0">Trajeto</h3>
+      <div class="grade-form">
+        <div class="campo">
+          <label>Porto de retirada (vazio)</label>
+          <select v-model="f.portoRetiradaId">
+            <option value="">— não informado —</option>
+            <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label>Local de carregamento</label>
+          <select v-model="f.localCarregamentoId">
+            <option value="">— não informado —</option>
+            <option v-for="l in carregamentos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+          </select>
+        </div>
+        <div class="campo">
+          <label>Porto de entrega (cheio)</label>
+          <select v-model="f.portoEntregaId">
+            <option value="">— não informado —</option>
+            <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+          </select>
+        </div>
+      </div>
+      <div v-if="!portos.length" class="dica pequeno mudo">Nenhum porto cadastrado — <router-link to="/locais">cadastrar em Locais</router-link>. O trajeto é opcional, mas sem ele não há previsão de risco.</div>
+      <div v-if="simulando" class="mudo pequeno">Calculando rota…</div>
+      <div v-else-if="simulacao" class="card" style="background: var(--superficie-2); box-shadow: none">
+        <PrevisaoCiclo :p="simulacao" :free-time-dias="armador?.freeTimeDias ?? null" compacto />
+      </div>
+
+      <div class="grade-form">
         <div class="campo"><label>Booking</label><input v-model="f.booking" maxlength="60" /></div>
         <div class="campo"><label>Navio</label><input v-model="f.navio" maxlength="120" /></div>
         <div class="campo"><label>Deadline (cut-off)</label><input v-model="f.deadline" type="datetime-local" /></div>

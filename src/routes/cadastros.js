@@ -63,7 +63,7 @@ const CADASTROS = {
     modelo: "grupoOperacao",
     entidade: "GrupoOperacao",
     uso: "containers",
-    incluir: { regiao: { select: { id: true, nome: true } } },
+    incluir: { regiao: { select: { id: true, nome: true } }, local: { select: { id: true, nome: true, tipo: true, cidade: true, uf: true } } },
     rotulo: (r) => `${r.cliente} / ${r.fabrica}`,
     ordem: [{ cliente: "asc" }, { fabrica: "asc" }],
     validar: (b, parcial) => {
@@ -71,6 +71,7 @@ const CADASTROS = {
       if (!parcial || "cliente" in b) d.cliente = texto(b.cliente, "Cliente", { obrigatorio: true, max: 120 });
       if (!parcial || "fabrica" in b) d.fabrica = texto(b.fabrica, "Fábrica", { obrigatorio: true, max: 120 });
       if ("regiaoId" in b) d.regiaoId = b.regiaoId === null || b.regiaoId === "" ? null : validarId(b.regiaoId, "Região");
+      if ("localId" in b) d.localId = b.localId === null || b.localId === "" ? null : validarId(b.localId, "Local da fábrica");
       if (!parcial || "metaEstadiaHoras" in b)
         d.metaEstadiaHoras = inteiro(b.metaEstadiaHoras, "Meta de estadia (h)", { obrigatorio: true, min: 1, max: 2000 });
       if (!parcial || "alertaEstadiaHoras" in b)
@@ -79,7 +80,14 @@ const CADASTROS = {
       if ("ativo" in b) d.ativo = Boolean(b.ativo);
       return d;
     },
-    antesDeSalvar: sincronizarRegiaoDaFabrica,
+    antesDeSalvar: async (tx, dados, corpo, antes) => {
+      if (dados.localId) {
+        const local = await tx.local.findUnique({ where: { id: dados.localId } });
+        if (!local) throw erroHttp(400, "Local da fábrica não encontrado.");
+        if (local.tipo === "PORTO") throw erroHttp(400, "O local da fábrica precisa ser do tipo Fábrica ou Armazém.");
+      }
+      return sincronizarRegiaoDaFabrica(tx, dados, corpo, antes);
+    },
   },
   armadores: {
     modelo: "armador",

@@ -26,6 +26,7 @@ const CONFIG = {
       { rotulo: "Cliente", valor: (r) => r.cliente },
       { rotulo: "Fábrica", valor: (r) => r.fabrica },
       { rotulo: "Região", valor: (r) => r.regiao?.nome ?? "— sem região —" },
+      { rotulo: "Local (rotas)", valor: (r) => (r.local ? [r.local.nome, r.local.uf].filter(Boolean).join(" · ") : "—") },
       { rotulo: "Meta de estadia", valor: (r) => `${r.metaEstadiaHoras}h` },
       { rotulo: "Alerta antes", valor: (r) => `${r.alertaEstadiaHoras}h` },
       { rotulo: "Custo/h excedida", valor: (r) => (r.custoEstadiaPorHora ? fmtMoeda(r.custoEstadiaPorHora) : "—") },
@@ -36,6 +37,11 @@ const CONFIG = {
       {
         chave: "regiaoId", rotulo: "Região", tipo: "select", opcoesDe: "regioes", vazio: "— sem região —",
         dica: "Deixe vazio num cliente novo de fábrica já cadastrada para herdar a região dela.",
+      },
+      {
+        chave: "localId", rotulo: "Local de carregamento padrão (endereço)", tipo: "select", opcoesDe: "locais", vazio: "— não informado —",
+        filtrarOpcoes: (l) => l.tipo !== "PORTO",
+        dica: "Usado na previsão de rota. Cadastre fábricas e armazéns em Locais.",
       },
       { chave: "metaEstadiaHoras", rotulo: "Meta de estadia (horas)", tipo: "number", obrigatorio: true, min: 1 },
       { chave: "alertaEstadiaHoras", rotulo: "Avisar quando faltarem (horas)", tipo: "number", obrigatorio: true, min: 0, padrao: 6 },
@@ -100,8 +106,8 @@ async function carregar() {
 async function carregarOpcoes() {
   for (const campo of cfg.value?.campos ?? []) {
     if (!campo.opcoesDe) continue;
-    const registros = await api.listar(campo.opcoesDe).catch(() => []);
-    opcoesDinamicas.value[campo.opcoesDe] = registros.map((r) => ({ valor: r.id, rotulo: r.ativo ? r.nome : `${r.nome} (inativa)` }));
+    const registros = (await api.listar(campo.opcoesDe).catch(() => [])).filter(campo.filtrarOpcoes ?? (() => true));
+    opcoesDinamicas.value[campo.opcoesDe] = registros.map((r) => ({ valor: r.id, rotulo: r.ativo ? r.nome : `${r.nome} (inativo)` }));
   }
 }
 
@@ -233,6 +239,9 @@ async function excluir(r) {
           <span v-if="c.dica" class="dica">{{ c.dica }}</span>
           <span v-if="c.opcoesDe === 'regioes' && !opcoesDinamicas.regioes?.length" class="dica">
             Nenhuma região cadastrada ainda — <router-link to="/cadastros/regioes">cadastrar regiões</router-link>.
+          </span>
+          <span v-if="c.opcoesDe === 'locais' && !opcoesDinamicas.locais?.length" class="dica">
+            Nenhuma fábrica/armazém cadastrado ainda — <router-link to="/locais">cadastrar locais</router-link>.
           </span>
         </div>
         <div v-if="editando.emAndamento" class="aviso">

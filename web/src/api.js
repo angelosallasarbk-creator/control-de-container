@@ -42,6 +42,13 @@ export const api = {
 
   custos: (params) => request(`/custos${qs(params)}`),
 
+  locais: (params) => request(`/locais${qs(params)}`),
+  criarLocal: (dados) => request("/locais", { method: "POST", body: dados }),
+  atualizarLocal: (id, dados) => request(`/locais/${id}`, { method: "PATCH", body: dados }),
+  excluirLocal: (id) => request(`/locais/${id}`, { method: "DELETE" }),
+  geocodificar: (q) => request(`/locais/geocodificar${qs({ q })}`),
+  estimarRota: (params) => request(`/rotas/estimar${qs(params)}`),
+
   alertas: (params) => request(`/alertas${qs(params)}`),
   resumoAlertas: () => request("/alertas/resumo"),
   reconhecerAlerta: (id, acaoTomada) => request(`/alertas/${id}/reconhecer`, { method: "POST", body: { acaoTomada } }),

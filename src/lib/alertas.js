@@ -1,6 +1,8 @@
 import { prisma } from "./prisma.js";
 import { lerConfiguracao } from "./configuracao.js";
 import { calcularSituacao, alertasDesejados, STATUS_ENCERRADOS } from "./prazos.js";
+import { estimarCiclo } from "./estimativa.js";
+import { montarContextos, configRodagem } from "./previsao.js";
 
 // Leituras suficientes para achar o início de uma sequência fora da faixa sem carregar o histórico todo.
 const LEITURAS_AVALIADAS = 200;
@@ -25,8 +27,9 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
   const container = await prisma.container.findUnique({ where: { id: containerId } });
   if (!container) return { abertos: 0, encerrados: 0 };
   const cfg = config ?? (await lerConfiguracao());
-  const leituras = await leiturasRecentes(containerId);
-  const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos);
+  const [leituras, contextos] = await Promise.all([leiturasRecentes(containerId), montarContextos([container], cfg)]);
+  const previsao = estimarCiclo(container, contextos.get(containerId), agora, configRodagem(cfg));
+  const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao);
   const desejados = alertasDesejados(container, situacao);
   const chavesDesejadas = new Set(desejados.map((a) => chaveAlerta(containerId, a.tipo, a.nivel)));
 

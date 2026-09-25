@@ -163,14 +163,20 @@ export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) 
   return resultado;
 }
 
-export function calcularSituacao(c, leituras, agora, intervaloLeituraMinutos) {
+// `previsao` = resultado de estimativa.estimarCiclo (calculado por quem chama, que tem o
+// contexto de rota); null quando não há trajeto cadastrado.
+export function calcularSituacao(c, leituras, agora, intervaloLeituraMinutos, previsao = null) {
   return {
     estadia: calcularEstadia(c, agora),
     demurrage: calcularDemurrage(c, agora),
     deadline: calcularDeadline(c, agora),
     temperatura: avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos),
+    previsao,
   };
 }
+
+const fmtQuando = (d) =>
+  new Date(d).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 const fmtHoras = (h) => {
   const abs = Math.abs(h);
@@ -238,6 +244,33 @@ export function alertasDesejados(c, situacao) {
     });
   }
 
+  // Risco previsto (rota): só enquanto o prazo real ainda não venceu — depois disso o alerta
+  // DEMURRAGE/DEADLINE de verdade já está aberto e o "risco" seria redundante.
+  const p = situacao.previsao;
+  if (p?.disponivel) {
+    const seColetarAgora = p.hipotetico ? "Mesmo coletando agora, a" : "A";
+    if (demurrage?.situacao !== "VENCIDO" && ["ATENCAO", "CRITICO"].includes(p.riscoDemurrage)) {
+      alertas.push({
+        tipo: "RISCO_DEMURRAGE",
+        nivel: p.riscoDemurrage,
+        mensagem:
+          p.riscoDemurrage === "CRITICO"
+            ? `${seColetarAgora} entrega prevista (${fmtQuando(p.previsaoEntrega)}) passa do free time (último dia livre ${fmtQuando(p.vencimentoFreeTime)}): ~${p.diasDemurragePrevistos} diária(s), ${fmtMoeda(p.custoPrevisto, p.moeda)}.`
+            : `Folga de só ${fmtHoras(p.folgaHoras)} entre a entrega prevista (${fmtQuando(p.previsaoEntrega)}) e o fim do free time.`,
+      });
+    }
+    if (deadline?.situacao !== "VENCIDO" && ["ATENCAO", "CRITICO"].includes(p.riscoDeadline)) {
+      alertas.push({
+        tipo: "RISCO_DEADLINE",
+        nivel: p.riscoDeadline,
+        mensagem:
+          p.riscoDeadline === "CRITICO"
+            ? `${seColetarAgora} entrega prevista (${fmtQuando(p.previsaoEntrega)}) passa do deadline do navio em ${fmtHoras(p.folgaDeadlineHoras)}.`
+            : `Folga de só ${fmtHoras(p.folgaDeadlineHoras)} entre a entrega prevista e o deadline do navio.`,
+      });
+    }
+  }
+
   if (temperatura?.semLeitura) {
     alertas.push({
       tipo: "SEM_LEITURA",
@@ -259,6 +292,13 @@ export function semaforo(situacao) {
   const t = situacao.temperatura;
   if (t?.monitorando && t.foraDaFaixa) niveis.push(t.nivelTemperatura === "CRITICO" ? 2 : 1);
   if (t?.semLeitura) niveis.push(t.nivelSemLeitura === "CRITICO" ? 2 : 1);
+  const p = situacao.previsao;
+  if (p?.disponivel) {
+    for (const risco of [p.riscoDemurrage, p.riscoDeadline]) {
+      if (risco === "CRITICO") niveis.push(2);
+      else if (risco === "ATENCAO") niveis.push(1);
+    }
+  }
   const pior = Math.max(0, ...niveis);
   return ["VERDE", "AMARELO", "VERMELHO"][pior];
 }

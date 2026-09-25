@@ -13,6 +13,8 @@ if (!/_test(\?|$)/.test(TEST_DATABASE_URL)) {
 }
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 process.env.JWT_SECRET ??= "segredo-apenas-para-teste";
+// Testes nunca chamam o serviço de rota externo: sem chave, distância = linha reta × fator.
+process.env.ORS_API_KEY = "";
 
 let app, prisma, sincronizarTodos;
 const agentes = {};
@@ -320,4 +322,83 @@ test("cadastro usado não pode ser excluído (só desativado)", async () => {
   const r = await agentes.SUPERVISOR.patch(`/api/armadores/${ids.armador}`).send({ ativo: false });
   assert.equal(r.status, 200);
   assert.equal(r.body.ativo, false);
+});
+
+test("locais: tipos, coordenadas validadas e busca de endereço sem chave", async () => {
+  assert.equal((await agentes.OPERADOR.post("/api/locais").send({ nome: "X", tipo: "PORTO" })).status, 403);
+  // Coordenadas trocadas (lat/lon invertidas) caem fora do Brasil.
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Santos", tipo: "PORTO", latitude: -46.31, longitude: -23.95 })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Santos", tipo: "PORTO", latitude: -23.95 })).status, 400, "lat sem lon");
+
+  const santos = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Porto de Santos", tipo: "PORTO", cidade: "Santos", uf: "sp", latitude: -23.9566, longitude: -46.3136, filaHoras: 6 });
+  assert.equal(santos.status, 201);
+  assert.equal(santos.body.uf, "SP");
+  assert.equal(santos.body.filaHoras, 6);
+  // Fábrica a ~1.000 km em linha reta (Rio Verde/GO).
+  const rioVerde = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Fábrica Rio Verde", tipo: "FABRICA", latitude: -17.7923, longitude: -50.9281 });
+  const perto = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Armazém Cubatão", tipo: "ARMAZEM", latitude: -23.8953, longitude: -46.4253 });
+  ids.santos = santos.body.id;
+  ids.rioVerde = rioVerde.body.id;
+  ids.cubatao = perto.body.id;
+
+  assert.equal((await agentes.SUPERVISOR.get("/api/locais/geocodificar?q=Santos")).status, 503, "sem ORS_API_KEY");
+  const soPortos = await agentes.VISUALIZACAO.get("/api/locais?tipo=PORTO");
+  assert.deepEqual(soPortos.body.map((l) => l.nome), ["Porto de Santos"]);
+});
+
+test("previsão de rota: trajeto longo com free time curto gera RISCO_DEMURRAGE; perto não", async () => {
+  const grupo = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Cliente Rota", fabrica: "Fábrica Rio Verde", metaEstadiaHoras: 24 });
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/grupos/${grupo.body.id}`).send({ localId: ids.santos })).status, 400, "porto não é fábrica");
+  const comLocal = await agentes.SUPERVISOR.patch(`/api/grupos/${grupo.body.id}`).send({ localId: ids.rioVerde });
+  assert.equal(comLocal.body.local.nome, "Fábrica Rio Verde");
+  const armador = await agentes.SUPERVISOR.post("/api/armadores").send({ nome: "Armador Rota", freeTimeDias: 3, valorDiaria: 100 });
+
+  const base = { tipo: "DRY_40", grupoId: grupo.body.id, armadorId: armador.body.id, portoEntregaId: ids.santos };
+  assert.equal((await agentes.OPERADOR.post("/api/containers").send({ ...base, numero: "MSCU1234566", confirmarDigito: true, portoRetiradaId: ids.rioVerde })).status, 400, "retirada precisa ser porto");
+
+  // Sem localCarregamentoId: herda a fábrica do Cliente/Fábrica. Coletado agora em Santos.
+  const longe = await agentes.OPERADOR.post("/api/containers").send({ ...base, numero: "MSCU1234566", confirmarDigito: true, portoRetiradaId: ids.santos, coletadoEm: new Date() });
+  assert.equal(longe.status, 201);
+  assert.equal(longe.body.localCarregamento.nome, "Fábrica Rio Verde");
+  const p = longe.body.situacao.previsao;
+  assert.equal(p.disponivel, true);
+  assert.equal(p.trechos[0].fonte, "ESTIMADA");
+  assert.ok(p.trechos[0].km > 1000, `~1.000 km × 1,3 (deu ${p.trechos[0].km})`);
+  assert.equal(p.riscoDemurrage, "CRITICO");
+  assert.ok(p.diasDemurragePrevistos > 0);
+  assert.equal(p.trechos[3].horas, 6, "fila do porto de entrega vem do cadastro do porto");
+  const alerta = await prisma.alerta.findFirst({ where: { containerId: longe.body.id, tipo: "RISCO_DEMURRAGE", chaveAberta: { not: null } } });
+  assert.equal(alerta?.nivel, "CRITICO");
+  assert.equal(await prisma.distanciaRota.count(), 1, "ida e volta Santos↔Rio Verde reaproveitam a mesma distância");
+
+  // Mesmo porto, carregamento no armazém ao lado e free time folgado: sem risco. (Com free time
+  // de 3 dias o risco depende da hora da coleta — coletar às 23h "gasta" o dia 1 —, por isso
+  // este caso usa um armador de 10 dias para o teste não depender do relógio.)
+  const folgado = await agentes.SUPERVISOR.post("/api/armadores").send({ nome: "Armador Folgado", freeTimeDias: 10, valorDiaria: 100 });
+  const pertoC = await agentes.OPERADOR.post("/api/containers").send({ ...base, armadorId: folgado.body.id, numero: "MSCU7654321", confirmarDigito: true, portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, coletadoEm: new Date() });
+  assert.equal(pertoC.body.situacao.previsao.riscoDemurrage, "OK");
+  assert.equal(await prisma.alerta.count({ where: { containerId: pertoC.body.id, tipo: "RISCO_DEMURRAGE" } }), 0);
+
+  // Simulação da tela de cadastro.
+  const sim = await agentes.OPERADOR.get(`/api/rotas/estimar?portoRetiradaId=${ids.santos}&localCarregamentoId=${ids.rioVerde}&portoEntregaId=${ids.santos}&grupoId=${grupo.body.id}&armadorId=${armador.body.id}`);
+  assert.equal(sim.status, 200);
+  assert.equal(sim.body.hipotetico, true);
+  assert.equal(sim.body.servicoRota, "ESTIMADA");
+  assert.ok(sim.body.cicloHoras > 72);
+
+  // Mudar a coordenada invalida a distância guardada e recalcula.
+  const kmAntes = p.trechos[0].km;
+  await agentes.SUPERVISOR.patch(`/api/locais/${ids.rioVerde}`).send({ latitude: -21.0, longitude: -48.0 });
+  const depois = await agentes.OPERADOR.get(`/api/containers/${longe.body.id}`);
+  assert.ok(depois.body.situacao.previsao.trechos[0].km < kmAntes, "fábrica mais perto → distância menor");
+
+  // Local em uso não é excluído; mudar o tipo também não.
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/locais/${ids.santos}`)).status, 409);
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/locais/${ids.santos}`).send({ tipo: "FABRICA" })).status, 409);
+
+  // Janela de rodagem configurável e validada.
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, rodagemInicioMin: 1200, rodagemFimMin: 1210 })).status, 400);
+  const cfg = await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, rodagemInicioMin: 360, rodagemFimMin: 1080, kmPorDia: 400 });
+  assert.equal(cfg.status, 200);
+  assert.equal(cfg.body.kmPorDia, 400);
 });

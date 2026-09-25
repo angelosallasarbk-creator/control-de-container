@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { ROTULO_STATUS, ROTULO_TIPO, fmtHoras, fmtTemp, fmtMoeda } from "../formato.js";
+import { ROTULO_STATUS, ROTULO_TIPO, fmtHoras, fmtTemp, fmtMoeda, fmtFolga, fmtDataHora } from "../formato.js";
 
 const props = defineProps({ c: { type: Object, required: true } });
 
@@ -45,5 +45,13 @@ const textoDemurrage = computed(() => {
       <span v-else class="mudo">sem leitura</span>
     </div>
     <div v-if="c.temperatura?.semLeitura" class="linha-tile txt-ATENCAO"><span>⏱ leitura atrasada</span></div>
+    <div v-if="c.previsao" class="linha-tile" :title="`Entrega prevista no porto: ${fmtDataHora(c.previsao.previsaoEntrega)}`">
+      <span>Previsão</span>
+      <span :class="`txt-${c.previsao.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : c.previsao.riscoDemurrage}`">
+        <template v-if="c.previsao.riscoDemurrage === 'CRITICO'">⚠ ~{{ c.previsao.diasDemurragePrevistos }} diária(s)</template>
+        <template v-else>folga {{ fmtFolga(c.previsao.folgaHoras) }}</template>
+      </span>
+    </div>
+    <div v-if="c.previsao?.riscoDeadline === 'CRITICO'" class="linha-tile txt-VENCIDO"><span>⚠ risco de perder o deadline</span></div>
   </div>
 </template>

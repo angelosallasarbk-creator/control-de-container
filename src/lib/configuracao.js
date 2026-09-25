@@ -8,6 +8,15 @@ export const CONFIG_PADRAO = {
   // cada moeda separada, sem somar moedas diferentes).
   cotacaoUSD: 0,
   cotacaoEUR: 0,
+  // Previsão de rota: janela diária de rodagem (minutos desde 00:00, horário de Brasília),
+  // km máximos por dia, fila/gate padrão nos portos, fator da estimativa em linha reta
+  // (quando o serviço de rota não responde) e folga mínima para alertar risco.
+  rodagemInicioMin: 300, // 05:00
+  rodagemFimMin: 1320, // 22:00
+  kmPorDia: 500,
+  filaPortoHorasPadrao: 4,
+  fatorLinhaReta: 1.3,
+  riscoFolgaHoras: 24,
 };
 
 export async function lerConfiguracao() {

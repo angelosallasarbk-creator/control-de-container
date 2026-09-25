@@ -15,7 +15,7 @@ alertasRouter.get("/", asyncHandler(async (req, res) => {
   const where = {};
   if (req.query.estado === "historico") where.chaveAberta = null;
   else where.chaveAberta = { not: null };
-  if (req.query.tipo) where.tipo = umDe(req.query.tipo, ["ESTADIA", "DEMURRAGE", "DEADLINE", "TEMPERATURA", "SEM_LEITURA"], "Tipo");
+  if (req.query.tipo) where.tipo = umDe(req.query.tipo, ["ESTADIA", "DEMURRAGE", "DEADLINE", "TEMPERATURA", "SEM_LEITURA", "RISCO_DEMURRAGE", "RISCO_DEADLINE"], "Tipo");
   if (req.query.grupoId) where.container = { grupoId: validarId(req.query.grupoId, "Grupo") };
   const alertas = await prisma.alerta.findMany({
     where,

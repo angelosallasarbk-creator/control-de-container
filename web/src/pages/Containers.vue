@@ -3,7 +3,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora } from "../formato.js";
+import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora, fmtFolga } from "../formato.js";
 import NovoContainer from "../components/NovoContainer.vue";
 
 const auth = useAuthStore();
@@ -101,6 +101,7 @@ function textoDemurrage(d) {
           <th>Demurrage</th>
           <th>Temperatura</th>
           <th>Deadline</th>
+          <th title="Previsão de entrega no porto e folga até o fim do free time">Previsão</th>
         </tr>
       </thead>
       <tbody>
@@ -123,8 +124,18 @@ function textoDemurrage(d) {
             <span v-else class="mudo">{{ c.reefer ? "sem leitura" : "—" }}</span>
           </td>
           <td :class="c.situacao.deadline && `txt-${c.situacao.deadline.situacao}`">{{ fmtDataHora(c.deadline) }}</td>
+          <td>
+            <template v-if="c.situacao.previsao?.disponivel">
+              {{ fmtDataHora(c.situacao.previsao.previsaoEntrega) }}
+              <div class="pequeno" :class="`txt-${c.situacao.previsao.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : c.situacao.previsao.riscoDemurrage}`">
+                folga {{ fmtFolga(c.situacao.previsao.folgaHoras) }}
+              </div>
+            </template>
+            <span v-else-if="c.situacao.previsao" class="mudo pequeno" :title="`Falta: ${c.situacao.previsao.faltando.join(', ')}`">sem trajeto</span>
+            <span v-else class="mudo">—</span>
+          </td>
         </tr>
-        <tr v-if="!lista.length && !carregando"><td colspan="10" class="vazio">Nenhum container encontrado.</td></tr>
+        <tr v-if="!lista.length && !carregando"><td colspan="11" class="vazio">Nenhum container encontrado.</td></tr>
       </tbody>
     </table>
   </div>

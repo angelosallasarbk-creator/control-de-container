@@ -40,6 +40,14 @@ enum TipoAlerta {
   DEADLINE
   TEMPERATURA
   SEM_LEITURA
+  RISCO_DEMURRAGE // previsão de entrega passa do free time
+  RISCO_DEADLINE  // previsão de entrega passa do deadline do navio
+}
+
+enum TipoLocal {
+  FABRICA
+  ARMAZEM
+  PORTO
 }
 
 enum NivelAlerta {
@@ -80,6 +88,9 @@ model GrupoOperacao {
   fabrica              String
   regiaoId             Int?
   regiao               Regiao?     @relation(fields: [regiaoId], references: [id])
+  // Local físico padrão de carregamento (endereço/coordenadas) usado na previsão de rota.
+  localId              Int?
+  local                Local?      @relation(fields: [localId], references: [id])
   metaEstadiaHoras     Int
   alertaEstadiaHoras   Int         @default(6) // avisa quando faltarem X horas para vencer a meta
   custoEstadiaPorHora  Decimal?    @db.Decimal(12, 2)
@@ -89,6 +100,43 @@ model GrupoOperacao {
 
   @@unique([cliente, fabrica])
   @@index([regiaoId])
+}
+
+// Ponto físico: fábrica, armazém (carregamento) ou porto/terminal (retirada e entrega).
+model Local {
+  id          Int       @id @default(autoincrement())
+  nome        String    @unique
+  tipo        TipoLocal
+  endereco    String?
+  cidade      String?
+  uf          String?
+  latitude    Decimal?  @db.Decimal(9, 6)
+  longitude   Decimal?  @db.Decimal(9, 6)
+  filaHoras   Decimal?  @db.Decimal(5, 1) // porto: fila/gate; vazio = padrão das Configurações
+  ativo       Boolean   @default(true)
+  criadoEm    DateTime  @default(now())
+
+  grupos                GrupoOperacao[]
+  retiradas             Container[]      @relation("PortoRetirada")
+  carregamentos         Container[]      @relation("LocalCarregamento")
+  entregas              Container[]      @relation("PortoEntrega")
+  distanciasOrigem      DistanciaRota[]  @relation("Origem")
+  distanciasDestino     DistanciaRota[]  @relation("Destino")
+}
+
+// Cache da distância rodoviária entre dois locais (calculada uma vez; recalculada se as
+// coordenadas mudarem). fonte: ORS = rota de caminhão; ESTIMADA = linha reta × fator.
+model DistanciaRota {
+  id           Int      @id @default(autoincrement())
+  origemId     Int
+  origem       Local    @relation("Origem", fields: [origemId], references: [id], onDelete: Cascade)
+  destinoId    Int
+  destino      Local    @relation("Destino", fields: [destinoId], references: [id], onDelete: Cascade)
+  distanciaKm  Decimal  @db.Decimal(8, 1)
+  fonte        String
+  calculadoEm  DateTime @default(now())
+
+  @@unique([origemId, destinoId])
 }
 
 // Armador = dono do container; define o free time e o valor da diária de demurrage.
@@ -130,6 +178,13 @@ model Container {
   armador       Armador         @relation(fields: [armadorId], references: [id])
   produtoId     Int?
   produto       Produto?        @relation(fields: [produtoId], references: [id])
+  // Trajeto: porto de retirada do vazio → local de carregamento → porto de entrega do cheio.
+  portoRetiradaId      Int?
+  portoRetirada        Local?   @relation("PortoRetirada", fields: [portoRetiradaId], references: [id])
+  localCarregamentoId  Int?
+  localCarregamento    Local?   @relation("LocalCarregamento", fields: [localCarregamentoId], references: [id])
+  portoEntregaId       Int?
+  portoEntrega         Local?   @relation("PortoEntrega", fields: [portoEntregaId], references: [id])
   booking       String?
   lacre         String?
   navio         String?
@@ -172,6 +227,7 @@ model Container {
   @@index([numero])
   @@index([status])
   @@index([grupoId])
+  @@index([localCarregamentoId])
 }
 
 model EventoContainer {

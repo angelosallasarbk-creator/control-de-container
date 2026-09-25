@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { montarContainer } from "../lib/containerView.js";
+import { montarContextos } from "../lib/previsao.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 
 export const painelRouter = Router();
@@ -37,6 +38,7 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
   }
 
   const agora = new Date();
+  const contextos = await montarContextos(containers, config);
   const novoGrupo = (g) => ({
     id: g.id,
     cliente: g.cliente,
@@ -63,12 +65,12 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
   };
 
   for (const bruto of containers) {
-    const c = montarContainer(bruto, [...bruto.leituras].reverse(), agora, config);
+    const c = montarContainer(bruto, [...bruto.leituras].reverse(), agora, config, contextos.get(bruto.id));
     // Grupo desativado com container ainda ativo continua aparecendo no painel.
     if (!porGrupo.has(c.grupoId)) porGrupo.set(c.grupoId, novoGrupo(c.grupo));
     const g = porGrupo.get(c.grupoId);
     const alertas = alertasPorContainer.get(c.id) ?? { ATENCAO: 0, CRITICO: 0 };
-    const { estadia, demurrage, temperatura } = c.situacao;
+    const { estadia, demurrage, temperatura, previsao } = c.situacao;
 
     for (const alvo of [g, totais]) {
       alvo.porStatus[c.status] = (alvo.porStatus[c.status] ?? 0) + 1;
@@ -98,6 +100,16 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
         tempMin: temperatura.tempMin,
         tempMax: temperatura.tempMax,
       },
+      previsao: previsao?.disponivel
+        ? {
+            previsaoEntrega: previsao.previsaoEntrega,
+            folgaHoras: previsao.folgaHoras,
+            riscoDemurrage: previsao.riscoDemurrage,
+            riscoDeadline: previsao.riscoDeadline,
+            diasDemurragePrevistos: previsao.diasDemurragePrevistos,
+            hipotetico: previsao.hipotetico,
+          }
+        : null,
       alertas,
     });
   }

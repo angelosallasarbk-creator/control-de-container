@@ -7,6 +7,7 @@ import {
   fmtDataHora, fmtHoras, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde,
 } from "../formato.js";
 import GraficoTemperatura from "../components/GraficoTemperatura.vue";
+import PrevisaoCiclo from "../components/PrevisaoCiclo.vue";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 
 const props = defineProps({ id: { type: String, required: true } });
@@ -99,9 +100,14 @@ function registrarLeitura() {
 
 // ----- Edição -----
 const ed = reactive({});
-function abrirEditar() {
+const locais = ref([]);
+const portos = computed(() => locais.value.filter((l) => l.tipo === "PORTO" && (l.ativo || l.id === c.value?.portoRetiradaId || l.id === c.value?.portoEntregaId)));
+const carregamentos = computed(() => locais.value.filter((l) => l.tipo !== "PORTO" && (l.ativo || l.id === c.value?.localCarregamentoId)));
+async function abrirEditar() {
   const x = c.value;
+  if (!locais.value.length) locais.value = await api.locais().catch(() => []);
   Object.assign(ed, {
+    portoRetiradaId: x.portoRetiradaId ?? "", localCarregamentoId: x.localCarregamentoId ?? "", portoEntregaId: x.portoEntregaId ?? "",
     booking: x.booking ?? "", navio: x.navio ?? "", placa: x.placa ?? "", motorista: x.motorista ?? "", lacre: x.lacre ?? "",
     posicaoPatio: x.posicaoPatio ?? "", observacao: x.observacao ?? "", deadline: x.deadline ? paraInputLocal(x.deadline) : "",
     metaEstadiaHoras: x.metaEstadiaHoras, custoEstadiaPorHora: x.custoEstadiaPorHora ?? "", freeTimeDias: x.freeTimeDias,
@@ -116,6 +122,9 @@ function salvarEdicao() {
     booking: ed.booking, navio: ed.navio, placa: ed.placa, motorista: ed.motorista, lacre: ed.lacre,
     posicaoPatio: ed.posicaoPatio, observacao: ed.observacao, deadline: deInputLocal(ed.deadline),
   };
+  for (const campo of ["portoRetiradaId", "localCarregamentoId", "portoEntregaId"]) {
+    if (String(ed[campo] ?? "") !== String(x[campo] ?? "")) dados[campo] = ed[campo] === "" ? null : Number(ed[campo]);
+  }
   // Prazos só vão se mudaram (operador não pode alterá-los).
   for (const campo of ["metaEstadiaHoras", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"]) {
     if (ed[campo] !== undefined && ed[campo] !== null && String(ed[campo]) !== String(x[campo])) dados[campo] = ed[campo];
@@ -221,6 +230,23 @@ function reconhecido() {
           </div>
         </template>
         <div v-else class="mudo" style="margin-top: 8px">Não informado</div>
+      </div>
+    </div>
+
+    <!-- Trajeto e previsão do ciclo -->
+    <div v-if="!encerrado || c.portoRetirada" class="card">
+      <div class="linha-entre" style="margin-bottom: 10px">
+        <h2 style="margin: 0">Trajeto e previsão</h2>
+        <span class="pequeno">
+          <strong>{{ c.portoRetirada?.nome ?? "porto de retirada ?" }}</strong> →
+          <strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →
+          <strong>{{ c.portoEntrega?.nome ?? "porto de entrega ?" }}</strong>
+        </span>
+      </div>
+      <PrevisaoCiclo v-if="s.previsao" :p="s.previsao" :free-time-dias="c.freeTimeDias" />
+      <div v-else-if="encerrado" class="mudo pequeno">Ciclo encerrado.</div>
+      <div v-if="auth.pode('operar') && !encerrado && s.previsao && !s.previsao.disponivel" style="margin-top: 8px">
+        <button class="pequeno" @click="abrirEditar">Informar trajeto</button>
       </div>
     </div>
 
@@ -359,6 +385,32 @@ function reconhecido() {
       <form class="modal" @submit.prevent="salvarEdicao">
         <h2>Editar {{ c.numero }}</h2>
         <div v-if="erro" class="erro">{{ erro }}</div>
+        <h3 style="margin-bottom: 0">Trajeto</h3>
+        <div class="grade-form">
+          <div class="campo">
+            <label>Porto de retirada (vazio)</label>
+            <select v-model="ed.portoRetiradaId">
+              <option value="">— não informado —</option>
+              <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+            </select>
+          </div>
+          <div class="campo">
+            <label>Local de carregamento</label>
+            <select v-model="ed.localCarregamentoId">
+              <option value="">— não informado —</option>
+              <option v-for="l in carregamentos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+            </select>
+          </div>
+          <div class="campo">
+            <label>Porto de entrega (cheio)</label>
+            <select v-model="ed.portoEntregaId">
+              <option value="">— não informado —</option>
+              <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+            </select>
+          </div>
+        </div>
+        <div v-if="!portos.length" class="dica pequeno mudo">Nenhum porto cadastrado — <router-link to="/locais">cadastrar em Locais</router-link>.</div>
+        <h3 style="margin-bottom: 0">Dados</h3>
         <div class="grade-form">
           <div class="campo"><label>Booking</label><input v-model="ed.booking" maxlength="60" /></div>
           <div class="campo"><label>Navio</label><input v-model="ed.navio" maxlength="120" /></div>

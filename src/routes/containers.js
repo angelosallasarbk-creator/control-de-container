@@ -9,6 +9,8 @@ import { montarContainer, serializarLeitura } from "../lib/containerView.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
 import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib/validacao.js";
+import { montarContextos } from "../lib/previsao.js";
+import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
 
 export const containersRouter = Router();
 
@@ -39,7 +41,41 @@ const ROTULO_STATUS = {
 // Tolerância para relógio do celular/computador levemente adiantado.
 const FOLGA_FUTURO_MS = 5 * 60 * 1000;
 
-const INCLUDE_BASICO = { grupo: true, armador: true, produto: true };
+const SELECT_LOCAL = { select: { id: true, nome: true, tipo: true, cidade: true, uf: true, latitude: true, longitude: true, filaHoras: true } };
+const INCLUDE_BASICO = {
+  grupo: true, armador: true, produto: true,
+  portoRetirada: SELECT_LOCAL, localCarregamento: SELECT_LOCAL, portoEntrega: SELECT_LOCAL,
+};
+
+// Valida um local do trajeto: existe, está ativo (ou já era o atual) e é do tipo certo.
+const TIPOS_DO_CAMPO = {
+  portoRetiradaId: { tipos: ["PORTO"], rotulo: "Porto de retirada" },
+  localCarregamentoId: { tipos: ["FABRICA", "ARMAZEM"], rotulo: "Local de carregamento" },
+  portoEntregaId: { tipos: ["PORTO"], rotulo: "Porto de entrega" },
+};
+async function validarLocais(corpo, atual = {}) {
+  const dados = {};
+  for (const [campo, { tipos, rotulo }] of Object.entries(TIPOS_DO_CAMPO)) {
+    if (!(campo in corpo)) continue;
+    if (corpo[campo] === null || corpo[campo] === "") {
+      dados[campo] = null;
+      continue;
+    }
+    const localId = validarId(corpo[campo], rotulo);
+    const local = await prisma.local.findUnique({ where: { id: localId } });
+    if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
+    if (!tipos.includes(local.tipo)) throw erroHttp(400, `${rotulo} precisa ser um local do tipo ${tipos.map((t) => t.toLowerCase()).join(" ou ")}.`);
+    if (!local.ativo && atual[campo] !== localId) throw erroHttp(400, `${rotulo}: o local "${local.nome}" está inativo.`);
+    dados[campo] = localId;
+  }
+  return dados;
+}
+
+// Depois de gravar: calcula/guarda as distâncias do trajeto (pode chamar o serviço de rota).
+async function prepararRota(containerId) {
+  const c = await prisma.container.findUnique({ where: { id: containerId }, select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true } });
+  if (c) await garantirDistancias(paresDoContainer(c));
+}
 
 async function buscarContainer(containerId) {
   const c = await prisma.container.findUnique({ where: { id: containerId }, include: INCLUDE_BASICO });
@@ -62,8 +98,11 @@ async function detalhe(containerId) {
     lerConfiguracao(),
   ]);
   if (!c) throw erroHttp(404, "Container não encontrado.");
-  const leituras = await prisma.leituraTemperatura.findMany({ where: { containerId }, orderBy: { lidaEm: "asc" } });
-  return { ...montarContainer(c, leituras, new Date(), config), leituras: leituras.map(serializarLeitura) };
+  const [leituras, contextos] = await Promise.all([
+    prisma.leituraTemperatura.findMany({ where: { containerId }, orderBy: { lidaEm: "asc" } }),
+    montarContextos([c], config),
+  ]);
+  return { ...montarContainer(c, leituras, new Date(), config, contextos.get(c.id)), leituras: leituras.map(serializarLeitura) };
 }
 
 function ultimaDataDoProcesso(c) {
@@ -107,7 +146,8 @@ containersRouter.get("/", asyncHandler(async (req, res) => {
     lerConfiguracao(),
   ]);
   const agora = new Date();
-  res.json(containers.map((c) => montarContainer(c, [...c.leituras].reverse(), agora, config)));
+  const contextos = await montarContextos(containers, config);
+  res.json(containers.map((c) => montarContainer(c, [...c.leituras].reverse(), agora, config, contextos.get(c.id))));
 }));
 
 containersRouter.get("/:id", asyncHandler(async (req, res) => {
@@ -143,6 +183,8 @@ containersRouter.post("/", requireRole(...PERMISSOES.operar), asyncHandler(async
 
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta");
   if (coletadoEm && coletadoEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "A coleta não pode estar no futuro.");
+  // Local de carregamento não informado → o local padrão do Cliente/Fábrica.
+  const locais = await validarLocais({ localCarregamentoId: grupo.localId, ...b });
 
   const dados = {
     numero,
@@ -150,6 +192,7 @@ containersRouter.post("/", requireRole(...PERMISSOES.operar), asyncHandler(async
     grupoId,
     armadorId,
     produtoId,
+    ...locais,
     booking: texto(b.booking, "Booking", { max: 60 }),
     lacre: texto(b.lacre, "Lacre", { max: 60 }),
     navio: texto(b.navio, "Navio", { max: 120 }),
@@ -194,6 +237,7 @@ containersRouter.post("/", requireRole(...PERMISSOES.operar), asyncHandler(async
     return c;
   });
 
+  await prepararRota(criado.id);
   await sincronizarAlertas(criado.id);
   res.status(201).json(await detalhe(criado.id));
 }));
@@ -212,6 +256,7 @@ containersRouter.patch("/:id", requireRole(...PERMISSOES.operar), asyncHandler(a
   }
   if (dados.placa) dados.placa = dados.placa.toUpperCase();
   if ("deadline" in b) dados.deadline = dataHora(b.deadline, "Deadline");
+  Object.assign(dados, await validarLocais(b, antes));
 
   const camposPrazo = ["metaEstadiaHoras", "custoEstadiaPorHora", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"];
   if (camposPrazo.some((c) => c in b)) {
@@ -242,6 +287,7 @@ containersRouter.patch("/:id", requireRole(...PERMISSOES.operar), asyncHandler(a
     dadosAntes: antes,
     dadosDepois: depois,
   });
+  if (Object.keys(TIPOS_DO_CAMPO).some((c) => c in dados)) await prepararRota(containerId);
   await sincronizarAlertas(containerId);
   res.json(await detalhe(containerId));
 }));
