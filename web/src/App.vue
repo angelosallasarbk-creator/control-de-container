@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth.js";
 import { api } from "./api.js";
 import { ROTULO_ALERTA, ROTULO_PERFIL } from "./formato.js";
@@ -8,6 +8,24 @@ import Login from "./pages/Login.vue";
 
 const auth = useAuthStore();
 const route = useRoute();
+const router = useRouter();
+
+// Perfis de campo usam só parte do sistema (a API também bloqueia o resto):
+// - Transportador: só as telas do QR; qualquer outra rota vai para "Registrar pelo código".
+// - Portaria: telas do QR + Pátio (consulta); outras rotas voltam ao Pátio.
+const TELAS_DO_PERFIL = {
+  TRANSPORTADOR: { telas: ["leitura-qr", "leitura-codigo"], inicio: "/leitura" },
+  PORTARIA: { telas: ["painel", "leitura-qr", "leitura-codigo"], inicio: "/" },
+};
+const restricao = computed(() => TELAS_DO_PERFIL[auth.usuario?.perfil] ?? null);
+const ehTransportador = computed(() => auth.usuario?.perfil === "TRANSPORTADOR");
+const ehPortaria = computed(() => auth.usuario?.perfil === "PORTARIA");
+// Só decide com a rota já resolvida: na carga inicial (ex.: QR aberto já logado) route.name ainda
+// é indefinido e redirecionaria a leitura do QR por engano.
+const foraDoPerfil = computed(() => Boolean(restricao.value && route.name && !restricao.value.telas.includes(route.name)));
+watch([restricao, () => route.name], () => {
+  if (foraDoPerfil.value) router.replace(restricao.value.inicio);
+}, { immediate: true });
 
 // Menu lateral:
 // - tela larga: fica ao lado do conteúdo; o ☰ recolhe/expande (preferência lembrada no navegador);
@@ -138,6 +156,7 @@ function bipar() {
 }
 
 async function atualizarAlertas() {
+  if (ehTransportador.value) return; // sem acesso a alertas
   try {
     const r = await api.resumoAlertas();
     const ids = new Set(r.criticosNaoReconhecidos.map((a) => a.id));
@@ -175,6 +194,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 <template>
   <div v-if="auth.usuario === undefined" class="vazio">Carregando…</div>
   <Login v-else-if="auth.usuario === null" />
+  <div v-else-if="foraDoPerfil" class="vazio">Abrindo…</div>
   <!-- Celular (QR) e folha de impressão: sem menu/cabeçalho. Depois do login continua na mesma URL. -->
   <router-view v-else-if="route.meta.layout === 'simples'" />
   <div v-else class="shell" :class="{ 'menu-recolhido': menuRecolhido && !estreita }">
@@ -199,6 +219,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
       </div>
       <nav>
         <router-link to="/">Pátio</router-link>
+        <router-link v-if="ehPortaria" to="/leitura">Registrar pelo código</router-link>
+        <template v-else>
         <router-link to="/containers" :class="{ ativo: route.path.startsWith('/containers') }">Containers</router-link>
         <router-link to="/alertas">
           Alertas
@@ -219,6 +241,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           <router-link v-if="auth.pode('administrar')" to="/integracao">Integração</router-link>
           <router-link to="/configuracoes">Configurações e log</router-link>
         </template>
+        </template>
       </nav>
       <div class="lateral-rodape">
         <div class="negrito" style="color: #fff">{{ auth.usuario.nome }}</div>
@@ -237,7 +260,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           <span class="faixa-detalhe"> —
             {{ criticos.slice(0, 3).map((a) => `${a.container.numero} (${ROTULO_ALERTA[a.tipo]})`).join(", ") }}{{ criticos.length > 3 ? "…" : "" }}</span>
         </span>
-        <router-link to="/alertas"><button class="pequeno">Ver alertas</button></router-link>
+        <router-link v-if="!ehPortaria" to="/alertas" class="btn pequeno">Ver alertas</router-link>
       </div>
       <header class="topo">
         <div class="linha">
@@ -248,8 +271,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           >☰</button>
           <h1>{{ route.meta.titulo }}</h1>
         </div>
-        <router-link to="/alertas" class="sino" title="Alertas abertos">
-          <button class="pequeno" aria-label="Alertas">🔔</button>
+        <router-link v-if="!ehPortaria" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
+          <span class="btn pequeno" aria-hidden="true">🔔</span>
           <span v-if="resumo?.naoReconhecidos" class="badge">{{ resumo.naoReconhecidos }}</span>
         </router-link>
       </header>

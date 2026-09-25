@@ -6,9 +6,11 @@ export function asyncHandler(fn) {
   };
 }
 
-// Erro de negócio com status HTTP (< 500 vai para o cliente com a mensagem; ver server.js).
-export function erroHttp(status, mensagem) {
+// Erro de negócio com status HTTP (< 500 vai para o cliente com a mensagem; ver app.js).
+// "extras" (ex.: { codigo: "CONTAINER_NAO_CADASTRADO" }) vão junto no JSON, para a tela reagir.
+export function erroHttp(status, mensagem, extras = null) {
   const erro = new Error(mensagem);
   erro.status = status;
+  if (extras) erro.extras = extras;
   return erro;
 }

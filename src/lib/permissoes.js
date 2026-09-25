@@ -21,7 +21,28 @@ export const PADRAO_POR_PERFIL = {
   SUPERVISOR: CHAVES,
   OPERADOR: ["containers.operar", "qr.registrar"],
   VISUALIZACAO: [],
+  TRANSPORTADOR: ["qr.registrar"],
+  PORTARIA: ["qr.registrar"],
 };
+
+// Perfis de campo usam só parte do sistema; o resto da API fica fechado para eles.
+// - Transportador: só as telas do QR (celular).
+// - Portaria: telas do QR + consulta do Pátio (e o resumo de alertas que o Pátio mostra).
+const API_DO_PERFIL = {
+  TRANSPORTADOR: { rotas: ["/qr/"], mensagem: "O perfil Transportador acessa apenas a leitura das etiquetas QR." },
+  PORTARIA: { rotas: ["/qr/", "/painel", "/alertas/resumo"], mensagem: "O perfil Portaria acessa apenas a leitura das etiquetas QR e a consulta do Pátio." },
+};
+export const ehTransportador = (req) => req.usuario?.perfil === "TRANSPORTADOR";
+export const ehPortaria = (req) => req.usuario?.perfil === "PORTARIA";
+export function restringirPerfisDeCampo(req, res, next) {
+  const regra = API_DO_PERFIL[req.usuario?.perfil];
+  if (regra && !regra.rotas.some((r) => req.path === r || req.path.startsWith(r.endsWith("/") ? r : `${r}/`))) {
+    return res.status(403).json({ erro: regra.mensagem });
+  }
+  // Consulta do Pátio: nada de gravar fora do QR.
+  if (regra && req.method !== "GET" && !req.path.startsWith("/qr/")) return res.status(403).json({ erro: regra.mensagem });
+  next();
+}
 
 // Lista final de permissões do usuário (+ "administrar" para ADMIN).
 export function permissoesEfetivas(usuario) {

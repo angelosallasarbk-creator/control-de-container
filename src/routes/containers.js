@@ -16,11 +16,11 @@ import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } fr
 
 export const containersRouter = Router();
 
-const TIPOS = ["DRY_20", "DRY_40", "HC_40", "REEFER_20", "REEFER_40"];
+export const TIPOS = ["DRY_20", "DRY_40", "HC_40", "REEFER_20", "REEFER_40"];
 
 // Sequência do processo de exportação e o campo de data que cada etapa preenche.
 export const FLUXO = ["PROGRAMADO", "COLETADO", "NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA", "ENTREGUE_PORTO"];
-const CAMPO_DATA = {
+export const CAMPO_DATA = {
   COLETADO: "coletadoEm",
   NA_FABRICA: "chegadaFabricaEm",
   EM_OPERACAO: "inicioOperacaoEm",
@@ -58,7 +58,7 @@ const FUNCAO_DO_CAMPO = {
 
 // Nome da etapa conforme o tipo do local (ex.: "Coleta ferroviária"); sem local, o genérico.
 const nomeEtapa = (c, status) => rotulosDasEtapas(c)[status] ?? ROTULO_STATUS[status];
-async function validarLocais(corpo, atual = {}) {
+export async function validarLocais(corpo, atual = {}) {
   const dados = {};
   for (const [campo, { funcao, rotulo, exemplo }] of Object.entries(FUNCAO_DO_CAMPO)) {
     if (!(campo in corpo)) continue;
@@ -77,7 +77,7 @@ async function validarLocais(corpo, atual = {}) {
 }
 
 // Depois de gravar: calcula/guarda as distâncias do trajeto (pode chamar o serviço de rota).
-async function prepararRota(containerId) {
+export async function prepararRota(containerId) {
   const c = await prisma.container.findUnique({ where: { id: containerId }, select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true } });
   if (c) await garantirDistancias(paresDoContainer(c));
 }
@@ -116,7 +116,7 @@ function ultimaDataDoProcesso(c) {
   return datas.length ? Math.max(...datas) : null;
 }
 
-function validarMomento(ocorridoEm, c) {
+export function validarMomento(ocorridoEm, c) {
   if (ocorridoEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "A data/hora não pode estar no futuro.");
   const anterior = ultimaDataDoProcesso(c);
   if (anterior && ocorridoEm.getTime() < anterior) {
@@ -162,15 +162,16 @@ containersRouter.get("/:id", asyncHandler(async (req, res) => {
 
 // ---------- Cadastro ----------
 
-containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
-  const b = req.body ?? {};
+// Valida um container novo (cadastro na tela ou pelo QR do transportador) e devolve os dados
+// prontos para gravar, com os prazos copiados dos cadastros.
+export async function validarNovoContainer(b, usuarioEmail) {
   const { numero, formatoValido, digitoValido } = validarNumeroContainer(b.numero);
   if (!formatoValido) {
     throw erroHttp(400, "Número do container inválido. Formato esperado: 4 letras + 7 dígitos (ex.: MSKU1234565).");
   }
   if (!digitoValido && !b.confirmarDigito) {
     // O front pergunta ao usuário e reenvia com confirmarDigito = true se ele confirmar.
-    return res.status(422).json({ erro: "O dígito verificador não confere. Confira o número digitado.", codigo: "DIGITO_INVALIDO" });
+    throw erroHttp(422, "O dígito verificador não confere. Confira o número digitado.", { codigo: "DIGITO_INVALIDO" });
   }
   const tipo = umDe(b.tipo, TIPOS, "Tipo de container", { obrigatorio: true });
   const grupoId = validarId(b.grupoId, "Ponto de Carregamento");
@@ -220,29 +221,36 @@ containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(a
     toleranciaMinutos: ehReefer(tipo) ? produto.toleranciaMinutos : null,
     status: coletadoEm ? "COLETADO" : "PROGRAMADO",
     coletadoEm,
-    criadoPor: req.usuario.email,
+    criadoPor: usuarioEmail,
   };
+  return dados;
+}
 
-  const criado = await prisma.$transaction(async (tx) => {
-    // Só pode existir uma passagem ativa por número (evita cadastro duplicado).
-    const ativo = await tx.container.findFirst({ where: { numero, status: { notIn: STATUS_ENCERRADOS } } });
-    if (ativo) throw erroHttp(409, `O container ${numero} já está ativo no sistema (status: ${ROTULO_STATUS[ativo.status]}).`);
-    const c = await tx.container.create({ data: dados });
-    await tx.eventoContainer.create({
-      data: { containerId: c.id, statusDe: null, statusPara: "PROGRAMADO", ocorridoEm: c.criadoEm, usuarioEmail: req.usuario.email },
-    });
-    if (coletadoEm) {
-      await tx.eventoContainer.create({
-        data: { containerId: c.id, statusDe: "PROGRAMADO", statusPara: "COLETADO", ocorridoEm: coletadoEm, usuarioEmail: req.usuario.email },
-      });
-    }
-    await registrarLog(
-      { usuarioEmail: req.usuario.email, acao: "CRIAR", entidade: "Container", entidadeId: c.id, descricao: `Container ${numero} cadastrado`, dadosDepois: c },
-      tx
-    );
-    return c;
+// Grava o container novo (dentro da transação de quem chama) com os eventos e o log.
+export async function gravarNovoContainer(tx, dados, usuarioEmail, descricao = null) {
+  const { numero, coletadoEm } = dados;
+  // Só pode existir uma passagem ativa por número (evita cadastro duplicado).
+  const ativo = await tx.container.findFirst({ where: { numero, status: { notIn: STATUS_ENCERRADOS } } });
+  if (ativo) throw erroHttp(409, `O container ${numero} já está ativo no sistema (status: ${ROTULO_STATUS[ativo.status]}).`);
+  const c = await tx.container.create({ data: dados });
+  await tx.eventoContainer.create({
+    data: { containerId: c.id, statusDe: null, statusPara: "PROGRAMADO", ocorridoEm: c.criadoEm, usuarioEmail },
   });
+  if (coletadoEm) {
+    await tx.eventoContainer.create({
+      data: { containerId: c.id, statusDe: "PROGRAMADO", statusPara: "COLETADO", ocorridoEm: coletadoEm, usuarioEmail },
+    });
+  }
+  await registrarLog(
+    { usuarioEmail, acao: "CRIAR", entidade: "Container", entidadeId: c.id, descricao: descricao ?? `Container ${numero} cadastrado`, dadosDepois: c },
+    tx
+  );
+  return c;
+}
 
+containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
+  const dados = await validarNovoContainer(req.body ?? {}, req.usuario.email);
+  const criado = await prisma.$transaction((tx) => gravarNovoContainer(tx, dados, req.usuario.email));
   await prepararRota(criado.id);
   await sincronizarAlertas(criado.id);
   res.status(201).json(await detalhe(criado.id));

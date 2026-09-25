@@ -10,7 +10,7 @@ import { texto, id as validarId, umDe } from "../lib/validacao.js";
 export const usuariosRouter = Router();
 usuariosRouter.use(requirePermissao("administrar"));
 
-const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO"];
+const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO", "TRANSPORTADOR", "PORTARIA"];
 const SELECT = { id: true, email: true, nome: true, perfil: true, ativo: true, criadoEm: true };
 const SENHA_MIN = 8;
 

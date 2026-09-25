@@ -93,6 +93,19 @@ Cada perfil tem um **conjunto padrão** de permissões. Em *Configurações → 
 
 - **Administrador:** acesso total, não configurável. Usuários, permissões, integração e as regras de Configurações são **exclusivos do administrador** e não podem ser liberados, para ninguém se trancar fora nem se autopromover.
 - **Visualização:** por padrão, só consulta.
+- **Portaria:** acessa as telas do QR e o **Pátio só para consulta**. O menu mostra só Pátio e Registrar pelo código; não há alertas nem ficha do container, e o servidor recusa o resto da API. Ao ler a etiqueta, escolhe **Entrada** ou **Saída** do ponto de carregamento e informa a temperatura, se o container for reefer. A tela já sugere o movimento pela etapa atual. Regras:
+  - **Entrada** registra a chegada (ex.: "Chegada no armazém") e abre a estadia.
+  - **Saída** registra a saída e fecha a estadia.
+  - **Etapas pendentes são completadas com o mesmo horário.** Na entrada, completa a coleta. Na saída, completa ovação e liberação. Essas etapas ficam marcadas no histórico como "completada pela portaria".
+  - **Saída sem entrada é recusada.** Registre a entrada primeiro; o horário pode ser ajustado.
+  - **Etiqueta nova:** a portaria digita o número do container, que precisa estar cadastrado, e a etiqueta é ligada.
+  - **Depois da saída,** o QR volta a registrar só temperatura.
+- **Transportador:** usa **só as telas do QR** no celular: a leitura da etiqueta e "Registrar pelo código", com botão Sair. Qualquer outra tela redireciona para "Registrar pelo código", e o servidor recusa as demais rotas da API (403). Ao ler a etiqueta de um container **ainda não coletado**, o transportador:
+  - escolhe **onde retirou o container**: Tipo (só tipos de retirada, como Porto / Terminal e Terminal Ferroviário) > Local;
+  - informa a data/hora (vem preenchida com o horário atual);
+  - informa a temperatura, se o container for reefer.
+
+  O sistema grava o local de retirada real (substituindo o previsto, se houver), registra a **etapa de coleta** na linha do tempo (ex.: "Coleta ferroviária") e liga a etiqueta, tudo numa única transação. Se o número digitado **não estiver cadastrado**, a tela pede tipo do container, Ponto de Carregamento, armador e produto (reefer), e o transportador **cadastra o container já coletado**. Depois da coleta, as leituras seguintes do QR registram só a temperatura. Tudo fica no log de auditoria com o e-mail do transportador.
 - **Troca de perfil:** trocar o perfil de um usuário descarta a personalização dele e aplica o padrão do novo perfil.
 - **Mudanças valem na hora:** a cada requisição o servidor relê o usuário no banco. Permissão liberada ou retirada vale imediatamente na API, e a tela se atualiza em até 30 s, sem sair e entrar. **Conta desativada é bloqueada na hora**; antes, a sessão de 12 h continuava válida. Toda mudança fica no log, com "liberou" e "retirou".
 

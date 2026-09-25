@@ -175,7 +175,7 @@ const grupos = computed(() =>
       <template v-if="!gruposDaAba.length">Nenhuma fábrica vinculada a esta região. Vincule em <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>.</template>
       <template v-else>
         Nenhum container ativo{{ soProblemas ? " com problema" : "" }}.
-        <router-link v-if="!soProblemas" to="/containers">Cadastrar container</router-link>
+        <router-link v-if="!soProblemas" to="/containers" class="btn pequeno" style="margin-left: 8px">Cadastrar container</router-link>
       </template>
     </div>
 

@@ -111,13 +111,14 @@ button, .btn {
   font: inherit; border: 1px solid var(--borda); background: var(--superficie); color: var(--texto);
   padding: 7px 14px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
-button:hover:not(:disabled) { background: var(--superficie-2); }
+a.btn { text-decoration: none; }
+button:hover:not(:disabled), .btn:hover { background: var(--superficie-2); text-decoration: none; }
 button:disabled { opacity: .55; cursor: not-allowed; }
-button.primario { background: var(--primaria); border-color: var(--primaria); color: #fff; }
-button.primario:hover:not(:disabled) { background: var(--primaria-escura); }
-button.perigo { color: var(--vermelho); border-color: #f1b5b5; }
+button.primario, .btn.primario { background: var(--primaria); border-color: var(--primaria); color: #fff; }
+button.primario:hover:not(:disabled), .btn.primario:hover { background: var(--primaria-escura); }
+button.perigo, .btn.perigo { color: var(--vermelho); border-color: #f1b5b5; }
 button.link { border: none; background: none; color: var(--primaria); padding: 0; }
-button.pequeno { padding: 4px 10px; font-size: 12px; }
+button.pequeno, .btn.pequeno { padding: 4px 10px; font-size: 12px; }
 
 input, select, textarea {
   font: inherit; border: 1px solid var(--borda); border-radius: 6px; padding: 7px 10px; background: var(--superficie); color: var(--texto); width: 100%;
@@ -234,7 +235,7 @@ tr.clicavel { cursor: pointer; }
 
 /* Aviso de alerta crítico no topo */
 .faixa-critica { background: var(--vermelho); color: #fff; padding: 10px 24px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-.faixa-critica button { background: rgba(255,255,255,.15); color: #fff; border-color: rgba(255,255,255,.35); }
+.faixa-critica button, .faixa-critica .btn { background: rgba(255,255,255,.15); color: #fff; border-color: rgba(255,255,255,.35); }
 .sino { position: relative; }
 .sino .badge { position: absolute; top: -6px; right: -8px; background: var(--vermelho); color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 6px; font-weight: 700; }
 

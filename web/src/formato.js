@@ -73,6 +73,8 @@ export const ROTULO_PERFIL = {
   SUPERVISOR: "Supervisor",
   OPERADOR: "Operador",
   VISUALIZACAO: "Visualização",
+  TRANSPORTADOR: "Transportador",
+  PORTARIA: "Portaria",
 };
 
 const FUSO = "America/Sao_Paulo";

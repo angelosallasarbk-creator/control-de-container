@@ -1,8 +1,14 @@
 <script setup>
 import { computed } from "vue";
+import { useRouter } from "vue-router";
+import { useAuthStore } from "../stores/auth.js";
 import { rotuloEtapa, ROTULO_TIPO, fmtHoras, fmtTemp, fmtMoeda, fmtFolga, fmtDataHora } from "../formato.js";
 
 const props = defineProps({ c: { type: Object, required: true } });
+const router = useRouter();
+const auth = useAuthStore();
+const abreFicha = computed(() => auth.usuario?.perfil !== "PORTARIA");
+const abrir = () => abreFicha.value && router.push(`/containers/${props.c.id}`);
 
 const estadiaPct = computed(() => Math.min(100, props.c.estadia?.percentualConsumido ?? 0));
 const textoDemurrage = computed(() => {
@@ -14,7 +20,7 @@ const textoDemurrage = computed(() => {
 </script>
 
 <template>
-  <div class="tile" :class="c.semaforo" @click="$router.push(`/containers/${c.id}`)">
+  <div class="tile" :class="[c.semaforo, { consulta: !abreFicha }]" @click="abrir">
     <div class="linha-entre">
       <span class="num mono">{{ c.numero }}</span>
       <span v-if="c.alertas.CRITICO" class="chip vermelho" title="Alertas críticos abertos">⚠ {{ c.alertas.CRITICO }}</span>
@@ -55,3 +61,7 @@ const textoDemurrage = computed(() => {
     <div v-if="c.previsao?.riscoDeadline === 'CRITICO'" class="linha-tile txt-VENCIDO"><span>⚠ risco de perder o deadline</span></div>
   </div>
 </template>
+
+<style scoped>
+.tile.consulta { cursor: default; }
+</style>

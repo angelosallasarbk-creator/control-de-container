@@ -12,6 +12,8 @@ enum Perfil {
   SUPERVISOR
   OPERADOR
   VISUALIZACAO
+  TRANSPORTADOR // só telas do QR; ao ler a etiqueta registra a coleta (local de retirada)
+  PORTARIA      // QR + Pátio (consulta); ao ler a etiqueta registra entrada/saída no ponto de carregamento
 }
 
 // Ciclo de exportação: retira vazio no porto → ova na fábrica → entrega cheio no terminal.

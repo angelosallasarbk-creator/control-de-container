@@ -345,7 +345,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
             <span class="linha" style="gap: 6px; flex-shrink: 0">
               <span v-if="r.ufDiferente" class="chip amarelo" title="A UF é diferente da digitada na busca">⚠ outra UF</span>
               <span class="chip">{{ TIPO_RESULTADO[r.camada] ?? r.camada }}</span>
-              <a :href="mapa(r)" target="_blank" rel="noopener" class="pequeno">ver no mapa</a>
+              <a :href="mapa(r)" target="_blank" rel="noopener" class="btn pequeno">Ver no mapa</a>
             </span>
           </li>
         </ul>

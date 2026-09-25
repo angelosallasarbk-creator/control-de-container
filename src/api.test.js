@@ -736,3 +736,134 @@ test("previsão de rota: trajeto longo com free time curto gera RISCO_DEMURRAGE;
   assert.equal(cfg.status, 200);
   assert.equal(cfg.body.kmPorDia, 400);
 });
+
+test("transportador: só acessa o QR; coleta com Tipo > Local de retirada; cadastra container novo", async () => {
+  const criado = await agentes.ADMIN.post("/api/usuarios").send({ email: "transportador@teste.local", nome: "Transportadora X", perfil: "TRANSPORTADOR", senha: "senha-teste-123" });
+  assert.equal(criado.status, 201);
+  assert.deepEqual(criado.body.permissoes, ["qr.registrar"]);
+  const tr = await logar("transportador@teste.local");
+
+  // Resto do sistema fechado.
+  for (const rota of ["/api/painel", "/api/containers", "/api/locais", "/api/etiquetas", "/api/alertas/resumo"]) {
+    assert.equal((await tr.get(rota)).status, 403, rota);
+  }
+  assert.equal((await tr.get("/api/auth/me")).status, 200);
+
+  // Opções: só tipos/locais de retirada (porto, ferrovia) — armazém/fábrica não.
+  const op = (await tr.get("/api/qr/opcoes/coleta")).body;
+  assert.deepEqual(op.tipos.map((t) => t.nome).sort(), ["Porto / Terminal", "Terminal Ferroviário"]);
+  const nomesLocais = op.locais.map((l) => l.nome);
+  assert.ok(nomesLocais.includes("Terminal Ferroviário Paulínia") && nomesLocais.includes("Porto de Santos"));
+  assert.ok(!nomesLocais.includes("Armazém Cubatão") && !nomesLocais.includes("Fábrica Rio Verde"));
+  assert.ok(op.grupos.length && op.armadores.length && op.tiposContainer.includes("REEFER_40"));
+
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), produtoId: await ativo("produtos") };
+  const etiquetas = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 3 })).body.etiquetas;
+  const [e1, e2, e3] = etiquetas;
+  assert.equal((await tr.get(`/api/qr/${e1.token}`)).body.modoTransportador, true);
+  assert.equal((await agentes.OPERADOR.get(`/api/qr/${e1.token}`)).body.modoTransportador, false);
+
+  // A) Container programado pela operação: a leitura registra a coleta no terminal ferroviário.
+  const prog = await agentes.ADMIN.post("/api/containers").send({ numero: "TRLU1000001", confirmarDigito: true, tipo: "DRY_40", grupoId: cad.grupoId, armadorId: cad.armadorId, portoRetiradaId: ids.santos });
+  assert.equal(prog.status, 201, JSON.stringify(prog.body));
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e1.token}/coleta`).send({ numero: "TRLU1000001", portoRetiradaId: ids.ferro })).status, 403, "só transportador");
+  assert.equal((await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "TRLU1000001", portoRetiradaId: ids.cubatao })).status, 400, "armazém não é retirada");
+  const coleta = await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "trlu 100000 1", portoRetiradaId: ids.ferro });
+  assert.equal(coleta.status, 201, JSON.stringify(coleta.body));
+  assert.equal(coleta.body.coleta, "REGISTRADA");
+  assert.equal(coleta.body.container.retirada, "Terminal Ferroviário Paulínia");
+  const ficha = (await agentes.ADMIN.get(`/api/containers/${prog.body.id}`)).body;
+  assert.equal(ficha.status, "COLETADO");
+  assert.equal(ficha.portoRetiradaId, ids.ferro, "local de retirada real substitui o previsto");
+  assert.equal(ficha.rotulosEtapa.COLETADO, "Coleta ferroviária");
+  assert.ok(ficha.eventos.some((ev) => ev.statusPara === "COLETADO" && ev.observacao.includes("Terminal Ferroviário Paulínia")));
+  // Outra etiqueta no mesmo container: pede confirmação de substituição.
+  const outra = await tr.post(`/api/qr/${e3.token}/coleta`).send({ numero: "TRLU1000001", portoRetiradaId: ids.ferro });
+  assert.equal(outra.status, 409);
+  assert.equal(outra.body.codigo, "ETIQUETA_EXISTENTE");
+
+  // B) Container sem cadastro: pede os dados; reefer exige temperatura; cadastra já coletado.
+  const semCadastro = await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "TRLU2000002", portoRetiradaId: ids.santos });
+  assert.equal(semCadastro.status, 404);
+  assert.equal(semCadastro.body.codigo, "CONTAINER_NAO_CADASTRADO");
+  const novo = { tipo: "REEFER_40", ...cad };
+  assert.equal((await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "TRLU2000002", confirmarDigito: true, portoRetiradaId: ids.santos, novo })).status, 400, "reefer sem temperatura");
+  const cadastrou = await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "TRLU2000002", confirmarDigito: true, portoRetiradaId: ids.santos, novo, temperatura: "-18,5".replace(",", ".") });
+  assert.equal(cadastrou.status, 201, JSON.stringify(cadastrou.body));
+  assert.equal(cadastrou.body.cadastrado, true);
+  const novoC = (await agentes.ADMIN.get("/api/containers")).body.find((c) => c.numero === "TRLU2000002");
+  assert.equal(novoC.status, "COLETADO");
+  assert.equal(novoC.portoRetiradaId, ids.santos);
+  assert.equal(novoC.criadoPor, "transportador@teste.local");
+  const fichaNovo = (await agentes.ADMIN.get(`/api/containers/${novoC.id}`)).body;
+  assert.equal(fichaNovo.leituras.length, 1);
+  assert.equal(fichaNovo.leituras[0].temperatura, -18.5);
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${novoC.id}`)).body;
+  assert.ok(log.some((l) => l.descricao.includes("cadastrado pelo transportador na coleta em Porto de Santos")));
+
+  // Depois da coleta, leitura de temperatura segue o fluxo normal.
+  assert.equal((await tr.post(`/api/qr/${e2.token}/leituras`).send({ temperatura: -18 })).status, 201);
+  for (const c of [prog.body.id, novoC.id]) await agentes.ADMIN.post(`/api/containers/${c}/cancelar`).send({ motivo: "fim do teste do transportador" });
+});
+
+test("portaria: QR + Pátio; entrada/saída pelo QR completando etapas pendentes", async () => {
+  const criado = await agentes.ADMIN.post("/api/usuarios").send({ email: "portaria@teste.local", nome: "Portaria Fábrica", perfil: "PORTARIA", senha: "senha-teste-123" });
+  assert.equal(criado.status, 201);
+  const po = await logar("portaria@teste.local");
+
+  // Acesso: Pátio e resumo de alertas sim; resto não; nada de gravar fora do QR.
+  assert.equal((await po.get("/api/painel")).status, 200);
+  assert.equal((await po.get("/api/alertas/resumo")).status, 200);
+  for (const rota of ["/api/containers", "/api/alertas", "/api/locais", "/api/custos", "/api/painelx"]) {
+    assert.equal((await po.get(rota)).status, 403, rota);
+  }
+  assert.equal((await po.post("/api/alertas/1/reconhecer").send({ acaoTomada: "x" })).status, 403);
+
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), produtoId: await ativo("produtos") };
+  const [e1, e2] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 2 })).body.etiquetas;
+  assert.equal((await po.get(`/api/qr/${e1.token}`)).body.modoPortaria, true);
+
+  // Container ainda "Programado" (coleta não registrada), reefer.
+  const c = await agentes.ADMIN.post("/api/containers").send({ numero: "PRTU3000003", confirmarDigito: true, tipo: "REEFER_40", ...cad });
+  assert.equal(c.status, 201);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e1.token}/portaria`).send({ numero: "PRTU3000003", movimento: "ENTRADA", temperatura: -18 })).status, 403, "só portaria");
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ numero: "PRTU3000003", movimento: "X", temperatura: -18 })).status, 400);
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ numero: "PRTU9999999", movimento: "ENTRADA", temperatura: -18 })).status, 404, "precisa estar cadastrado");
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ numero: "PRTU3000003", movimento: "SAIDA", temperatura: -18 })).status, 409, "saída sem entrada");
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ numero: "PRTU3000003", movimento: "ENTRADA" })).status, 400, "reefer exige temperatura");
+
+  const entrada = await po.post(`/api/qr/${e1.token}/portaria`).send({ numero: "PRTU3000003", movimento: "ENTRADA", temperatura: -18 });
+  assert.equal(entrada.status, 201, JSON.stringify(entrada.body));
+  assert.equal(entrada.body.movimento, "ENTRADA");
+  assert.deepEqual(entrada.body.completadas, ["Coletado no porto"], "coleta pendente completada");
+  let ficha = (await agentes.ADMIN.get(`/api/containers/${c.body.id}`)).body;
+  assert.equal(ficha.status, "NA_FABRICA");
+  assert.equal(ficha.coletadoEm, ficha.chegadaFabricaEm, "coleta completada com o mesmo horário");
+  assert.ok(ficha.eventos.some((ev) => ev.statusPara === "COLETADO" && ev.observacao.includes("completada pela portaria")));
+  assert.ok(ficha.eventos.some((ev) => ev.statusPara === "NA_FABRICA" && ev.observacao === "Entrada registrada pela portaria"));
+  assert.equal(ficha.leituras.length, 1);
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "ENTRADA", temperatura: -18 })).status, 409, "entrada repetida");
+
+  // Saída sem ovação/liberação registradas: completa as duas.
+  const saida = await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "SAIDA", temperatura: -17.5 });
+  assert.equal(saida.status, 201, JSON.stringify(saida.body));
+  assert.deepEqual(saida.body.completadas, ["Em ovação", "Liberado"]);
+  ficha = (await agentes.ADMIN.get(`/api/containers/${c.body.id}`)).body;
+  assert.equal(ficha.status, "SAIU_FABRICA");
+  assert.ok(ficha.saidaFabricaEm && ficha.liberadoEm === ficha.saidaFabricaEm && ficha.inicioOperacaoEm === ficha.saidaFabricaEm);
+  assert.equal(ficha.situacao.estadia.encerrada, true, "estadia fecha na saída");
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${c.body.id}`)).body;
+  assert.ok(log.some((l) => l.descricao.includes("saída pela portaria") && l.descricao.includes("etapas completadas: Em ovação, Liberado")));
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "SAIDA", temperatura: -17 })).status, 409, "saída repetida");
+
+  // Etiqueta nova + container dry já com etiqueta: pede confirmação de substituição.
+  const dry = await agentes.ADMIN.post("/api/containers").send({ numero: "PRTU4000004", confirmarDigito: true, tipo: "DRY_40", ...cad, coletadoEm: new Date(Date.now() - 3600e3) });
+  const [e3] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  assert.equal((await po.post(`/api/qr/${e2.token}/portaria`).send({ numero: "PRTU4000004", movimento: "ENTRADA" })).status, 201, "dry não pede temperatura");
+  const outra = await po.post(`/api/qr/${e3.token}/portaria`).send({ numero: "PRTU4000004", movimento: "SAIDA" });
+  assert.equal(outra.body.codigo, "ETIQUETA_EXISTENTE");
+  assert.equal((await po.post(`/api/qr/${e3.token}/portaria`).send({ numero: "PRTU4000004", movimento: "SAIDA", substituir: true })).status, 201);
+  for (const id of [c.body.id, dry.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste da portaria" });
+});

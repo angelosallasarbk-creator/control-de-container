@@ -8,6 +8,7 @@ import { useAuthStore } from "../stores/auth.js";
 // mesma tela de leitura. Útil com etiqueta riscada/molhada ou QR que não abre.
 const router = useRouter();
 const auth = useAuthStore();
+const transportador = auth.usuario?.perfil === "TRANSPORTADOR";
 const codigo = ref("");
 const erro = ref(null);
 const buscando = ref(false);
@@ -32,6 +33,7 @@ async function abrir() {
       <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="2" fill="#4a8fdc" /><path d="M8 11v10M13 11v10M18 11v10M23 11v10" stroke="#fff" stroke-width="2" /></svg>
       <span class="espaco">Controle de Container</span>
       <span class="pequeno">{{ auth.usuario?.nome }}</span>
+      <button v-if="transportador" type="button" class="pequeno sair" @click="auth.logout()">Sair</button>
     </header>
     <main class="movel-corpo">
       <form class="cartao" @submit.prevent="abrir">
@@ -46,7 +48,8 @@ async function abrir() {
           />
         </div>
         <button type="submit" class="primario bloco" :disabled="buscando">{{ buscando ? "Buscando…" : "Abrir etiqueta" }}</button>
-        <router-link to="/" class="pequeno" style="text-align: center">Voltar ao sistema</router-link>
+        <p v-if="transportador" class="mudo pequeno" style="margin: 0; text-align: center">Aponte a câmera do celular para o QR da etiqueta — ou digite o código acima.</p>
+        <router-link v-else to="/" class="btn bloco">Voltar ao sistema</router-link>
       </form>
     </main>
   </div>
@@ -58,6 +61,7 @@ async function abrir() {
 .movel-corpo { padding: 16px; max-width: 520px; width: 100%; margin: 0 auto; }
 .cartao { background: var(--superficie); border: 1px solid var(--borda); border-radius: 12px; padding: 18px; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 14px; }
 .cartao h1 { font-size: 18px; }
+.sair { background: transparent; color: #fff; border-color: rgba(255, 255, 255, .5); }
 .grande-campo { font-size: 22px; padding: 12px; text-transform: uppercase; letter-spacing: .06em; }
-button.bloco { width: 100%; justify-content: center; font-size: 18px; padding: 14px; border-radius: 10px; }
+button.bloco, .btn.bloco { width: 100%; justify-content: center; font-size: 18px; padding: 14px; border-radius: 10px; }
 </style>

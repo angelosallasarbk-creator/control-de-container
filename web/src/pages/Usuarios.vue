@@ -14,6 +14,8 @@ const DESCRICAO_PERFIL = {
   SUPERVISOR: "Padrão: tudo, exceto administração (cadastros, containers, prazos, desfazer/cancelar, etiquetas QR, log).",
   OPERADOR: "Padrão: operar containers (cadastrar, avançar, temperatura, alertas) e registrar leituras pelo celular.",
   VISUALIZACAO: "Padrão: somente consulta.",
+  PORTARIA: "Leitura das etiquetas QR na portaria do ponto de carregamento: ao ler, informa ENTRADA ou SAÍDA (e temperatura, se reefer); consulta o Pátio.",
+  TRANSPORTADOR: "Só a leitura das etiquetas QR no celular: ao ler, informa o local de retirada (porto/ferrovia) e registra a coleta; cadastra o container se não existir; registra temperatura.",
 };
 
 async function carregar() {

@@ -13,7 +13,7 @@ export const SELECT_TIPO = {
 };
 // Para listas: só o necessário para nomear as etapas.
 export const SELECT_LOCAIS_ETAPAS = {
-  portoRetirada: { select: { tipo: { select: { rotuloColeta: true } } } },
+  portoRetirada: { select: { nome: true, tipo: { select: { rotuloColeta: true } } } },
   localCarregamento: { select: { tipo: { select: { rotuloChegada: true, rotuloSaida: true } } } },
   portoEntrega: { select: { tipo: { select: { rotuloEntrega: true } } } },
 };

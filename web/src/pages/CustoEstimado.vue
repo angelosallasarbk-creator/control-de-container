@@ -250,7 +250,7 @@ watch(preset, (p) => {
 
     <div v-if="faltaCotacao.length" class="aviso">
       Há custo em {{ faltaCotacao.join(", ") }} sem cotação cadastrada, então os valores aparecem separados por moeda e não somados em R$.
-      <router-link v-if="auth.pode('administrar')" to="/configuracoes">Informar cotação em Configurações</router-link>
+      <router-link v-if="auth.pode('administrar')" to="/configuracoes?aba=custos" class="btn pequeno" style="margin-left: 8px">Informar cotação em Configurações</router-link>
       <span v-else>Peça a um administrador para informar a cotação em Configurações.</span>
     </div>
 

@@ -271,7 +271,7 @@ async function cancelar(e) {
         </div>
         <div v-if="enderecoProblema" class="campo erro" style="grid-column: 1 / -1; margin: 0">
           {{ enderecoProblema }}
-          <router-link v-if="auth.pode('administrar')" to="/configuracoes?aba=etiquetas">Configurar agora</router-link>
+          <router-link v-if="auth.pode('administrar')" to="/configuracoes?aba=etiquetas" class="btn pequeno" style="margin-left: 8px">Configurar agora</router-link>
           <span v-else>Peça a um administrador (Configurações → Etiquetas QR).</span>
         </div>
       </div>
@@ -374,7 +374,7 @@ async function cancelar(e) {
             <td v-if="filtro.todos" class="pequeno">{{ e.geradaPor }}</td>
             <td class="pequeno">{{ fmtDataHora(e.criadoEm) }}</td>
             <td style="text-align: right; white-space: nowrap">
-              <a :href="`/q/${e.token}`" target="_blank" rel="noopener" class="pequeno" title="Abre a página que o celular vê">abrir</a>
+              <a :href="`/q/${e.token}`" target="_blank" rel="noopener" class="btn pequeno" title="Abre a página que o celular vê">Abrir</a>
               <button v-if="auth.pode('etiquetas.cancelar') && ['LIVRE', 'VINCULADA'].includes(e.estado)" class="pequeno perigo" style="margin-left: 8px" @click="cancelar(e)">Cancelar</button>
             </td>
           </tr>

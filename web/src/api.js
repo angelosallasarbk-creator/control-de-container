@@ -64,6 +64,11 @@ export const api = {
   qrPorCodigo: (codigo) => request(`/qr/codigo/${encodeURIComponent(codigo.trim())}`),
   qrVincular: (token, dados) => request(`/qr/${token}/vincular`, { method: "POST", body: dados }),
   qrLeitura: (token, dados) => request(`/qr/${token}/leituras`, { method: "POST", body: dados }),
+  // Transportador: coleta pelo QR (Tipo > Local de retirada; cadastra o container se preciso).
+  qrOpcoesColeta: () => request("/qr/opcoes/coleta"),
+  qrColeta: (token, dados) => request(`/qr/${token}/coleta`, { method: "POST", body: dados }),
+  // Portaria: entrada/saída no ponto de carregamento.
+  qrPortaria: (token, dados) => request(`/qr/${token}/portaria`, { method: "POST", body: dados }),
 
   locais: (params) => request(`/locais${qs(params)}`),
   criarLocal: (dados) => request("/locais", { method: "POST", body: dados }),

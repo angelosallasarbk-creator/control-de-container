@@ -3,7 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { requireAuth } from "./lib/auth.js";
-import { carregarUsuarioAtual } from "./lib/permissoes.js";
+import { carregarUsuarioAtual, restringirPerfisDeCampo } from "./lib/permissoes.js";
 import { authRouter } from "./routes/auth.js";
 import { cadastrosRouter } from "./routes/cadastros.js";
 import { containersRouter } from "./routes/containers.js";
@@ -35,7 +35,7 @@ export function criarApp() {
 
   // Tudo em /api daqui para baixo exige sessão válida — e relê o usuário no banco (conta
   // desativada ou permissão alterada vale na hora, sem esperar a sessão expirar).
-  app.use("/api", requireAuth, carregarUsuarioAtual);
+  app.use("/api", requireAuth, carregarUsuarioAtual, restringirPerfisDeCampo);
   app.use("/api", cadastrosRouter);
   app.use("/api/containers", containersRouter);
   app.use("/api/painel", painelRouter);
@@ -62,7 +62,7 @@ export function criarApp() {
     // 4xx e os 502/503 que o próprio código cria (serviço externo fora/não configurado) têm
     // mensagem pensada para o usuário; qualquer outro erro vira "erro interno" genérico.
     if (err.status && (err.status < 500 || err.status === 502 || err.status === 503)) {
-      return res.status(err.status).json({ erro: err.message });
+      return res.status(err.status).json({ erro: err.message, ...err.extras });
     }
     console.error(err);
     res.status(500).json({ erro: "Erro interno no servidor." });
