@@ -11,7 +11,9 @@ const OFFSET_BRASILIA = -3 * HORA;
 
 export const STATUS_ENCERRADOS = ["ENTREGUE_PORTO", "CANCELADO"];
 export const STATUS_NA_FABRICA = ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"];
-const STATUS_MONITORA_TEMPERATURA = ["NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA"];
+// Leitura fora da faixa alerta em qualquer etapa com o container ativo (da programação à
+// entrega): carga fora da temperatura é problema onde quer que o container esteja.
+const STATUS_MONITORA_TEMPERATURA = ["PROGRAMADO", "COLETADO", "NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA"];
 // Sem leitura só é cobrado depois que a carga começou a entrar (ovação) e enquanto o
 // container está na fábrica, onde a leitura manual é possível.
 const STATUS_EXIGE_LEITURA = ["EM_OPERACAO", "LIBERADO"];

@@ -5,6 +5,8 @@ import { useAuthStore } from "./stores/auth.js";
 import { api } from "./api.js";
 import { ROTULO_ALERTA, ROTULO_PERFIL } from "./formato.js";
 import Login from "./pages/Login.vue";
+import Icone from "./components/Icone.vue";
+import { visaoContainers, definirVisaoContainers } from "./visaoContainers.js";
 
 const auth = useAuthStore();
 const route = useRoute();
@@ -188,6 +190,12 @@ onBeforeUnmount(() => clearInterval(timer));
 // Telas que mudam alertas (ficha, Alertas) pedem para atualizar o sino/faixa na hora.
 provide("atualizarAlertas", atualizarAlertas);
 
+// Troca o modelo da tela de Containers (fica lembrado). Tabela sempre volta para /containers.
+function trocarVisao(valor) {
+  definirVisaoContainers(valor);
+  if (valor === "tabela" && route.name !== "containers") router.push("/containers");
+}
+
 const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 </script>
 
@@ -270,6 +278,14 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
             @click="alternarMenu"
           >☰</button>
           <h1>{{ route.meta.titulo }}</h1>
+          <div v-if="['containers', 'ficha'].includes(route.name)" class="seletor-visao" role="group" aria-label="Modelo de visão">
+            <button type="button" :class="{ ativo: route.name === 'ficha' || visaoContainers === 'grid' }" title="Lista + detalhe" @click="trocarVisao('grid')">
+              <Icone nome="grid" :tamanho="16" /> Grid
+            </button>
+            <button type="button" :class="{ ativo: route.name === 'containers' && visaoContainers === 'tabela' }" title="Tabela com todos os containers" @click="trocarVisao('tabela')">
+              <Icone nome="tabela" :tamanho="16" /> Tabela
+            </button>
+          </div>
         </div>
         <router-link v-if="!ehPortaria" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
           <span class="btn pequeno" aria-hidden="true">🔔</span>
@@ -278,8 +294,9 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
       </header>
       </div>
       <main class="pagina">
-        <!-- key = path (não fullPath): trocar só a query, como a aba de região do Pátio, não recria a tela. -->
-        <router-view :key="route.path" />
+        <!-- key = path (não fullPath): trocar só a query, como a aba de região do Pátio, não recria a tela.
+             meta.chave fixa (ficha do container): trocar de container na lista lateral não recria a lista. -->
+        <router-view :key="route.meta.chave ?? route.path" />
       </main>
     </div>
   </div>

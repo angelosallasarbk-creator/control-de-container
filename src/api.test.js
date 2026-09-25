@@ -907,3 +907,24 @@ test("atraso na coleta programada: alerta abre, escala para crítico e encerra n
   assert.ok(historico.length >= 1 && historico.every((a) => a.encerradoEm), "fica no histórico, encerrado");
   for (const c of [noPrazo.body.id, atrasado.body.id]) await agentes.ADMIN.post(`/api/containers/${c}/cancelar`).send({ motivo: "fim do teste de atraso" });
 });
+
+test("mensagem do alerta aberto acompanha o tempo (não fica congelada no texto de abertura)", async () => {
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  // Ids buscados ANTES do .post(): o supertest abre o servidor no .post() e requisições no meio dos argumentos o derrubam.
+  const g = await ativo("grupos");
+  const a = await ativo("armadores");
+  const c = await agentes.ADMIN.post("/api/containers").send({
+    numero: "MSGU7000007", confirmarDigito: true, tipo: "DRY_40", grupoId: g, armadorId: a,
+    coletaProgramadaEm: new Date(Date.now() - 2 * 3600e3),
+  });
+  assert.equal(c.status, 201);
+  const aberto = () => prisma.alerta.findFirst({ where: { containerId: c.body.id, tipo: "ATRASO_COLETA", chaveAberta: { not: null } } });
+  const antes = await aberto();
+  await prisma.alerta.update({ where: { id: antes.id }, data: { mensagem: "texto antigo: atrasada há 6 min" } });
+  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  await sincronizarAlertas(c.body.id);
+  const depois = await aberto();
+  assert.equal(depois.id, antes.id, "mesmo alerta (não reabre)");
+  assert.match(depois.mensagem, /atrasada há 2h/);
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste" });
+});

@@ -1,16 +1,36 @@
 <script setup>
-import { computed, inject, onMounted, reactive, ref } from "vue";
+// Visão "lista + detalhe": lista de containers à esquerda; à direita cabeçalho, faixas de
+// alerta, indicadores do ciclo e abas (Visão geral, Etapas, Trajeto, Temperatura, Histórico).
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import {
-  FLUXO, ROTULO_TIPO, ROTULO_ALERTA, rotuloEtapa, acaoEtapa, ehRetiradaEntrega,
-  fmtDataHora, fmtHoras, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde,
+  FLUXO, ROTULO_TIPO, ROTULO_ALERTA, rotuloEtapa, acaoEtapa, ehRetiradaEntrega, kmDoCiclo,
+  fmtDataHora, fmtHoras, fmtKm, fmtFolga, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde,
 } from "../formato.js";
 import GraficoTemperatura from "../components/GraficoTemperatura.vue";
 import PrevisaoCiclo from "../components/PrevisaoCiclo.vue";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
+import ListaContainersLateral from "../components/ListaContainersLateral.vue";
+import Icone from "../components/Icone.vue";
+import NovoContainer from "../components/NovoContainer.vue";
+import imagemContainer from "../assets/container.png";
 
-const props = defineProps({ id: { type: String, required: true } });
+// Sem id (/containers no modelo Grid): em tela larga abre o primeiro da lista; em tela estreita
+// mostra a lista para escolher.
+const props = defineProps({ id: { type: String, default: null } });
+const router = useRouter();
+const telaLarga = window.matchMedia("(min-width: 1101px)");
+function aoCarregarLista(lista) {
+  if (!props.id && telaLarga.matches && lista.length) router.replace(`/containers/${lista[0].id}`);
+}
+const novoAberto = ref(false);
+function criado(x) {
+  novoAberto.value = false;
+  refLista.value?.carregar();
+  if (x?.id) router.push(`/containers/${x.id}`);
+}
 const atualizarAlertas = inject("atualizarAlertas", () => {});
 const auth = useAuthStore();
 
@@ -19,6 +39,7 @@ const erro = ref(null);
 const mensagem = ref(null);
 const enviando = ref(false);
 const modal = ref(null); // "avancar" | "cancelar" | "editar" | { alerta }
+const refLista = ref(null);
 
 const ORIGEM_LEITURA = { MANUAL: "Manual", INTEGRACAO: "Automática", QRCODE: "QR" };
 const CAMPO_DATA = {
@@ -27,6 +48,7 @@ const CAMPO_DATA = {
 };
 
 async function carregar() {
+  if (!props.id) return;
   try {
     c.value = await api.container(props.id);
     erro.value = null;
@@ -35,6 +57,14 @@ async function carregar() {
   }
 }
 onMounted(carregar);
+// Trocar de container na lista não recria a tela (a lista mantém rolagem e filtro).
+watch(() => props.id, () => {
+  c.value = null;
+  mensagem.value = null;
+  modal.value = null;
+  menuAberto.value = false;
+  carregar();
+});
 
 // Executa uma ação que devolve o container atualizado.
 async function executar(fn, sucesso) {
@@ -45,6 +75,7 @@ async function executar(fn, sucesso) {
     mensagem.value = sucesso;
     modal.value = null;
     atualizarAlertas();
+    refLista.value?.carregar();
     setTimeout(() => (mensagem.value = null), 4000);
   } catch (e) {
     erro.value = e.message;
@@ -59,9 +90,114 @@ const proximo = computed(() => {
   return i >= 0 && i < FLUXO.length - 1 ? FLUXO[i + 1] : null;
 });
 const s = computed(() => c.value?.situacao ?? {});
+const p = computed(() => (s.value.previsao?.disponivel ? s.value.previsao : null));
+const km = computed(() => kmDoCiclo(p.value));
 const alertasAbertos = computed(() => (c.value?.alertas ?? []).filter((a) => a.chaveAberta));
 const alertasEncerrados = computed(() => (c.value?.alertas ?? []).filter((a) => !a.chaveAberta));
 const leiturasDesc = computed(() => [...(c.value?.leituras ?? [])].reverse().slice(0, 30));
+const rota = computed(() => [c.value?.portoRetirada?.nome, c.value?.localCarregamento?.nome, c.value?.portoEntrega?.nome].filter(Boolean));
+const RISCO = { OK: { texto: "Sem risco", cor: "verde" }, ATENCAO: { texto: "Atenção", cor: "amarelo" }, CRITICO: { texto: "Risco alto", cor: "vermelho" } };
+
+// ----- Faixas de alerta no topo (o que exige ação agora) -----
+const faixas = computed(() => {
+  if (!c.value) return [];
+  const x = s.value;
+  const lista = [];
+  if (x.atrasoColeta?.atrasada) {
+    lista.push({
+      nivel: x.atrasoColeta.situacao === "VENCIDO" ? "critico" : "atencao", icone: "relogio",
+      // Sem local de retirada não há nome do tipo ("Coleta ferroviária"): usa "Coleta".
+      titulo: `${c.value.rotulosEtapa?.COLETADO ?? "Coleta"} atrasada há ${fmtHoras(x.atrasoColeta.horasAtraso)}`,
+      texto: `Programada para ${fmtDataHora(c.value.coletaProgramadaEm)}, ainda não registrada.`,
+    });
+  }
+  const t = x.temperatura;
+  if (t?.foraDaFaixa && t.ultima) {
+    lista.push({
+      nivel: t.nivelTemperatura === "ATENCAO" ? "atencao" : "critico", icone: "termometro",
+      titulo: `Temperatura fora da faixa: ${fmtTemp(t.ultima.temperatura)}`,
+      texto: `Última leitura há ${tempoDesde(t.ultima.lidaEm)} (${ORIGEM_LEITURA[t.ultima.origem]?.toLowerCase() ?? "—"}). Faixa aceita: ${fmtTemp(t.tempMin)} a ${fmtTemp(t.tempMax)} (setpoint ${fmtTemp(t.setpoint)}).`,
+    });
+  }
+  if (t?.semLeitura) {
+    lista.push({ nivel: t.nivelSemLeitura === "CRITICO" ? "critico" : "atencao", icone: "termometro", titulo: "Leitura de temperatura atrasada", texto: `Sem registro há ${fmtHoras(t.minutosSemLeitura / 60)}.` });
+  }
+  if (x.estadia && !x.estadia.encerrada && x.estadia.situacao !== "OK") {
+    lista.push({
+      nivel: x.estadia.situacao === "VENCIDO" ? "critico" : "atencao", icone: "armazem",
+      titulo: x.estadia.situacao === "VENCIDO" ? `Meta de estadia estourada em ${fmtHoras(x.estadia.horasExcedidas)}` : `Meta de estadia vence em ${fmtHoras(x.estadia.horasRestantes)}`,
+      texto: `Meta ${x.estadia.metaHoras}h · na fábrica há ${fmtHoras(x.estadia.horasDecorridas)}${x.estadia.custo ? ` · custo ${fmtMoeda(x.estadia.custo)}` : ""}.`,
+    });
+  }
+  if (x.demurrage && !x.demurrage.encerrada && x.demurrage.situacao !== "OK") {
+    lista.push({
+      nivel: x.demurrage.situacao === "VENCIDO" ? "critico" : "atencao", icone: "folga",
+      titulo: x.demurrage.situacao === "VENCIDO" ? `Demurrage: ${x.demurrage.diasExcedidos} diária(s) · ${fmtMoeda(x.demurrage.custo, x.demurrage.moeda)}` : "Free time terminando",
+      texto: `Último dia livre: ${fmtDataHora(x.demurrage.vencimento)}.`,
+    });
+  }
+  if (x.deadline && !x.deadline.encerrada && x.deadline.situacao !== "OK") {
+    lista.push({
+      nivel: x.deadline.situacao === "VENCIDO" ? "critico" : "atencao", icone: "navio",
+      titulo: x.deadline.horasRestantes < 0 ? `Deadline do navio passou há ${fmtHoras(x.deadline.horasRestantes)}` : `Deadline do navio em ${fmtHoras(x.deadline.horasRestantes)}`,
+      texto: `Cut-off: ${fmtDataHora(c.value.deadline)}.`,
+    });
+  }
+  return lista;
+});
+
+// ----- Abas (a escolhida fica lembrada neste navegador) -----
+const CHAVE_ABA = "cc_ficha_aba";
+const abas = computed(() => [
+  { chave: "geral", nome: "Visão geral" },
+  { chave: "etapas", nome: "Etapas" },
+  { chave: "trajeto", nome: "Trajeto" },
+  ...(c.value?.reefer ? [{ chave: "temperatura", nome: "Temperatura" }] : []),
+  { chave: "historico", nome: "Histórico" },
+]);
+const abaEscolhida = ref((() => {
+  try {
+    return localStorage.getItem(CHAVE_ABA) || "geral";
+  } catch {
+    return "geral";
+  }
+})());
+const aba = computed(() => (abas.value.some((a) => a.chave === abaEscolhida.value) ? abaEscolhida.value : "geral"));
+function irPara(chave) {
+  abaEscolhida.value = chave;
+  try {
+    localStorage.setItem(CHAVE_ABA, chave);
+  } catch {
+    // sem armazenamento: só não lembra a aba
+  }
+}
+
+// ----- Etapas (planejado × realizado) -----
+const etapas = computed(() => {
+  if (!c.value) return [];
+  const atual = FLUXO.indexOf(c.value.status);
+  return FLUXO.map((etapa, i) => {
+    const realizado = etapa === "PROGRAMADO" ? c.value.criadoEm : c.value[CAMPO_DATA[etapa]];
+    const planejado = etapa === "COLETADO" ? c.value.coletaProgramadaEm : null;
+    return {
+      etapa, nome: rotuloEtapa(c.value, etapa), planejado, realizado,
+      feita: Boolean(realizado) && (c.value.status === "CANCELADO" || i <= atual),
+      atual: i === atual,
+      pendente: c.value.status !== "CANCELADO" && i === atual + 1,
+      atrasada: etapa === "COLETADO" && s.value.atrasoColeta?.atrasada ? s.value.atrasoColeta.situacao : null,
+    };
+  });
+});
+
+// ----- Menu "⋮" -----
+const menuAberto = ref(false);
+const fecharMenu = (e) => {
+  if (!e.target.closest?.(".menu-acoes")) menuAberto.value = false;
+};
+onMounted(() => document.addEventListener("click", fecharMenu));
+onBeforeUnmount(() => document.removeEventListener("click", fecharMenu));
+const podeDesfazer = computed(() => auth.pode("containers.corrigir") && c.value?.eventos.length > 1 && c.value.status !== "CANCELADO");
+const podeCancelar = computed(() => auth.pode("containers.corrigir") && !encerrado.value);
 
 // ----- Avançar etapa -----
 const av = reactive({ ocorridoEm: "", observacao: "" });
@@ -78,11 +214,18 @@ const avancar = () =>
   );
 
 function desfazer() {
+  menuAberto.value = false;
   if (!confirm(`Desfazer a etapa "${rotuloEtapa(c.value, c.value.status)}"? A data registrada será apagada (fica no log de auditoria).`)) return;
   executar(() => api.desfazer(c.value.id), "Última etapa desfeita.");
 }
 
 const motivoCancelamento = ref("");
+function abrirCancelar() {
+  menuAberto.value = false;
+  motivoCancelamento.value = "";
+  erro.value = null;
+  modal.value = "cancelar";
+}
 const cancelar = () => executar(() => api.cancelar(c.value.id, motivoCancelamento.value), "Container cancelado.");
 
 // ----- Temperatura -----
@@ -151,228 +294,333 @@ function reconhecido() {
 </script>
 
 <template>
-  <div v-if="erro && !c" class="erro">{{ erro }}</div>
-  <div v-if="!c && !erro" class="vazio">Carregando…</div>
+  <div class="mestre-detalhe">
+    <ListaContainersLateral ref="refLista" :selecionado="id" :class="{ 'so-largo': id }" @carregada="aoCarregarLista" @novo="novoAberto = true" />
 
-  <template v-if="c">
-    <div class="linha"><router-link to="/containers">← Containers</router-link></div>
+    <section v-if="!id" class="detalhe so-largo">
+      <div class="card vazio">Selecione um container na lista.</div>
+    </section>
+    <section v-else class="detalhe">
+      <router-link to="/containers" class="so-estreito voltar"><Icone nome="voltar" :tamanho="16" /> Containers</router-link>
+      <div v-if="erro && !c" class="erro">{{ erro }}</div>
+      <div v-if="!c && !erro" class="card vazio">Carregando…</div>
 
-    <div class="card">
-      <div class="linha-entre">
-        <div>
-          <div class="linha">
-            <span class="ponto" :class="c.semaforo"></span>
-            <span class="mono negrito" style="font-size: 20px">{{ c.numero }}</span>
-            <span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span>
-            <span class="chip">{{ ROTULO_TIPO[c.tipo] }}</span>
+      <template v-if="c">
+        <!-- Cabeçalho -->
+        <div class="card cabecalho">
+          <div class="cab-linha">
+            <img class="ilustracao" :src="imagemContainer" width="100" height="49" alt="" />
+            <div class="identificacao">
+              <div class="linha" style="gap: 10px; flex-wrap: wrap">
+                <h1 class="numero">{{ c.numero }}</h1>
+                <span class="chip azul chip-grande">{{ rotuloEtapa(c, c.status) }}</span>
+                <span class="chip chip-grande">{{ ROTULO_TIPO[c.tipo] }}</span>
+              </div>
+              <div class="rota-cab">
+                <template v-if="rota.length">{{ rota.join(" → ") }}</template>
+                <template v-else>Trajeto não informado</template>
+              </div>
+              <div class="mudo pequeno">{{ c.grupo.cliente }} / {{ c.grupo.fabrica }} · {{ c.armador.nome }}<template v-if="c.produto"> · {{ c.produto.nome }}</template></div>
+            </div>
+            <div class="acoes">
+              <button v-if="auth.pode('containers.operar') && proximo" class="primario" @click="abrirAvancar">
+                <Icone nome="caminhao" :tamanho="18" /> {{ acaoEtapa(c, proximo) }}
+              </button>
+              <button v-if="auth.pode('containers.operar')" @click="abrirEditar">Editar</button>
+              <div v-if="podeDesfazer || podeCancelar" class="menu-acoes">
+                <button type="button" aria-label="Mais ações" :aria-expanded="menuAberto" @click="menuAberto = !menuAberto"><Icone nome="mais" :tamanho="18" /></button>
+                <div v-if="menuAberto" class="menu-lista" role="menu">
+                  <button v-if="podeDesfazer" type="button" role="menuitem" @click="desfazer">Desfazer última etapa</button>
+                  <button v-if="podeCancelar" type="button" role="menuitem" class="perigo" @click="abrirCancelar">Cancelar container</button>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="mudo" style="margin-top: 4px">{{ c.grupo.cliente }} / {{ c.grupo.fabrica }} · {{ c.armador.nome }}<template v-if="c.produto"> · {{ c.produto.nome }}</template></div>
+          <div v-if="mensagem" class="sucesso">{{ mensagem }}</div>
+          <div v-if="erro && !modal" class="erro">{{ erro }}</div>
+          <div v-if="c.status === 'CANCELADO'" class="aviso">Cancelado em {{ fmtDataHora(c.canceladoEm) }}.</div>
+
+          <!-- Faixas de alerta -->
+          <div v-if="faixas.length" class="faixas">
+            <div v-for="(f, i) in faixas" :key="i" class="faixa" :class="f.nivel">
+              <Icone :nome="f.icone" :tamanho="26" />
+              <div>
+                <div class="faixa-titulo">{{ f.titulo }}</div>
+                <div class="faixa-texto">{{ f.texto }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Indicadores do ciclo -->
+          <div class="indicadores">
+            <div class="ind">
+              <Icone nome="relogio" />
+              <div><div class="rotulo">Ciclo estimado</div><div class="valor">{{ p ? `${(p.cicloHoras / 24).toFixed(1).replace(".", ",")} dias` : "—" }}</div></div>
+            </div>
+            <div class="ind">
+              <Icone nome="local" />
+              <div>
+                <div class="rotulo">Distância total prevista</div>
+                <div class="valor">{{ km.trechos.length ? fmtKm(km.total) : "—" }}</div>
+                <div v-if="km.trechos.length" class="sub">{{ km.trechos.map((t) => fmtKm(t.km)).join(" + ") }}<template v-if="km.aproximado"> · aproximada</template></div>
+              </div>
+            </div>
+            <div class="ind">
+              <Icone nome="calendario" />
+              <div>
+                <div class="rotulo">ETA (previsão)</div>
+                <div class="valor">{{ p ? fmtDataHora(p.previsaoEntrega) : c.entreguePortoEm ? fmtDataHora(c.entreguePortoEm) : "—" }}</div>
+                <div v-if="p" class="sub">Último dia livre: {{ fmtDataHora(p.vencimentoFreeTime) }}</div>
+                <div v-else-if="c.entreguePortoEm" class="sub">entregue</div>
+                <div v-else class="sub">sem trajeto completo</div>
+              </div>
+            </div>
+            <div class="ind">
+              <Icone nome="folga" />
+              <div>
+                <div class="rotulo">Folga até o fim do free time</div>
+                <template v-if="p">
+                  <div class="linha" style="gap: 6px">
+                    <span class="valor" :class="`txt-${p.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : p.riscoDemurrage}`">{{ fmtFolga(p.folgaHoras) }}</span>
+                    <span class="chip" :class="RISCO[p.riscoDemurrage].cor">{{ RISCO[p.riscoDemurrage].texto }}</span>
+                  </div>
+                  <div class="sub">free time: {{ c.freeTimeDias }} dias</div>
+                </template>
+                <template v-else-if="s.demurrage">
+                  <div class="valor" :class="`txt-${s.demurrage.situacao}`">
+                    {{ s.demurrage.diasExcedidos ? fmtMoeda(s.demurrage.custo, s.demurrage.moeda) : `${s.demurrage.diasRestantes} dia(s)` }}
+                  </div>
+                  <div class="sub">free time: {{ c.freeTimeDias }} dias</div>
+                </template>
+                <template v-else><div class="valor">—</div><div class="sub">free time: {{ c.freeTimeDias }} dias</div></template>
+              </div>
+            </div>
+            <div class="ind">
+              <Icone nome="armazem" />
+              <div>
+                <div class="rotulo">Estadia na fábrica (meta)</div>
+                <template v-if="s.estadia">
+                  <div class="valor" :class="`txt-${s.estadia.situacao}`">{{ fmtHoras(s.estadia.horasDecorridas) }} / {{ c.metaEstadiaHoras }}h</div>
+                  <div class="sub">{{ s.estadia.encerrada ? "encerrada" : s.estadia.horasExcedidas > 0 ? `excedeu ${fmtHoras(s.estadia.horasExcedidas)}` : `faltam ${fmtHoras(s.estadia.horasRestantes)}` }}</div>
+                </template>
+                <div v-else class="valor">{{ c.metaEstadiaHoras }}h</div>
+              </div>
+            </div>
+            <div class="ind">
+              <Icone nome="navio" />
+              <div>
+                <div class="rotulo">Deadline do navio</div>
+                <template v-if="s.deadline">
+                  <div class="valor" :class="`txt-${s.deadline.situacao}`">{{ fmtDataHora(c.deadline) }}</div>
+                  <div class="sub">
+                    {{ s.deadline.encerrada ? (s.deadline.situacao === "VENCIDO" ? "entregue após o deadline" : "entregue a tempo") : s.deadline.horasRestantes < 0 ? `passou há ${fmtHoras(s.deadline.horasRestantes)}` : `faltam ${fmtHoras(s.deadline.horasRestantes)}` }}
+                  </div>
+                </template>
+                <div v-else class="valor normal">Não informado</div>
+              </div>
+            </div>
+          </div>
+
+          <nav class="abas-ficha" role="tablist" aria-label="Seções do container">
+            <button
+              v-for="a in abas" :key="a.chave" type="button" role="tab" :aria-selected="aba === a.chave" :class="{ ativa: aba === a.chave }"
+              @click="irPara(a.chave)"
+            >
+              {{ a.nome }}<span v-if="a.chave === 'geral' && alertasAbertos.length" class="chip" :class="alertasAbertos.some((x) => x.nivel === 'CRITICO') ? 'vermelho' : 'amarelo'">{{ alertasAbertos.length }}</span>
+            </button>
+          </nav>
         </div>
-        <div class="linha">
-          <button v-if="auth.pode('containers.operar') && proximo" class="primario" @click="abrirAvancar">{{ acaoEtapa(c, proximo) }}</button>
-          <button v-if="auth.pode('containers.operar')" @click="abrirEditar">Editar</button>
-          <button v-if="auth.pode('containers.corrigir') && c.eventos.length > 1 && c.status !== 'CANCELADO'" @click="desfazer">Desfazer etapa</button>
-          <button v-if="auth.pode('containers.corrigir') && !encerrado" class="perigo" @click="motivoCancelamento = ''; modal = 'cancelar'">Cancelar</button>
-        </div>
-      </div>
-      <div v-if="mensagem" class="sucesso" style="margin-top: 12px">{{ mensagem }}</div>
-      <div v-if="erro && !modal" class="erro" style="margin-top: 12px">{{ erro }}</div>
 
-      <div class="etapas" style="margin-top: 18px">
-        <div
-          v-for="(etapa, i) in FLUXO" :key="etapa" class="etapa"
-          :class="{ feita: FLUXO.indexOf(c.status) >= i, atual: c.status === etapa }"
-        >
-          <span class="bolinha"></span>
-          <div>{{ rotuloEtapa(c, etapa) }}</div>
-          <div class="quando">{{ etapa === "PROGRAMADO" ? fmtDataHora(c.criadoEm) : fmtDataHora(c[CAMPO_DATA[etapa]]) }}</div>
-          <div v-if="etapa === 'COLETADO' && !c.coletadoEm && c.coletaProgramadaEm" class="quando" :class="s.atrasoColeta?.atrasada ? `txt-${s.atrasoColeta.situacao}` : ''">
-            programada {{ fmtDataHora(c.coletaProgramadaEm) }}
+        <!-- Visão geral -->
+        <div v-if="aba === 'geral'" class="geral">
+          <div class="coluna">
+            <div class="card">
+              <h2>Alertas abertos</h2>
+              <table v-if="alertasAbertos.length">
+                <tbody>
+                  <tr v-for="a in alertasAbertos" :key="a.id">
+                    <td><span class="chip" :class="a.nivel === 'CRITICO' ? 'vermelho' : 'amarelo'">{{ a.nivel === "CRITICO" ? "Crítico" : "Atenção" }}</span></td>
+                    <td class="negrito">{{ ROTULO_ALERTA[a.tipo] }}</td>
+                    <td>{{ a.mensagem }}<div class="mudo pequeno">aberto há {{ tempoDesde(a.abertoEm) }}</div></td>
+                    <td style="text-align: right">
+                      <span v-if="a.reconhecidoEm" class="pequeno mudo">✔ {{ a.reconhecidoPor }}: {{ a.acaoTomada }}</span>
+                      <button v-else-if="auth.pode('containers.operar')" class="pequeno" @click="modal = { alerta: a }">Reconhecer</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else class="mudo">Nenhum alerta aberto.</div>
+            </div>
+
+            <div class="card">
+              <h2>Prazos</h2>
+              <dl class="lista-def">
+                <dt>Estadia na fábrica</dt>
+                <dd>
+                  <template v-if="s.estadia">
+                    {{ fmtHoras(s.estadia.horasDecorridas) }} de {{ c.metaEstadiaHoras }}h
+                    <span :class="`txt-${s.estadia.situacao}`">· {{ s.estadia.horasExcedidas > 0 ? `excedeu ${fmtHoras(s.estadia.horasExcedidas)}` : s.estadia.encerrada ? "dentro da meta" : `vence ${fmtDataHora(s.estadia.limite)}` }}</span>
+                    <div v-if="s.estadia.custo" class="txt-VENCIDO">Custo: {{ fmtMoeda(s.estadia.custo) }}</div>
+                  </template>
+                  <span v-else class="mudo">meta {{ c.metaEstadiaHoras }}h · começa na chegada</span>
+                </dd>
+                <dt>Demurrage</dt>
+                <dd>
+                  <template v-if="s.demurrage">
+                    <template v-if="s.demurrage.diasExcedidos">{{ s.demurrage.diasExcedidos }} diária(s) × {{ fmtMoeda(s.demurrage.valorDiaria, s.demurrage.moeda) }} = <strong class="txt-VENCIDO">{{ fmtMoeda(s.demurrage.custo, s.demurrage.moeda) }}</strong></template>
+                    <template v-else-if="s.demurrage.encerrada">entregue dentro do free time</template>
+                    <template v-else>{{ s.demurrage.diasRestantes }} dia(s) livre(s) · último dia {{ fmtDataHora(s.demurrage.vencimento) }}</template>
+                    <div v-if="!s.demurrage.encerrada && s.demurrage.custoSeEntregarAmanha" class="mudo">Se entregar amanhã: {{ fmtMoeda(s.demurrage.custoSeEntregarAmanha, s.demurrage.moeda) }}</div>
+                  </template>
+                  <span v-else class="mudo">free time {{ c.freeTimeDias }} dias · começa na coleta</span>
+                </dd>
+                <dt>Deadline do navio</dt>
+                <dd>{{ c.deadline ? fmtDataHora(c.deadline) : "Não informado" }}</dd>
+                <dt>Coleta programada</dt>
+                <dd>{{ c.coletaProgramadaEm ? fmtDataHora(c.coletaProgramadaEm) : "—" }}</dd>
+              </dl>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Dados</h2>
+            <dl class="lista-def">
+              <dt>Ponto de Carregamento</dt><dd>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</dd>
+              <dt>Armador</dt><dd>{{ c.armador.nome }}</dd>
+              <dt v-if="c.produto">Produto</dt><dd v-if="c.produto">{{ c.produto.nome }}</dd>
+              <dt>Booking</dt><dd>{{ c.booking || "—" }}</dd>
+              <dt>Navio</dt><dd>{{ c.navio || "—" }}</dd>
+              <dt>Placa / Motorista</dt><dd>{{ c.placa || "—" }} · {{ c.motorista || "—" }}</dd>
+              <dt>Lacre</dt><dd>{{ c.lacre || "—" }}</dd>
+              <dt>Posição no pátio</dt><dd>{{ c.posicaoPatio || "—" }}</dd>
+              <dt>Observação</dt><dd style="white-space: pre-wrap">{{ c.observacao || "—" }}</dd>
+              <dt>Cadastrado por</dt><dd>{{ c.criadoPor }} em {{ fmtDataHora(c.criadoEm) }}</dd>
+              <dt>Etiqueta QR</dt>
+              <dd>
+                <template v-if="c.etiquetas?.length">
+                  <div v-for="e in c.etiquetas" :key="e.id">
+                    <span class="mono negrito">{{ e.codigo }}</span>
+                    <span class="chip" :class="e.status === 'CANCELADA' ? 'vermelho' : 'verde'" style="margin-left: 6px">{{ e.status === "CANCELADA" ? "cancelada" : "ativa" }}</span>
+                    <span class="mudo pequeno"> · ligada {{ fmtDataHora(e.vinculadaEm) }} por {{ e.vinculadaPor }}</span>
+                    <div v-if="e.motivoCancelamento" class="mudo pequeno">{{ e.motivoCancelamento }}</div>
+                  </div>
+                </template>
+                <span v-else class="mudo">nenhuma — <router-link to="/etiquetas">gerar etiquetas</router-link></span>
+              </dd>
+            </dl>
           </div>
         </div>
-      </div>
-      <div v-if="s.atrasoColeta?.atrasada" class="aviso" :class="{ 'erro': s.atrasoColeta.situacao === 'VENCIDO' }" style="margin-top: 12px">
-        ⏱ Coleta programada para {{ fmtDataHora(c.coletaProgramadaEm) }} está atrasada há {{ fmtHoras(s.atrasoColeta.horasAtraso) }} — nenhuma coleta registrada.
-      </div>
-      <div v-if="c.status === 'CANCELADO'" class="aviso" style="margin-top: 12px">Cancelado em {{ fmtDataHora(c.canceladoEm) }}.</div>
-    </div>
 
-    <!-- Prazos -->
-    <div class="kpis">
-      <div class="kpi" :class="{ amarelo: s.estadia?.situacao === 'ATENCAO', vermelho: s.estadia?.situacao === 'VENCIDO' }">
-        <div class="rotulo">Estadia na fábrica (meta {{ c.metaEstadiaHoras }}h)</div>
-        <template v-if="s.estadia">
-          <div class="valor">{{ fmtHoras(s.estadia.horasDecorridas) }}</div>
-          <div class="pequeno" :class="`txt-${s.estadia.situacao}`">
-            <template v-if="s.estadia.horasExcedidas > 0">excedeu {{ fmtHoras(s.estadia.horasExcedidas) }}</template>
-            <template v-else-if="s.estadia.encerrada">dentro da meta</template>
-            <template v-else>faltam {{ fmtHoras(s.estadia.horasRestantes) }} · vence {{ fmtDataHora(s.estadia.limite) }}</template>
+        <!-- Etapas -->
+        <div v-if="aba === 'etapas'" class="card">
+          <h2 style="margin-bottom: 2px">Fluxo de etapas</h2>
+          <p class="mudo" style="margin: 0 0 14px">Acompanhe o status e os horários de cada etapa da operação.</p>
+          <div class="tabela-wrap">
+            <table class="fluxo">
+              <thead><tr><th>Etapa</th><th>Planejado</th><th>Realizado</th></tr></thead>
+              <tbody>
+                <tr v-for="(e, i) in etapas" :key="e.etapa" :class="{ feita: e.feita, atual: e.atual }">
+                  <td>
+                    <span class="marco" :class="{ feita: e.feita, atrasada: e.atrasada, ultimo: i === etapas.length - 1 }"></span>
+                    <span class="nome-etapa">{{ e.nome }}</span>
+                    <span v-if="e.atrasada" class="chip" :class="e.atrasada === 'VENCIDO' ? 'vermelho' : 'amarelo'" style="margin-left: 8px">Atrasada</span>
+                  </td>
+                  <td>{{ e.planejado ? fmtDataHora(e.planejado) : "—" }}</td>
+                  <td>
+                    <template v-if="e.feita">{{ fmtDataHora(e.realizado) }}</template>
+                    <span v-else-if="e.pendente && (e.planejado || e.atrasada)" class="chip amarelo">Pendente</span>
+                    <template v-else>—</template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div v-if="s.estadia.custo" class="pequeno txt-VENCIDO">Custo: {{ fmtMoeda(s.estadia.custo) }}</div>
-        </template>
-        <div v-else class="mudo" style="margin-top: 8px">Começa na chegada à fábrica</div>
-      </div>
-
-      <div class="kpi" :class="{ amarelo: s.demurrage?.situacao === 'ATENCAO', vermelho: s.demurrage?.situacao === 'VENCIDO' }">
-        <div class="rotulo">Demurrage (free time {{ c.freeTimeDias }} dias)</div>
-        <template v-if="s.demurrage">
-          <div class="valor">
-            <template v-if="s.demurrage.diasExcedidos">{{ fmtMoeda(s.demurrage.custo, s.demurrage.moeda) }}</template>
-            <template v-else>{{ s.demurrage.diasRestantes }} dia(s)</template>
-          </div>
-          <div class="pequeno" :class="`txt-${s.demurrage.situacao}`">
-            <template v-if="s.demurrage.diasExcedidos">{{ s.demurrage.diasExcedidos }} diária(s) × {{ fmtMoeda(s.demurrage.valorDiaria, s.demurrage.moeda) }}</template>
-            <template v-else-if="s.demurrage.encerrada">entregue dentro do free time</template>
-            <template v-else>livres após hoje · último dia livre {{ fmtDataHora(s.demurrage.vencimento) }}</template>
-          </div>
-          <div v-if="!s.demurrage.encerrada && s.demurrage.custoSeEntregarAmanha" class="pequeno mudo">
-            Se entregar amanhã: {{ fmtMoeda(s.demurrage.custoSeEntregarAmanha, s.demurrage.moeda) }}
-          </div>
-        </template>
-        <div v-else class="mudo" style="margin-top: 8px">Começa na coleta no porto</div>
-      </div>
-
-      <div class="kpi" :class="{ amarelo: s.deadline?.situacao === 'ATENCAO', vermelho: s.deadline?.situacao === 'VENCIDO' }">
-        <div class="rotulo">Deadline do navio</div>
-        <template v-if="s.deadline">
-          <div class="valor" style="font-size: 18px">{{ fmtDataHora(c.deadline) }}</div>
-          <div class="pequeno" :class="`txt-${s.deadline.situacao}`">
-            <template v-if="s.deadline.encerrada">{{ s.deadline.situacao === "VENCIDO" ? "entregue após o deadline" : "entregue a tempo" }}</template>
-            <template v-else-if="s.deadline.horasRestantes < 0">passou há {{ fmtHoras(s.deadline.horasRestantes) }}</template>
-            <template v-else>faltam {{ fmtHoras(s.deadline.horasRestantes) }}</template>
-          </div>
-        </template>
-        <div v-else class="mudo" style="margin-top: 8px">Não informado</div>
-      </div>
-    </div>
-
-    <!-- Trajeto e previsão do ciclo -->
-    <div v-if="!encerrado || c.portoRetirada" class="card">
-      <div class="linha-entre" style="margin-bottom: 10px">
-        <h2 style="margin: 0">Trajeto e previsão</h2>
-        <span class="pequeno">
-          <strong>{{ c.portoRetirada?.nome ?? "retirada ?" }}</strong> →
-          <strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →
-          <strong>{{ c.portoEntrega?.nome ?? "entrega ?" }}</strong>
-        </span>
-      </div>
-      <PrevisaoCiclo v-if="s.previsao" :p="s.previsao" :free-time-dias="c.freeTimeDias" />
-      <div v-else-if="encerrado" class="mudo pequeno">Ciclo encerrado.</div>
-      <div v-if="auth.pode('containers.operar') && !encerrado && s.previsao && !s.previsao.disponivel" style="margin-top: 8px">
-        <button class="pequeno" @click="abrirEditar">Informar trajeto</button>
-      </div>
-    </div>
-
-    <!-- Alertas abertos -->
-    <div v-if="alertasAbertos.length" class="card">
-      <h2>Alertas abertos</h2>
-      <table>
-        <tbody>
-          <tr v-for="a in alertasAbertos" :key="a.id">
-            <td><span class="chip" :class="a.nivel === 'CRITICO' ? 'vermelho' : 'amarelo'">{{ a.nivel === "CRITICO" ? "Crítico" : "Atenção" }}</span></td>
-            <td class="negrito">{{ ROTULO_ALERTA[a.tipo] }}</td>
-            <td>{{ a.mensagem }}<div class="mudo pequeno">aberto há {{ tempoDesde(a.abertoEm) }}</div></td>
-            <td>
-              <span v-if="a.reconhecidoEm" class="pequeno mudo">✔ {{ a.reconhecidoPor }}: {{ a.acaoTomada }}</span>
-              <button v-else-if="auth.pode('containers.operar')" class="pequeno" @click="modal = { alerta: a }">Reconhecer</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="dois-col">
-      <!-- Temperatura -->
-      <div v-if="c.reefer" class="card">
-        <div class="linha-entre">
-          <h2>Temperatura</h2>
-          <span class="mudo pequeno">Setpoint {{ fmtTemp(c.setpoint) }} · faixa {{ fmtTemp(c.tempMin) }} a {{ fmtTemp(c.tempMax) }} · tolerância {{ c.toleranciaMinutos }} min</span>
         </div>
-        <div v-if="s.temperatura?.ultima" class="linha" style="margin-bottom: 10px">
-          <span style="font-size: 26px; font-weight: 700" :class="s.temperatura.foraDaFaixa ? 'txt-VENCIDO' : 'txt-OK'">{{ fmtTemp(s.temperatura.ultima.temperatura) }}</span>
-          <span class="mudo">última leitura há {{ tempoDesde(s.temperatura.ultima.lidaEm) }} ({{ s.temperatura.ultima.origem === "MANUAL" ? "manual" : "automática" }})</span>
+
+        <!-- Trajeto -->
+        <div v-if="aba === 'trajeto'" class="card">
+          <div class="linha-entre" style="margin-bottom: 10px; flex-wrap: wrap; gap: 8px">
+            <h2 style="margin: 0">Trajeto e previsão</h2>
+            <span class="pequeno">
+              <strong>{{ c.portoRetirada?.nome ?? "retirada ?" }}</strong> →
+              <strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →
+              <strong>{{ c.portoEntrega?.nome ?? "entrega ?" }}</strong>
+            </span>
+          </div>
+          <PrevisaoCiclo v-if="s.previsao" :p="s.previsao" :free-time-dias="c.freeTimeDias" sem-numeros />
+          <div v-else-if="encerrado" class="mudo">Ciclo encerrado.</div>
+          <div v-if="auth.pode('containers.operar') && !encerrado && s.previsao && !s.previsao.disponivel" style="margin-top: 8px">
+            <button class="pequeno" @click="abrirEditar">Informar trajeto</button>
+          </div>
         </div>
-        <div v-if="s.temperatura?.semLeitura" class="aviso" style="margin-bottom: 10px">Leitura atrasada: sem registro há {{ fmtHoras(s.temperatura.minutosSemLeitura / 60) }}.</div>
 
-        <form v-if="auth.pode('containers.operar') && !encerrado" class="filtros" style="margin-bottom: 12px" @submit.prevent="registrarLeitura">
-          <div class="campo" style="min-width: 110px; max-width: 130px">
-            <label>Temperatura (°C)</label>
-            <input v-model="leitura.temperatura" inputmode="decimal" placeholder="-18,0" required />
+        <!-- Temperatura -->
+        <div v-if="aba === 'temperatura'" class="card">
+          <div class="linha-entre" style="flex-wrap: wrap; gap: 8px">
+            <h2>Temperatura</h2>
+            <span class="mudo pequeno">Setpoint {{ fmtTemp(c.setpoint) }} · faixa {{ fmtTemp(c.tempMin) }} a {{ fmtTemp(c.tempMax) }} · tolerância {{ c.toleranciaMinutos }} min</span>
           </div>
-          <div class="campo">
-            <label>Horário da leitura</label>
-            <input v-model="leitura.lidaEm" type="datetime-local" required @input="leitura.editado = true" />
+          <div v-if="s.temperatura?.ultima" class="linha" style="margin-bottom: 10px">
+            <span style="font-size: 26px; font-weight: 700" :class="s.temperatura.foraDaFaixa ? 'txt-VENCIDO' : 'txt-OK'">{{ fmtTemp(s.temperatura.ultima.temperatura) }}</span>
+            <span class="mudo">última leitura há {{ tempoDesde(s.temperatura.ultima.lidaEm) }} ({{ ORIGEM_LEITURA[s.temperatura.ultima.origem]?.toLowerCase() }})</span>
           </div>
-          <button type="submit" class="primario" :disabled="enviando">Registrar leitura</button>
-        </form>
 
-        <GraficoTemperatura v-if="c.leituras.length" :leituras="c.leituras" :temp-min="c.tempMin" :temp-max="c.tempMax" :setpoint="c.setpoint" />
-        <div v-else class="vazio">Nenhuma leitura registrada.</div>
+          <form v-if="auth.pode('containers.operar') && !encerrado" class="filtros" style="margin-bottom: 12px" @submit.prevent="registrarLeitura">
+            <div class="campo" style="min-width: 110px; max-width: 130px">
+              <label>Temperatura (°C)</label>
+              <input v-model="leitura.temperatura" inputmode="decimal" placeholder="-18,0" required />
+            </div>
+            <div class="campo">
+              <label>Horário da leitura</label>
+              <input v-model="leitura.lidaEm" type="datetime-local" required @input="leitura.editado = true" />
+            </div>
+            <button type="submit" class="primario" :disabled="enviando">Registrar leitura</button>
+          </form>
 
-        <details v-if="c.leituras.length" style="margin-top: 10px">
-          <summary class="pequeno">Ver leituras ({{ c.leituras.length }})</summary>
+          <GraficoTemperatura v-if="c.leituras.length" :leituras="c.leituras" :temp-min="c.tempMin" :temp-max="c.tempMax" :setpoint="c.setpoint" />
+          <div v-else class="vazio">Nenhuma leitura registrada.</div>
+
+          <details v-if="c.leituras.length" style="margin-top: 10px">
+            <summary class="pequeno">Ver leituras ({{ c.leituras.length }})</summary>
+            <table class="pequeno">
+              <thead><tr><th>Horário</th><th>Temperatura</th><th>Origem</th><th>Registro</th></tr></thead>
+              <tbody>
+                <tr v-for="l in leiturasDesc" :key="l.id">
+                  <td>{{ fmtDataHora(l.lidaEm) }}</td>
+                  <td :class="l.temperatura < c.tempMin || l.temperatura > c.tempMax ? 'txt-VENCIDO' : ''">{{ fmtTemp(l.temperatura) }}</td>
+                  <td>
+                    {{ ORIGEM_LEITURA[l.origem] }}<template v-if="l.etiqueta"> <span class="mono">{{ l.etiqueta.codigo }}</span></template> · {{ l.fonte }}
+                    <a
+                      v-if="l.latitude !== null" :href="`https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.longitude}#map=18/${l.latitude}/${l.longitude}`"
+                      target="_blank" rel="noopener" :title="`Local da leitura (precisão ~${l.precisaoM ?? '?'} m)`"
+                    >📍</a>
+                  </td>
+                  <td>
+                    <span v-if="l.lancadaComAtraso" class="chip amarelo" :title="`Digitada ${fmtHoras(l.atrasoMin / 60)} depois do horário informado`">lançada com atraso</span>
+                    <span v-else class="mudo">{{ fmtDataHora(l.registradaEm) }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+        </div>
+
+        <!-- Histórico -->
+        <div v-if="aba === 'historico'" class="card">
+          <h2>Histórico de etapas</h2>
           <table class="pequeno">
-            <thead><tr><th>Horário</th><th>Temperatura</th><th>Origem</th><th>Registro</th></tr></thead>
+            <thead><tr><th>Quando</th><th>Etapa</th><th>Quem / observação</th></tr></thead>
             <tbody>
-              <tr v-for="l in leiturasDesc" :key="l.id">
-                <td>{{ fmtDataHora(l.lidaEm) }}</td>
-                <td :class="l.temperatura < c.tempMin || l.temperatura > c.tempMax ? 'txt-VENCIDO' : ''">{{ fmtTemp(l.temperatura) }}</td>
-                <td>
-                  {{ ORIGEM_LEITURA[l.origem] }}<template v-if="l.etiqueta"> <span class="mono">{{ l.etiqueta.codigo }}</span></template> · {{ l.fonte }}
-                  <a
-                    v-if="l.latitude !== null" :href="`https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.longitude}#map=18/${l.latitude}/${l.longitude}`"
-                    target="_blank" rel="noopener" :title="`Local da leitura (precisão ~${l.precisaoM ?? '?'} m)`"
-                  >📍</a>
-                </td>
-                <td>
-                  <span v-if="l.lancadaComAtraso" class="chip amarelo" :title="`Digitada ${fmtHoras(l.atrasoMin / 60)} depois do horário informado`">lançada com atraso</span>
-                  <span v-else class="mudo">{{ fmtDataHora(l.registradaEm) }}</span>
-                </td>
+              <tr v-for="e in c.eventos" :key="e.id">
+                <td>{{ fmtDataHora(e.ocorridoEm) }}</td>
+                <td class="negrito">{{ rotuloEtapa(c, e.statusPara) }}</td>
+                <td>{{ e.usuarioEmail }}<div v-if="e.observacao" class="mudo">{{ e.observacao }}</div></td>
               </tr>
             </tbody>
           </table>
-        </details>
-      </div>
 
-      <!-- Dados -->
-      <div class="card">
-        <h2>Dados</h2>
-        <dl class="lista-def">
-          <dt>Booking</dt><dd>{{ c.booking || "—" }}</dd>
-          <dt>Navio</dt><dd>{{ c.navio || "—" }}</dd>
-          <dt>Placa / Motorista</dt><dd>{{ c.placa || "—" }} · {{ c.motorista || "—" }}</dd>
-          <dt>Lacre</dt><dd>{{ c.lacre || "—" }}</dd>
-          <dt>Posição no pátio</dt><dd>{{ c.posicaoPatio || "—" }}</dd>
-          <dt>Observação</dt><dd style="white-space: pre-wrap">{{ c.observacao || "—" }}</dd>
-          <dt>Cadastrado por</dt><dd>{{ c.criadoPor }} em {{ fmtDataHora(c.criadoEm) }}</dd>
-          <dt>Etiqueta QR</dt>
-          <dd>
-            <template v-if="c.etiquetas?.length">
-              <div v-for="e in c.etiquetas" :key="e.id">
-                <span class="mono negrito">{{ e.codigo }}</span>
-                <span class="chip" :class="e.status === 'CANCELADA' ? 'vermelho' : 'verde'" style="margin-left: 6px">{{ e.status === "CANCELADA" ? "cancelada" : "ativa" }}</span>
-                <span class="mudo pequeno"> · ligada {{ fmtDataHora(e.vinculadaEm) }} por {{ e.vinculadaPor }}</span>
-                <div v-if="e.motivoCancelamento" class="mudo pequeno">{{ e.motivoCancelamento }}</div>
-              </div>
-            </template>
-            <span v-else class="mudo">nenhuma — <router-link to="/etiquetas">gerar etiquetas</router-link></span>
-          </dd>
-        </dl>
-
-        <h3 style="margin-top: 18px">Histórico de etapas</h3>
-        <table class="pequeno">
-          <tbody>
-            <tr v-for="e in c.eventos" :key="e.id">
-              <td>{{ fmtDataHora(e.ocorridoEm) }}</td>
-              <td class="negrito">{{ rotuloEtapa(c, e.statusPara) }}</td>
-              <td>{{ e.usuarioEmail }}<div v-if="e.observacao" class="mudo">{{ e.observacao }}</div></td>
-            </tr>
-          </tbody>
-        </table>
-
-        <template v-if="alertasEncerrados.length">
-          <h3 style="margin-top: 18px">Alertas encerrados</h3>
-          <table class="pequeno">
+          <h2 style="margin-top: 22px">Alertas encerrados</h2>
+          <table v-if="alertasEncerrados.length" class="pequeno">
             <tbody>
               <tr v-for="a in alertasEncerrados" :key="a.id">
                 <td>{{ fmtDataHora(a.abertoEm) }}</td>
@@ -381,11 +629,16 @@ function reconhecido() {
               </tr>
             </tbody>
           </table>
-        </template>
-      </div>
-    </div>
+          <div v-else class="mudo">Nenhum alerta encerrado.</div>
+        </div>
+      </template>
+    </section>
+  </div>
 
-    <!-- Modais -->
+  <NovoContainer v-if="novoAberto" @fechar="novoAberto = false" @criado="criado" />
+
+  <!-- Modais -->
+  <template v-if="c">
     <div v-if="modal === 'avancar'" class="fundo-modal" @mousedown.self="modal = null">
       <form class="modal estreito" @submit.prevent="avancar">
         <h2>{{ acaoEtapa(c, proximo) }}</h2>
@@ -482,3 +735,81 @@ function reconhecido() {
     <ReconhecerAlerta v-if="modal?.alerta" :alerta="modal.alerta" @fechar="modal = null" @reconhecido="reconhecido" />
   </template>
 </template>
+
+<style scoped>
+.mestre-detalhe { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
+.detalhe { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.so-estreito { display: none; }
+
+/* Cabeçalho */
+.cabecalho { display: flex; flex-direction: column; gap: 14px; padding-bottom: 0; }
+.cab-linha { display: flex; gap: 16px; align-items: flex-start; }
+.ilustracao { flex-shrink: 0; margin-top: 2px; width: 100px; height: auto; }
+.identificacao { flex: 1; min-width: 0; }
+.numero { font-size: 28px; font-weight: 800; letter-spacing: .01em; margin: 0; }
+.chip-grande { font-size: 13px; padding: 4px 12px; }
+.rota-cab { font-size: 17px; color: var(--texto-2); margin-top: 4px; }
+.acoes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.acoes > button.primario { padding: 10px 18px; font-size: 15px; font-weight: 600; }
+.acoes > button:not(.primario) { padding: 10px 16px; }
+.menu-acoes { position: relative; }
+.menu-acoes > button { padding: 10px; }
+.menu-lista { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; background: var(--superficie); border: 1px solid var(--borda); border-radius: 8px; box-shadow: 0 8px 24px rgba(16, 24, 40, .14); min-width: 220px; padding: 4px; display: flex; flex-direction: column; }
+.menu-lista button { border: none; background: none; justify-content: flex-start; padding: 9px 12px; }
+.menu-lista button:hover { background: var(--superficie-2); }
+
+/* Faixas de alerta */
+.faixas { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.faixa { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: 10px; border: 1px solid; }
+.faixa.atencao { background: var(--amarelo-fundo); border-color: #f1d49a; color: var(--amarelo); }
+.faixa.critico { background: var(--vermelho-fundo); border-color: #f4b4b4; color: var(--vermelho); }
+.faixa-titulo { font-weight: 700; font-size: 16px; }
+.faixa-texto { color: var(--texto); margin-top: 2px; }
+
+/* Indicadores */
+.indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+.ind { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--borda); border-radius: 10px; padding: 11px 10px; color: var(--primaria); }
+.ind > div { color: var(--texto); min-width: 0; }
+.ind .rotulo { font-size: 12px; color: var(--texto-2); }
+.ind .valor { font-size: 18px; font-weight: 700; margin-top: 2px; line-height: 1.25; }
+.ind .valor.normal { font-size: 16px; font-weight: 500; }
+.ind .sub { font-size: 12px; color: var(--texto-2); margin-top: 2px; }
+
+/* Abas */
+.abas-ficha { display: flex; gap: 4px; border-top: 1px solid var(--borda); margin: 0 -18px; padding: 0 12px; overflow-x: auto; }
+.abas-ficha button { border: none; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: 12px 16px; font-size: 15px; color: var(--texto); gap: 6px; }
+.abas-ficha button:hover:not(:disabled) { background: none; color: var(--primaria); }
+.abas-ficha button.ativa { color: var(--primaria); border-bottom-color: var(--primaria); font-weight: 700; }
+
+/* Visão geral */
+.geral { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.coluna { display: flex; flex-direction: column; gap: 14px; }
+
+/* Fluxo de etapas: linha do tempo vertical na primeira coluna */
+.fluxo { border: 1px solid var(--borda); border-radius: 8px; }
+.fluxo th { background: var(--superficie-2); }
+.fluxo td:first-child { position: relative; padding-left: 44px; }
+.fluxo td:not(:first-child), .fluxo th:not(:first-child) { border-left: 1px solid var(--borda); }
+.marco { position: absolute; left: 16px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border-radius: 50%; border: 2px solid #9aa6b5; background: var(--superficie); z-index: 1; }
+.marco.feita { background: var(--primaria); border-color: var(--primaria); }
+.marco.atrasada { border-color: var(--amarelo); background: var(--superficie); }
+.marco::after { content: ""; position: absolute; left: 4px; top: 12px; width: 2px; height: 34px; background: #c7d0db; }
+.marco.feita::after { background: var(--primaria); }
+.marco.ultimo::after { display: none; }
+.fluxo tr.atual .nome-etapa { font-weight: 700; }
+.nome-etapa { font-weight: 500; }
+
+@media (max-width: 1100px) {
+  .mestre-detalhe { grid-template-columns: 1fr; }
+  .so-largo { display: none; }
+  .so-estreito { display: inline-flex; align-items: center; gap: 4px; }
+  .geral { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  .cab-linha { flex-wrap: wrap; }
+  .ilustracao { display: none; }
+  .acoes { justify-content: flex-start; width: 100%; }
+  .numero { font-size: 22px; }
+  .rota-cab { font-size: 14px; }
+}
+</style>

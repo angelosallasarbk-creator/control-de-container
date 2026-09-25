@@ -129,3 +129,14 @@ export function tempoDesde(d) {
   if (!d) return "—";
   return fmtHoras((Date.now() - new Date(d).getTime()) / 3600000);
 }
+
+// Distância total prevista do ciclo: soma dos trechos de estrada (vazio + cheio), com os km já
+// arredondados de cada trecho para o total bater com o detalhamento mostrado na tela.
+export function kmDoCiclo(previsao) {
+  const trechos = (previsao?.trechos ?? []).filter((t) => t.km !== null && t.km !== undefined);
+  return {
+    trechos,
+    total: trechos.reduce((soma, t) => soma + Math.round(Number(t.km)), 0),
+    aproximado: trechos.some((t) => t.fonte === "ESTIMADA"),
+  };
+}

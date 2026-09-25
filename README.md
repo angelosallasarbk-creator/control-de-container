@@ -20,7 +20,7 @@ Cada etapa registra data/hora real (pode ser retroativa, nunca anterior à etapa
 | **Estadia** | chegada → saída da fábrica | Meta em horas por Ponto de Carregamento | faltam ≤ X h (configurável) | meta estourada (+ custo/h se cadastrado) |
 | **Demurrage** | coleta → entrega no porto | Free time (dias) + diária por Armador | faltam ≤ X dias | free time vencido (diárias × valor) |
 | **Deadline** | — | data/hora do cut-off no container | < 24 h | passou sem entrega |
-| **Temperatura** (reefer) | leitura fora da faixa mín/máx do Produto | tolerância em min | na hora | fora há mais que a tolerância |
+| **Temperatura** (reefer, qualquer etapa até a entrega) | leitura fora da faixa mín/máx do Produto | tolerância em min | na hora | fora há mais que a tolerância |
 | **Sem leitura** (reefer em ovação/liberado) | desde a última leitura | intervalo global (Configurações) | passou do intervalo | passou do dobro |
 | **Atraso na coleta** | coleta programada → coleta registrada | "Coleta programada para" no container (cadastro/edição) | passou do horário e o container segue "Programado" | atraso ≥ X h (Configurações → Geral, padrão 4 h) |
 
@@ -68,7 +68,13 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 ## Telas
 
 - **Pátio**: **uma aba por região** ("Todas" + regiões + "Sem região" se houver fábrica sem região), com contagem de containers e de críticos em cada aba. Os indicadores do topo são os da aba escolhida, e a aba fica lembrada. Dentro da aba, containers por Ponto de Carregamento divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.
-- **Containers**: lista com filtros e cadastro. **Ficha**: linha do tempo, prazos, alertas, leitura manual de temperatura com gráfico e histórico.
+- **Containers**: lista com filtros e cadastro. **Ficha** no formato **lista + detalhe**:
+  - **À esquerda,** a lista de containers: os ativos por padrão, com filtro de status e busca por container, navio ou rota. Trocar de container não recarrega a lista.
+  - **À direita,** o cabeçalho com número, etapa, tipo e rota, a ação da próxima etapa, Editar e o menu ⋮ (desfazer ou cancelar).
+  - **Faixas coloridas** do que exige ação agora: atraso na coleta, temperatura fora da faixa, leitura atrasada, estadia, demurrage e deadline.
+  - **Seis indicadores:** ciclo estimado, distância total, ETA, folga do free time, estadia e deadline.
+  - **Abas:** Visão geral (alertas abertos, prazos e dados), Etapas (fluxo planejado × realizado), Trajeto, Temperatura (leitura manual e gráfico) e Histórico. A aba escolhida fica lembrada.
+  - **Tela estreita:** mostra só o detalhe, com "← Containers".
 - **Alertas**: abertos e histórico. Faixa vermelha no topo + sino + bipe quando surge alerta crítico não reconhecido (consulta a cada 30 s).
 - **Custo estimado**: custo de estadia e demurrage por **abas de Região** e, dentro delas, **abas de Ponto de Carregamento** (mais a "Visão geral"). Tem filtro de período (30/90 dias, 6/12 meses, mês atual/anterior, personalizado); indicadores; gráfico de tendência empilhado estadia × demurrage (por dia, semana ou mês, conforme o período); ranking por Ponto de Carregamento; **principais impactos** gerados automaticamente (estadia × demurrage, concentração por cliente e por armador, etapa em que o tempo foi perdido, estouros de meta, variação entre as metades do período, horas sem custo/h); detalhamento por container com tempo em cada trecho e exportação CSV (Excel).
   - O custo é lançado **no dia em que ocorre**: cada diária de demurrage no dia cobrado, cada hora além da meta de estadia no dia em que passou. Containers ativos contam até agora; cancelados não entram.

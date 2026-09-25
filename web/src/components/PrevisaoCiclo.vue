@@ -1,12 +1,14 @@
 <script setup>
 import { computed } from "vue";
-import { fmtDataHora, fmtHoras, fmtKm, fmtFolga, fmtMoeda } from "../formato.js";
+import { fmtDataHora, fmtHoras, fmtKm, fmtFolga, fmtMoeda, kmDoCiclo } from "../formato.js";
 
 // p = situacao.previsao (backend: estimativa.estimarCiclo) ou resposta de /rotas/estimar.
 const props = defineProps({
   p: { type: Object, default: null },
   freeTimeDias: { type: Number, default: null },
   compacto: { type: Boolean, default: false },
+  // Ficha do container: os números (ciclo, km, ETA, folga) já estão no topo da tela.
+  semNumeros: { type: Boolean, default: false },
 });
 
 const COR = { OK: "verde", ATENCAO: "amarelo", CRITICO: "vermelho" };
@@ -19,12 +21,12 @@ const FONTE = {
 };
 
 const cicloDias = computed(() => (props.p?.cicloHoras ?? 0) / 24);
-// Distância total prevista do ciclo = soma dos trechos rodoviários (vazio + cheio).
-const trechosKm = computed(() => (props.p?.trechos ?? []).filter((t) => t.km !== null && t.km !== undefined));
-// Soma os km já arredondados de cada trecho, para o total bater com "178 km + 178 km" da tela.
-const kmTotal = computed(() => trechosKm.value.reduce((soma, t) => soma + Math.round(Number(t.km)), 0));
+// Distância total prevista do ciclo (vazio + cheio).
+const km = computed(() => kmDoCiclo(props.p));
+const trechosKm = computed(() => km.value.trechos);
+const kmTotal = computed(() => km.value.total);
+const kmAproximado = computed(() => km.value.aproximado);
 const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm(t.km)}`).join(" | "));
-const kmAproximado = computed(() => trechosKm.value.some((t) => t.fonte === "ESTIMADA"));
 </script>
 
 <template>
@@ -40,7 +42,7 @@ const kmAproximado = computed(() => trechosKm.value.some((t) => t.fonte === "EST
       </span>
     </div>
 
-    <div class="numeros">
+    <div v-if="!semNumeros" class="numeros">
       <div>
         <div class="rotulo">Ciclo estimado</div>
         <div class="valor">{{ cicloDias.toFixed(1).replace(".", ",") }} dias</div>

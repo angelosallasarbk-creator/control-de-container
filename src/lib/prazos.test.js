@@ -187,3 +187,17 @@ test("atraso na coleta: só com data programada e container Programado; atençã
   assert.match(alertas[0].mensagem, /atrasada há 2h/);
   assert.equal(semaforo({ atrasoColeta: calcularAtrasoColeta(base, agora, 1) }), "VERMELHO");
 });
+
+test("temperatura fora da faixa alerta em qualquer etapa ativa (inclusive Programado e Coletado)", () => {
+  const agora = new Date("2026-09-25T15:00:00Z");
+  const base = { tipo: "REEFER_40", setpoint: -22, tempMin: -25, tempMax: -20, toleranciaMinutos: 30, criadoEm: new Date(agora - 5 * 3600e3) };
+  const leituras = [{ temperatura: -45, lidaEm: new Date(agora - 96 * 60e3), origem: "INTEGRACAO" }];
+  for (const status of ["PROGRAMADO", "COLETADO", "NA_FABRICA", "SAIU_FABRICA"]) {
+    const c = { ...base, status };
+    const alertas = alertasDesejados(c, calcularSituacao(c, leituras, agora, 240));
+    const t = alertas.find((a) => a.tipo === "TEMPERATURA");
+    assert.equal(t?.nivel, "CRITICO", status);
+  }
+  const entregue = { ...base, status: "ENTREGUE_PORTO" };
+  assert.deepEqual(alertasDesejados(entregue, calcularSituacao(entregue, leituras, agora, 240)), [], "encerrado não alerta");
+});

@@ -45,9 +45,16 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
   }
 
   let criados = 0;
+  const abertoPorChave = new Map(abertos.map((a) => [a.chaveAberta, a]));
   for (const alerta of desejados) {
     const chave = chaveAlerta(containerId, alerta.tipo, alerta.nivel);
-    if (chavesAbertas.has(chave)) continue;
+    if (chavesAbertas.has(chave)) {
+      // Alerta já aberto: mantém a mensagem em dia ("atrasada há 2h30", não o texto do momento
+      // em que abriu). Só grava quando o texto mudou.
+      const atual = abertoPorChave.get(chave);
+      if (atual.mensagem !== alerta.mensagem) await prisma.alerta.update({ where: { id: atual.id }, data: { mensagem: alerta.mensagem } });
+      continue;
+    }
     try {
       await prisma.alerta.create({ data: { containerId, ...alerta, chaveAberta: chave, abertoEm: agora } });
       criados++;

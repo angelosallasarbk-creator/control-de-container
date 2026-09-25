@@ -2,8 +2,8 @@ import { createRouter, createWebHistory } from "vue-router";
 
 const routes = [
   { path: "/", name: "painel", component: () => import("./pages/Painel.vue"), meta: { titulo: "Pátio" } },
-  { path: "/containers", name: "containers", component: () => import("./pages/Containers.vue"), meta: { titulo: "Containers" } },
-  { path: "/containers/:id", name: "ficha", component: () => import("./pages/FichaContainer.vue"), props: true, meta: { titulo: "Container" } },
+  { path: "/containers", name: "containers", component: () => import("./pages/ContainersInicio.vue"), meta: { titulo: "Containers" } },
+  { path: "/containers/:id", name: "ficha", component: () => import("./pages/FichaContainer.vue"), props: true, meta: { titulo: "Container", chave: "ficha" } },
   { path: "/custos", name: "custos", component: () => import("./pages/CustoEstimado.vue"), meta: { titulo: "Custo estimado" } },
   { path: "/alertas", name: "alertas", component: () => import("./pages/Alertas.vue"), meta: { titulo: "Alertas" } },
   { path: "/etiquetas", name: "etiquetas", component: () => import("./pages/Etiquetas.vue"), meta: { titulo: "Etiquetas QR" } },
