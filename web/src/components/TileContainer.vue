@@ -31,6 +31,12 @@ const textoDemurrage = computed(() => {
       <span v-if="c.posicaoPatio" style="white-space: nowrap">📍 {{ c.posicaoPatio }}</span>
     </div>
     <div class="linha-tile"><span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span></div>
+    <div v-if="c.status === 'PROGRAMADO' && c.coletaProgramadaEm" class="linha-tile">
+      <span>Coleta</span>
+      <span :class="c.atrasoColeta ? `txt-${c.atrasoColeta.situacao}` : ''">
+        {{ fmtDataHora(c.coletaProgramadaEm) }}<template v-if="c.atrasoColeta"> · ⏱ atrasada {{ fmtHoras(c.atrasoColeta.horasAtraso) }}</template>
+      </span>
+    </div>
 
     <template v-if="c.estadia && c.status !== 'SAIU_FABRICA'">
       <div class="linha-tile">

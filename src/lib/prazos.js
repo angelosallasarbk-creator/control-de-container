@@ -112,6 +112,17 @@ export function calcularDeadline(c, agora) {
   return { deadline, encerrada, horasRestantes: arred(horasRestantes, 1), situacao };
 }
 
+// Coleta programada: passou da data/hora e o container continua "Programado" (nenhuma
+// atualização) → atraso. ATENÇÃO logo depois do horário; CRÍTICO após `criticoHoras`.
+export const ATRASO_COLETA_CRITICO_HORAS_PADRAO = 4;
+export function calcularAtrasoColeta(c, agora, criticoHoras = ATRASO_COLETA_CRITICO_HORAS_PADRAO) {
+  if (!c.coletaProgramadaEm || c.status !== "PROGRAMADO") return null;
+  const programadaEm = new Date(c.coletaProgramadaEm);
+  const horasAtraso = (agora - programadaEm) / HORA;
+  if (horasAtraso <= 0) return { programadaEm, atrasada: false, horasAtraso: 0, situacao: "OK" };
+  return { programadaEm, atrasada: true, horasAtraso: arred(horasAtraso, 1), situacao: horasAtraso >= criticoHoras ? "VENCIDO" : "ATENCAO" };
+}
+
 // leituras: ordenadas da mais antiga para a mais recente.
 export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) {
   if (!ehReefer(c.tipo) || c.tempMin === null || c.tempMin === undefined || c.tempMax === null || c.tempMax === undefined) {
@@ -165,8 +176,9 @@ export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) 
 
 // `previsao` = resultado de estimativa.estimarCiclo (calculado por quem chama, que tem o
 // contexto de rota); null quando não há trajeto cadastrado.
-export function calcularSituacao(c, leituras, agora, intervaloLeituraMinutos, previsao = null) {
+export function calcularSituacao(c, leituras, agora, intervaloLeituraMinutos, previsao = null, atrasoColetaCriticoHoras = ATRASO_COLETA_CRITICO_HORAS_PADRAO) {
   return {
+    atrasoColeta: calcularAtrasoColeta(c, agora, atrasoColetaCriticoHoras),
     estadia: calcularEstadia(c, agora),
     demurrage: calcularDemurrage(c, agora),
     deadline: calcularDeadline(c, agora),
@@ -198,7 +210,15 @@ const fmtMoeda = (valor, moeda) => {
 export function alertasDesejados(c, situacao) {
   if (STATUS_ENCERRADOS.includes(c.status)) return [];
   const alertas = [];
-  const { estadia, demurrage, deadline, temperatura } = situacao;
+  const { estadia, demurrage, deadline, temperatura, atrasoColeta } = situacao;
+
+  if (atrasoColeta?.atrasada) {
+    alertas.push({
+      tipo: "ATRASO_COLETA",
+      nivel: atrasoColeta.situacao === "VENCIDO" ? "CRITICO" : "ATENCAO",
+      mensagem: `Coleta programada para ${fmtQuando(atrasoColeta.programadaEm)} está atrasada há ${fmtHoras(atrasoColeta.horasAtraso)} (container ainda "Programado").`,
+    });
+  }
 
   if (estadia && !estadia.encerrada && estadia.situacao !== "OK") {
     alertas.push(
@@ -285,7 +305,7 @@ export function alertasDesejados(c, situacao) {
 // Pior situação entre os prazos, usada para colorir o container no painel.
 export function semaforo(situacao) {
   const niveis = [];
-  for (const chave of ["estadia", "demurrage", "deadline"]) {
+  for (const chave of ["estadia", "demurrage", "deadline", "atrasoColeta"]) {
     const s = situacao[chave];
     if (s && !s.encerrada) niveis.push(s.situacao === "VENCIDO" ? 2 : s.situacao === "ATENCAO" ? 1 : 0);
   }

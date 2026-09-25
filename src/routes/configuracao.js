@@ -33,6 +33,7 @@ configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async 
   if ("filaPortoHorasPadrao" in b) rota.filaPortoHorasPadrao = decimal(b.filaPortoHorasPadrao, "Fila padrão no porto (h)", { obrigatorio: true, min: 0, max: 240 });
   if ("fatorLinhaReta" in b) rota.fatorLinhaReta = decimal(b.fatorLinhaReta, "Fator da estimativa em linha reta", { obrigatorio: true, min: 1, max: 3 });
   if ("riscoFolgaHoras" in b) rota.riscoFolgaHoras = decimal(b.riscoFolgaHoras, "Folga mínima para alertar risco (h)", { obrigatorio: true, min: 0, max: 720 });
+  if ("atrasoColetaCriticoHoras" in b) rota.atrasoColetaCriticoHoras = decimal(b.atrasoColetaCriticoHoras, "Atraso na coleta vira crítico após (h)", { obrigatorio: true, min: 0, max: 720 });
   if ("urlPublica" in b) {
     const url = String(b.urlPublica ?? "").trim().replace(/\/+$/, "");
     if (url && !/^https?:\/\/[^\s/]+(:\d+)?$/i.test(url)) {

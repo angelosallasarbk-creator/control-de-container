@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calcularEstadia, calcularDemurrage, calcularDeadline, avaliarTemperatura, alertasDesejados, calcularSituacao, semaforo, inicioDoDiaBrasilia } from "./prazos.js";
+import { calcularEstadia, calcularDemurrage, calcularDeadline, avaliarTemperatura, alertasDesejados, calcularSituacao, semaforo, inicioDoDiaBrasilia, calcularAtrasoColeta } from "./prazos.js";
 import { validarNumeroContainer, calcularDigitoVerificador } from "./iso6346.js";
 
 const HORA = 3600 * 1000;
@@ -167,4 +167,23 @@ test("alertas e semáforo refletem o pior caso", () => {
   const alertas = alertasDesejados(c, s);
   assert.deepEqual(alertas.map((a) => `${a.tipo}:${a.nivel}`), ["ESTADIA:CRITICO"]);
   assert.equal(semaforo(s), "VERMELHO");
+});
+
+test("atraso na coleta: só com data programada e container Programado; atenção → crítico", () => {
+  const HORA_MS = 3600e3;
+  const agora = new Date("2026-09-25T15:00:00Z");
+  const base = { status: "PROGRAMADO", coletaProgramadaEm: new Date(agora - 2 * HORA_MS) };
+  assert.equal(calcularAtrasoColeta({ ...base, coletaProgramadaEm: null }, agora), null, "sem data programada");
+  assert.equal(calcularAtrasoColeta({ ...base, status: "COLETADO" }, agora), null, "já coletado");
+  assert.equal(calcularAtrasoColeta({ ...base, coletaProgramadaEm: new Date(agora.getTime() + HORA_MS) }, agora).atrasada, false, "ainda no prazo");
+  const at = calcularAtrasoColeta(base, agora, 4);
+  assert.equal(at.situacao, "ATENCAO");
+  assert.equal(at.horasAtraso, 2);
+  assert.equal(calcularAtrasoColeta(base, agora, 1).situacao, "VENCIDO", "passou do limite crítico");
+  const alertas = alertasDesejados(base, { atrasoColeta: at });
+  assert.equal(alertas.length, 1);
+  assert.equal(alertas[0].tipo, "ATRASO_COLETA");
+  assert.equal(alertas[0].nivel, "ATENCAO");
+  assert.match(alertas[0].mensagem, /atrasada há 2h/);
+  assert.equal(semaforo({ atrasoColeta: calcularAtrasoColeta(base, agora, 1) }), "VERMELHO");
 });

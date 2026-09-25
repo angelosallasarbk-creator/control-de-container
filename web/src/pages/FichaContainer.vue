@@ -114,6 +114,7 @@ async function abrirEditar() {
     portoRetiradaId: x.portoRetiradaId ?? "", localCarregamentoId: x.localCarregamentoId ?? "", portoEntregaId: x.portoEntregaId ?? "",
     booking: x.booking ?? "", navio: x.navio ?? "", placa: x.placa ?? "", motorista: x.motorista ?? "", lacre: x.lacre ?? "",
     posicaoPatio: x.posicaoPatio ?? "", observacao: x.observacao ?? "", deadline: x.deadline ? paraInputLocal(x.deadline) : "",
+    coletaProgramadaEm: x.coletaProgramadaEm ? paraInputLocal(x.coletaProgramadaEm) : "",
     metaEstadiaHoras: x.metaEstadiaHoras, custoEstadiaPorHora: x.custoEstadiaPorHora ?? "", freeTimeDias: x.freeTimeDias,
     setpoint: x.setpoint, tempMin: x.tempMin, tempMax: x.tempMax, toleranciaMinutos: x.toleranciaMinutos,
   });
@@ -126,6 +127,8 @@ function salvarEdicao() {
     booking: ed.booking, navio: ed.navio, placa: ed.placa, motorista: ed.motorista, lacre: ed.lacre,
     posicaoPatio: ed.posicaoPatio, observacao: ed.observacao, deadline: deInputLocal(ed.deadline),
   };
+  // Programação da coleta só faz sentido enquanto o container ainda não foi coletado.
+  if (x.status === "PROGRAMADO") dados.coletaProgramadaEm = deInputLocal(ed.coletaProgramadaEm);
   for (const campo of ["portoRetiradaId", "localCarregamentoId", "portoEntregaId"]) {
     if (String(ed[campo] ?? "") !== String(x[campo] ?? "")) dados[campo] = ed[campo] === "" ? null : Number(ed[campo]);
   }
@@ -183,7 +186,13 @@ function reconhecido() {
           <span class="bolinha"></span>
           <div>{{ rotuloEtapa(c, etapa) }}</div>
           <div class="quando">{{ etapa === "PROGRAMADO" ? fmtDataHora(c.criadoEm) : fmtDataHora(c[CAMPO_DATA[etapa]]) }}</div>
+          <div v-if="etapa === 'COLETADO' && !c.coletadoEm && c.coletaProgramadaEm" class="quando" :class="s.atrasoColeta?.atrasada ? `txt-${s.atrasoColeta.situacao}` : ''">
+            programada {{ fmtDataHora(c.coletaProgramadaEm) }}
+          </div>
         </div>
+      </div>
+      <div v-if="s.atrasoColeta?.atrasada" class="aviso" :class="{ 'erro': s.atrasoColeta.situacao === 'VENCIDO' }" style="margin-top: 12px">
+        ⏱ Coleta programada para {{ fmtDataHora(c.coletaProgramadaEm) }} está atrasada há {{ fmtHoras(s.atrasoColeta.horasAtraso) }} — nenhuma coleta registrada.
       </div>
       <div v-if="c.status === 'CANCELADO'" class="aviso" style="margin-top: 12px">Cancelado em {{ fmtDataHora(c.canceladoEm) }}.</div>
     </div>
@@ -441,6 +450,7 @@ function reconhecido() {
           <div class="campo"><label>Booking</label><input v-model="ed.booking" maxlength="60" /></div>
           <div class="campo"><label>Navio</label><input v-model="ed.navio" maxlength="120" /></div>
           <div class="campo"><label>Deadline</label><input v-model="ed.deadline" type="datetime-local" /></div>
+          <div v-if="c.status === 'PROGRAMADO'" class="campo"><label>Coleta programada para</label><input v-model="ed.coletaProgramadaEm" type="datetime-local" /></div>
           <div class="campo"><label>Placa</label><input v-model="ed.placa" maxlength="20" /></div>
           <div class="campo"><label>Motorista</label><input v-model="ed.motorista" maxlength="120" /></div>
           <div class="campo"><label>Lacre</label><input v-model="ed.lacre" maxlength="60" /></div>

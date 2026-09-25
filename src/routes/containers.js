@@ -204,6 +204,7 @@ export async function validarNovoContainer(b, usuarioEmail) {
     lacre: texto(b.lacre, "Lacre", { max: 60 }),
     navio: texto(b.navio, "Navio", { max: 120 }),
     deadline: dataHora(b.deadline, "Deadline"),
+    coletaProgramadaEm: dataHora(b.coletaProgramadaEm, "Coleta programada para"),
     placa: texto(b.placa, "Placa", { max: 20 })?.toUpperCase() ?? null,
     motorista: texto(b.motorista, "Motorista", { max: 120 }),
     posicaoPatio: texto(b.posicaoPatio, "Posição no pátio", { max: 40 }),
@@ -270,6 +271,7 @@ containersRouter.patch("/:id", requirePermissao("containers.operar"), asyncHandl
   }
   if (dados.placa) dados.placa = dados.placa.toUpperCase();
   if ("deadline" in b) dados.deadline = dataHora(b.deadline, "Deadline");
+  if ("coletaProgramadaEm" in b) dados.coletaProgramadaEm = dataHora(b.coletaProgramadaEm, "Coleta programada para");
   Object.assign(dados, await validarLocais(b, antes));
 
   const camposPrazo = ["metaEstadiaHoras", "custoEstadiaPorHora", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"];

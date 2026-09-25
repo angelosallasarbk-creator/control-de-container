@@ -17,7 +17,7 @@ const f = reactive({
   numero: "", tipo: "REEFER_40", grupoId: "", armadorId: "", produtoId: "",
   portoRetiradaId: "", localCarregamentoId: "", portoEntregaId: "",
   booking: "", navio: "", deadline: "", placa: "", motorista: "", lacre: "", posicaoPatio: "", observacao: "",
-  jaColetado: false, coletadoEm: paraInputLocal(),
+  jaColetado: false, coletadoEm: paraInputLocal(), coletaProgramadaEm: "",
 });
 const locais = ref([]);
 
@@ -96,6 +96,7 @@ async function salvar(confirmarDigito = false) {
       posicaoPatio: f.posicaoPatio, observacao: f.observacao,
       deadline: deInputLocal(f.deadline),
       coletadoEm: f.jaColetado ? deInputLocal(f.coletadoEm) : null,
+      coletaProgramadaEm: f.jaColetado ? null : deInputLocal(f.coletaProgramadaEm),
       confirmarDigito,
     });
     emit("criado", criado);
@@ -208,6 +209,11 @@ async function salvar(confirmarDigito = false) {
       <div v-if="f.jaColetado" class="campo" style="max-width: 260px">
         <label>Data/hora da coleta</label>
         <input v-model="f.coletadoEm" type="datetime-local" required />
+      </div>
+      <div v-else class="campo" style="max-width: 320px">
+        <label>Coleta programada para</label>
+        <input v-model="f.coletaProgramadaEm" type="datetime-local" />
+        <span class="dica">Se passar deste horário sem a coleta registrada, o sistema abre o alerta "Atraso na coleta".</span>
       </div>
 
       <div class="modal-acoes">

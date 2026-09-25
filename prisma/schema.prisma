@@ -44,6 +44,7 @@ enum TipoAlerta {
   SEM_LEITURA
   RISCO_DEMURRAGE // previsão de entrega passa do free time
   RISCO_DEADLINE  // previsão de entrega passa do deadline do navio
+  ATRASO_COLETA   // passou a data/hora programada da coleta e o container segue Programado
 }
 
 // Onde o tipo de local pode ser usado no trajeto do container.
@@ -222,6 +223,7 @@ model Container {
   lacre         String?
   navio         String?
   deadline      DateTime?       // cut-off de entrega no terminal
+  coletaProgramadaEm DateTime?  // data/hora programada da coleta (passou sem coleta → alerta de atraso)
   placa         String?
   motorista     String?
   posicaoPatio  String?

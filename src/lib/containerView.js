@@ -30,7 +30,7 @@ export function serializarLeitura(l) {
 // ctxPrevisao: contexto de rota deste container (previsao.montarContextos); sem ele, sem previsão.
 export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = null) {
   const previsao = ctxPrevisao ? estimarCiclo(c, ctxPrevisao, agora, configRodagem(config)) : null;
-  const situacao = calcularSituacao(c, leiturasAsc, agora, config.intervaloLeituraMinutos, previsao);
+  const situacao = calcularSituacao(c, leiturasAsc, agora, config.intervaloLeituraMinutos, previsao, config.atrasoColetaCriticoHoras);
   const { leituras: _l, ...resto } = c;
   return {
     ...decimaisParaNumero(resto),

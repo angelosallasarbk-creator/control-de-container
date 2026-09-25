@@ -93,6 +93,8 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
       posicaoPatio: c.posicaoPatio,
       armador: c.armador.nome,
       booking: c.booking,
+      coletaProgramadaEm: c.coletaProgramadaEm,
+      atrasoColeta: c.situacao.atrasoColeta?.atrasada ? { horasAtraso: c.situacao.atrasoColeta.horasAtraso, situacao: c.situacao.atrasoColeta.situacao } : null,
       estadia: estadia && { horasDecorridas: estadia.horasDecorridas, metaHoras: estadia.metaHoras, horasRestantes: estadia.horasRestantes, situacao: estadia.situacao, percentualConsumido: estadia.percentualConsumido },
       demurrage: demurrage && { diasRestantes: demurrage.diasRestantes, diasExcedidos: demurrage.diasExcedidos, situacao: demurrage.situacao, custo: demurrage.custo, moeda: demurrage.moeda },
       temperatura: temperatura && {

@@ -37,6 +37,7 @@ export const ROTULO_ALERTA = {
   SEM_LEITURA: "Sem leitura",
   RISCO_DEMURRAGE: "Risco de demurrage",
   RISCO_DEADLINE: "Risco de deadline",
+  ATRASO_COLETA: "Atraso na coleta",
 };
 
 // Nome da etapa conforme o tipo do local do container (ex.: COLETADO → "Coleta ferroviária"),

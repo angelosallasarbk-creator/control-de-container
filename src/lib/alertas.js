@@ -29,7 +29,7 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
   const cfg = config ?? (await lerConfiguracao());
   const [leituras, contextos] = await Promise.all([leiturasRecentes(containerId), montarContextos([container], cfg)]);
   const previsao = estimarCiclo(container, contextos.get(containerId), agora, configRodagem(cfg));
-  const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao);
+  const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao, cfg.atrasoColetaCriticoHoras);
   const desejados = alertasDesejados(container, situacao);
   const chavesDesejadas = new Set(desejados.map((a) => chaveAlerta(containerId, a.tipo, a.nivel)));
 

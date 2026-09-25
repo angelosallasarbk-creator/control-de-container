@@ -867,3 +867,43 @@ test("portaria: QR + Pátio; entrada/saída pelo QR completando etapas pendentes
   assert.equal((await po.post(`/api/qr/${e3.token}/portaria`).send({ numero: "PRTU4000004", movimento: "SAIDA", substituir: true })).status, 201);
   for (const id of [c.body.id, dry.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste da portaria" });
 });
+
+test("atraso na coleta programada: alerta abre, escala para crítico e encerra na coleta", async () => {
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const HORA_MS = 3600e3;
+  const noPrazo = await agentes.ADMIN.post("/api/containers").send({ numero: "ATRU5000005", confirmarDigito: true, tipo: "DRY_40", ...cad, coletaProgramadaEm: new Date(Date.now() + 5 * HORA_MS) });
+  assert.equal(noPrazo.status, 201);
+  assert.equal(noPrazo.body.situacao.atrasoColeta.atrasada, false);
+  assert.equal(await prisma.alerta.count({ where: { containerId: noPrazo.body.id, tipo: "ATRASO_COLETA" } }), 0);
+
+  const atrasado = await agentes.ADMIN.post("/api/containers").send({ numero: "ATRU6000006", confirmarDigito: true, tipo: "DRY_40", ...cad, coletaProgramadaEm: new Date(Date.now() - 2 * HORA_MS) });
+  assert.equal(atrasado.status, 201);
+  assert.equal(atrasado.body.situacao.atrasoColeta.situacao, "ATENCAO");
+  const aberto = () => prisma.alerta.findFirst({ where: { containerId: atrasado.body.id, tipo: "ATRASO_COLETA", chaveAberta: { not: null } } });
+  assert.equal((await aberto())?.nivel, "ATENCAO");
+  assert.match((await aberto()).mensagem, /atrasada há 2h/);
+  const noPatio = (await agentes.VISUALIZACAO.get("/api/painel")).body.grupos.flatMap((g) => g.containers).find((c) => c.id === atrasado.body.id);
+  assert.equal(noPatio.atrasoColeta.situacao, "ATENCAO");
+  assert.equal((await agentes.VISUALIZACAO.get("/api/alertas?tipo=ATRASO_COLETA")).body.some((a) => a.containerId === atrasado.body.id), true);
+
+  // Reprogramar para mais cedo (6h atrás) → crítico (limite padrão 4h).
+  const repro = await agentes.OPERADOR.patch(`/api/containers/${atrasado.body.id}`).send({ coletaProgramadaEm: new Date(Date.now() - 6 * HORA_MS) });
+  assert.equal(repro.status, 200);
+  assert.equal((await aberto())?.nivel, "CRITICO");
+  // Limite configurável: com 10h, volta a ser só atenção.
+  const cfgAtual = (await agentes.ADMIN.get("/api/configuracao")).body;
+  assert.equal(cfgAtual.atrasoColetaCriticoHoras, 4);
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfgAtual, atrasoColetaCriticoHoras: 10 });
+  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  await sincronizarAlertas(atrasado.body.id);
+  assert.equal((await aberto())?.nivel, "ATENCAO");
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfgAtual });
+
+  // Coleta registrada → alerta encerra.
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${atrasado.body.id}/avancar`).send({ statusPara: "COLETADO" })).status, 200);
+  assert.equal(await aberto(), null);
+  const historico = await prisma.alerta.findMany({ where: { containerId: atrasado.body.id, tipo: "ATRASO_COLETA" } });
+  assert.ok(historico.length >= 1 && historico.every((a) => a.encerradoEm), "fica no histórico, encerrado");
+  for (const c of [noPrazo.body.id, atrasado.body.id]) await agentes.ADMIN.post(`/api/containers/${c}/cancelar`).send({ motivo: "fim do teste de atraso" });
+});

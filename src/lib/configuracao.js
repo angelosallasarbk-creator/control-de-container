@@ -17,6 +17,9 @@ export const CONFIG_PADRAO = {
   filaPortoHorasPadrao: 4,
   fatorLinhaReta: 1.3,
   riscoFolgaHoras: 24,
+  // Coleta programada que passou sem coleta registrada: ATENÇÃO logo que passa do horário,
+  // CRÍTICO depois destas horas de atraso.
+  atrasoColetaCriticoHoras: 4,
   // Endereço que vai dentro do QR das etiquetas (o celular abre este endereço). Vazio = usa o
   // endereço de onde a etiqueta foi gerada. Teste na rede local: http://IP-DO-COMPUTADOR:5174;
   // online: https://seu-sistema.onrender.com.

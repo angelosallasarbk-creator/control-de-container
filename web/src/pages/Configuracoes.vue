@@ -108,6 +108,11 @@ onMounted(async () => {
         <input v-model.number="cfg.intervaloLeituraMinutos" type="number" min="0" max="10080" required :disabled="!podeEditar" />
         <span class="dica">Vale para reefer em ovação ou liberado. Passou disso sem leitura: alerta de Atenção; o dobro: Crítico. 0 desliga.</span>
       </div>
+      <div class="campo">
+        <label>Atraso na coleta vira crítico após (horas)</label>
+        <input v-model.number="cfg.atrasoColetaCriticoHoras" type="number" min="0" max="720" step="0.5" required :disabled="!podeEditar" />
+        <span class="dica">Passou da "coleta programada" sem coleta registrada: alerta de Atenção na hora; depois destas horas, Crítico.</span>
+      </div>
     </div>
     <div v-if="podeEditar" class="linha" style="margin-top: 12px"><button type="submit" class="primario">Salvar</button><span v-if="salvo === 'geral'" class="txt-OK pequeno">✓ Salvo e alertas recalculados.</span></div>
   </form>
