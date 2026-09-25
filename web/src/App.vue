@@ -8,7 +8,51 @@ import Login from "./pages/Login.vue";
 
 const auth = useAuthStore();
 const route = useRoute();
-const menuAberto = ref(false);
+
+// Menu lateral:
+// - tela larga: fica ao lado do conteúdo; o ☰ recolhe/expande (preferência lembrada no navegador);
+// - tela estreita (≤ 860px): vira gaveta por cima do conteúdo; fecha no ✕, clicando fora ou com Esc.
+const CHAVE_MENU_RECOLHIDO = "cc_menu_recolhido";
+const telaEstreita = window.matchMedia("(max-width: 860px)");
+const estreita = ref(telaEstreita.matches);
+const menuAberto = ref(false); // gaveta (tela estreita)
+const menuRecolhido = ref(lerPreferencia()); // tela larga
+
+function lerPreferencia() {
+  try {
+    return localStorage.getItem(CHAVE_MENU_RECOLHIDO) === "1";
+  } catch {
+    return false;
+  }
+}
+function alternarMenu() {
+  if (estreita.value) {
+    menuAberto.value = !menuAberto.value;
+    return;
+  }
+  menuRecolhido.value = !menuRecolhido.value;
+  try {
+    localStorage.setItem(CHAVE_MENU_RECOLHIDO, menuRecolhido.value ? "1" : "0");
+  } catch {
+    // sem armazenamento: só não lembra a escolha
+  }
+}
+const aoMudarLargura = (e) => {
+  estreita.value = e.matches;
+  menuAberto.value = false;
+};
+const aoTeclar = (e) => {
+  if (e.key === "Escape" && menuAberto.value) menuAberto.value = false;
+};
+onMounted(() => {
+  telaEstreita.addEventListener("change", aoMudarLargura);
+  window.addEventListener("keydown", aoTeclar);
+});
+onBeforeUnmount(() => {
+  telaEstreita.removeEventListener("change", aoMudarLargura);
+  window.removeEventListener("keydown", aoTeclar);
+});
+const menuVisivel = computed(() => (estreita.value ? menuAberto.value : !menuRecolhido.value));
 const resumo = ref(null);
 const INTERVALO_ALERTAS_MS = 30000;
 let timer = null;
@@ -61,11 +105,13 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 <template>
   <div v-if="auth.usuario === undefined" class="vazio">Carregando…</div>
   <Login v-else-if="auth.usuario === null" />
-  <div v-else class="shell">
-    <aside class="lateral" :class="{ aberta: menuAberto }">
+  <div v-else class="shell" :class="{ 'menu-recolhido': menuRecolhido && !estreita }">
+    <div v-if="estreita && menuAberto" class="fundo-menu" aria-hidden="true" @click="menuAberto = false"></div>
+    <aside id="menu-lateral" class="lateral" :class="{ aberta: menuAberto }" :aria-hidden="!menuVisivel" :inert="!menuVisivel || undefined">
       <div class="lateral-marca">
         <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="2" fill="#4a8fdc" /><path d="M8 11v10M13 11v10M18 11v10M23 11v10" stroke="#fff" stroke-width="2" /></svg>
-        Controle de Container
+        <span class="espaco">Controle de Container</span>
+        <button v-if="estreita" class="fechar-menu" aria-label="Fechar menu" @click="menuAberto = false">✕</button>
       </div>
       <nav>
         <router-link to="/">Pátio</router-link>
@@ -109,7 +155,11 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
       </div>
       <header class="topo">
         <div class="linha">
-          <button class="botao-menu pequeno" @click="menuAberto = !menuAberto" aria-label="Menu">☰</button>
+          <button
+            class="botao-menu pequeno" aria-controls="menu-lateral" :aria-expanded="menuVisivel"
+            :aria-label="menuVisivel ? 'Recolher menu' : 'Abrir menu'" :title="menuVisivel ? 'Recolher menu' : 'Abrir menu'"
+            @click="alternarMenu"
+          >☰</button>
           <h1>{{ route.meta.titulo }}</h1>
         </div>
         <router-link to="/alertas" class="sino" title="Alertas abertos">
