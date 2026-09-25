@@ -5,22 +5,22 @@ import { useAuthStore } from "../stores/auth.js";
 import { fmtMoeda, fmtTemp } from "../formato.js";
 
 // Uma tela para os cadastros de apoio; a configuração abaixo define colunas e campos.
-// Campo com `opcoesDe` é um select alimentado por outro cadastro (ex.: Região em Cliente/Fábrica).
+// Campo com `opcoesDe` é um select alimentado por outro cadastro (ex.: Região em Ponto de Carregamento).
 const props = defineProps({ recurso: { type: String, required: true } });
 const auth = useAuthStore();
 
 const CONFIG = {
   regioes: {
     titulo: "Regiões",
-    ajuda: "Cada região ativa vira uma aba no Pátio. Vincule as fábricas à região em Cliente / Fábrica.",
-    rotuloUso: "Clientes/Fábricas",
+    ajuda: "Cada região ativa vira uma aba no Pátio. Vincule as fábricas à região em Ponto de Carregamento.",
+    rotuloUso: "Pontos de Carregamento",
     colunas: [{ rotulo: "Região", valor: (r) => r.nome }],
     campos: [{ chave: "nome", rotulo: "Nome da região", tipo: "text", obrigatorio: true }],
   },
   grupos: {
-    titulo: "Cliente / Fábrica",
+    titulo: "Ponto de Carregamento",
     ajuda:
-      "Cada combinação Cliente / Fábrica é um grupo de operação no pátio, com sua própria meta de estadia. " +
+      "Cada Ponto de Carregamento (combinação Cliente + Fábrica) é um grupo de operação no pátio, com sua própria meta de estadia. " +
       "A região é da fábrica: ao escolher a região de um cliente, ela vale para todos os clientes daquela fábrica.",
     colunas: [
       { rotulo: "Cliente", valor: (r) => r.cliente },
@@ -40,8 +40,8 @@ const CONFIG = {
       },
       {
         chave: "localId", rotulo: "Local de carregamento padrão (endereço)", tipo: "select", opcoesDe: "locais", vazio: "— não informado —",
-        filtrarOpcoes: (l) => l.tipo !== "PORTO",
-        dica: "Usado na previsão de rota. Cadastre fábricas e armazéns em Locais.",
+        filtrarOpcoes: (l) => l.tipo?.funcao === "CARREGAMENTO",
+        dica: "Usado na previsão de rota. Cadastre os locais de carregamento (fábricas, armazéns…) em Locais.",
       },
       { chave: "metaEstadiaHoras", rotulo: "Meta de estadia (horas)", tipo: "number", obrigatorio: true, min: 1 },
       { chave: "alertaEstadiaHoras", rotulo: "Avisar quando faltarem (horas)", tipo: "number", obrigatorio: true, min: 0, padrao: 6 },

@@ -41,7 +41,7 @@ const cicloDias = computed(() => (props.p?.cicloHoras ?? 0) / 24);
         <div v-if="freeTimeDias !== null" class="pequeno mudo">free time: {{ freeTimeDias }} dias</div>
       </div>
       <div>
-        <div class="rotulo">Entrega prevista no porto</div>
+        <div class="rotulo">Entrega prevista</div>
         <div class="valor">{{ fmtDataHora(p.previsaoEntrega) }}</div>
         <div class="pequeno mudo">último dia livre: {{ fmtDataHora(p.vencimentoFreeTime) }}</div>
       </div>
@@ -67,7 +67,7 @@ const cicloDias = computed(() => (props.p?.cicloHoras ?? 0) / 24);
           <td>
             <template v-if="t.km !== null">{{ fmtKm(t.km) }}</template>
             <template v-else-if="t.fonte">{{ fmtHoras(t.horas) }}</template>
-            <template v-else>{{ fmtHoras(t.horas) }} (fila do porto)</template>
+            <template v-else>{{ fmtHoras(t.horas) }} (fila na entrega)</template>
             <div v-if="t.fonte" class="mudo">
               {{ FONTE[t.fonte] }}<template v-if="t.fonte === 'HISTORICO'"> ({{ t.amostras }} passagens)</template>
             </div>

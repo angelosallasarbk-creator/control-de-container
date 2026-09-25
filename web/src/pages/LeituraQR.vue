@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { ROTULO_STATUS, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal } from "../formato.js";
+import { rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal } from "../formato.js";
 import { conferirNumero } from "../iso6346.js";
 
 // Página aberta pela câmera do celular ao ler a etiqueta. Exige login (o App mostra o login
@@ -131,7 +131,7 @@ function novaLeitura() {
           <div class="mono numero">{{ container.numero }}</div>
           <div class="mudo">{{ ROTULO_TIPO[container.tipo] }} · {{ container.cliente }} / {{ container.fabrica }}</div>
           <div class="linha" style="margin-top: 8px; gap: 6px">
-            <span class="chip azul">{{ ROTULO_STATUS[container.status] }}</span>
+            <span class="chip azul">{{ rotuloEtapa(container, container.status) }}</span>
             <span v-if="container.reefer" class="chip">Faixa {{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}</span>
           </div>
           <div v-if="container.ultimasLeituras.length" class="ultimas">

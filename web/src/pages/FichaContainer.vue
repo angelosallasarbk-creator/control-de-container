@@ -3,7 +3,7 @@ import { computed, inject, onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import {
-  FLUXO, ROTULO_STATUS, ROTULO_TIPO, ROTULO_ALERTA, ACAO_ETAPA,
+  FLUXO, ROTULO_TIPO, ROTULO_ALERTA, rotuloEtapa, acaoEtapa, ehRetiradaEntrega,
   fmtDataHora, fmtHoras, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde,
 } from "../formato.js";
 import GraficoTemperatura from "../components/GraficoTemperatura.vue";
@@ -74,11 +74,11 @@ function abrirAvancar() {
 const avancar = () =>
   executar(
     () => api.avancar(c.value.id, { statusPara: proximo.value, ocorridoEm: deInputLocal(av.ocorridoEm), observacao: av.observacao }),
-    `Etapa registrada: ${ROTULO_STATUS[proximo.value]}.`
+    `Etapa registrada: ${rotuloEtapa(c.value, proximo.value)}.`
   );
 
 function desfazer() {
-  if (!confirm(`Desfazer a etapa "${ROTULO_STATUS[c.value.status]}"? A data registrada será apagada (fica no log de auditoria).`)) return;
+  if (!confirm(`Desfazer a etapa "${rotuloEtapa(c.value, c.value.status)}"? A data registrada será apagada (fica no log de auditoria).`)) return;
   executar(() => api.desfazer(c.value.id), "Última etapa desfeita.");
 }
 
@@ -105,8 +105,8 @@ function registrarLeitura() {
 // ----- Edição -----
 const ed = reactive({});
 const locais = ref([]);
-const portos = computed(() => locais.value.filter((l) => l.tipo === "PORTO" && (l.ativo || l.id === c.value?.portoRetiradaId || l.id === c.value?.portoEntregaId)));
-const carregamentos = computed(() => locais.value.filter((l) => l.tipo !== "PORTO" && (l.ativo || l.id === c.value?.localCarregamentoId)));
+const portos = computed(() => locais.value.filter((l) => ehRetiradaEntrega(l) && (l.ativo || l.id === c.value?.portoRetiradaId || l.id === c.value?.portoEntregaId)));
+const carregamentos = computed(() => locais.value.filter((l) => !ehRetiradaEntrega(l) && (l.ativo || l.id === c.value?.localCarregamentoId)));
 async function abrirEditar() {
   const x = c.value;
   if (!locais.value.length) locais.value = await api.locais().catch(() => []);
@@ -160,13 +160,13 @@ function reconhecido() {
           <div class="linha">
             <span class="ponto" :class="c.semaforo"></span>
             <span class="mono negrito" style="font-size: 20px">{{ c.numero }}</span>
-            <span class="chip azul">{{ ROTULO_STATUS[c.status] }}</span>
+            <span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span>
             <span class="chip">{{ ROTULO_TIPO[c.tipo] }}</span>
           </div>
           <div class="mudo" style="margin-top: 4px">{{ c.grupo.cliente }} / {{ c.grupo.fabrica }} · {{ c.armador.nome }}<template v-if="c.produto"> · {{ c.produto.nome }}</template></div>
         </div>
         <div class="linha">
-          <button v-if="auth.pode('containers.operar') && proximo" class="primario" @click="abrirAvancar">{{ ACAO_ETAPA[proximo] }}</button>
+          <button v-if="auth.pode('containers.operar') && proximo" class="primario" @click="abrirAvancar">{{ acaoEtapa(c, proximo) }}</button>
           <button v-if="auth.pode('containers.operar')" @click="abrirEditar">Editar</button>
           <button v-if="auth.pode('containers.corrigir') && c.eventos.length > 1 && c.status !== 'CANCELADO'" @click="desfazer">Desfazer etapa</button>
           <button v-if="auth.pode('containers.corrigir') && !encerrado" class="perigo" @click="motivoCancelamento = ''; modal = 'cancelar'">Cancelar</button>
@@ -181,7 +181,7 @@ function reconhecido() {
           :class="{ feita: FLUXO.indexOf(c.status) >= i, atual: c.status === etapa }"
         >
           <span class="bolinha"></span>
-          <div>{{ ROTULO_STATUS[etapa] }}</div>
+          <div>{{ rotuloEtapa(c, etapa) }}</div>
           <div class="quando">{{ etapa === "PROGRAMADO" ? fmtDataHora(c.criadoEm) : fmtDataHora(c[CAMPO_DATA[etapa]]) }}</div>
         </div>
       </div>
@@ -242,9 +242,9 @@ function reconhecido() {
       <div class="linha-entre" style="margin-bottom: 10px">
         <h2 style="margin: 0">Trajeto e previsão</h2>
         <span class="pequeno">
-          <strong>{{ c.portoRetirada?.nome ?? "porto de retirada ?" }}</strong> →
+          <strong>{{ c.portoRetirada?.nome ?? "retirada ?" }}</strong> →
           <strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →
-          <strong>{{ c.portoEntrega?.nome ?? "porto de entrega ?" }}</strong>
+          <strong>{{ c.portoEntrega?.nome ?? "entrega ?" }}</strong>
         </span>
       </div>
       <PrevisaoCiclo v-if="s.previsao" :p="s.previsao" :free-time-dias="c.freeTimeDias" />
@@ -355,7 +355,7 @@ function reconhecido() {
           <tbody>
             <tr v-for="e in c.eventos" :key="e.id">
               <td>{{ fmtDataHora(e.ocorridoEm) }}</td>
-              <td class="negrito">{{ ROTULO_STATUS[e.statusPara] }}</td>
+              <td class="negrito">{{ rotuloEtapa(c, e.statusPara) }}</td>
               <td>{{ e.usuarioEmail }}<div v-if="e.observacao" class="mudo">{{ e.observacao }}</div></td>
             </tr>
           </tbody>
@@ -379,7 +379,7 @@ function reconhecido() {
     <!-- Modais -->
     <div v-if="modal === 'avancar'" class="fundo-modal" @mousedown.self="modal = null">
       <form class="modal estreito" @submit.prevent="avancar">
-        <h2>{{ ACAO_ETAPA[proximo] }}</h2>
+        <h2>{{ acaoEtapa(c, proximo) }}</h2>
         <div v-if="erro" class="erro">{{ erro }}</div>
         <div class="campo">
           <label>Quando aconteceu *</label>
@@ -414,7 +414,7 @@ function reconhecido() {
         <h3 style="margin-bottom: 0">Trajeto</h3>
         <div class="grade-form">
           <div class="campo">
-            <label>Porto de retirada (vazio)</label>
+            <label>Local de retirada (vazio)</label>
             <select v-model="ed.portoRetiradaId">
               <option value="">— não informado —</option>
               <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
@@ -428,14 +428,14 @@ function reconhecido() {
             </select>
           </div>
           <div class="campo">
-            <label>Porto de entrega (cheio)</label>
+            <label>Local de entrega (cheio)</label>
             <select v-model="ed.portoEntregaId">
               <option value="">— não informado —</option>
               <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
         </div>
-        <div v-if="!portos.length" class="dica pequeno mudo">Nenhum porto cadastrado — <router-link to="/locais">cadastrar em Locais</router-link>.</div>
+        <div v-if="!portos.length" class="dica pequeno mudo">Nenhum local de retirada/entrega (porto, terminal…) cadastrado — <router-link to="/locais">cadastrar em Locais</router-link>.</div>
         <h3 style="margin-bottom: 0">Dados</h3>
         <div class="grade-form">
           <div class="campo"><label>Booking</label><input v-model="ed.booking" maxlength="60" /></div>

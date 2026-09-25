@@ -209,8 +209,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         <router-link to="/leitura">Registrar pelo código</router-link>
         <div class="lateral-secao">Cadastros</div>
         <router-link to="/cadastros/regioes">Regiões</router-link>
-        <router-link to="/locais">Locais (fábricas e portos)</router-link>
-        <router-link to="/cadastros/grupos">Cliente / Fábrica</router-link>
+        <router-link to="/locais">Locais</router-link>
+        <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
         <router-link to="/cadastros/armadores">Armadores</router-link>
         <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
         <template v-if="auth.pode('administrar') || auth.pode('auditoria.ver')">

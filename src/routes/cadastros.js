@@ -7,12 +7,13 @@ import { decimaisParaNumero } from "../lib/containerView.js";
 import { texto, inteiro, decimal, id as validarId } from "../lib/validacao.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
+import { SELECT_TIPO } from "../lib/tiposLocal.js";
 
-// Cadastros de apoio (Regiões, Cliente/Fábrica, Armadores, Produtos) com o mesmo CRUD.
+// Cadastros de apoio (Regiões, Ponto de Carregamento, Armadores, Produtos) com o mesmo CRUD.
 // Registro já usado não é excluído fisicamente: desativa-se (ativo = false).
 // `uso` = relação que conta onde o registro é usado (bloqueia exclusão).
 
-// A região pertence à FÁBRICA, mas a fábrica é um texto dentro de Cliente/Fábrica. Para uma
+// A região pertence à FÁBRICA, mas a fábrica é um texto dentro do Ponto de Carregamento. Para uma
 // fábrica nunca ficar dividida entre duas abas do Pátio:
 // - sem região informada, o grupo herda a região dos outros clientes da mesma fábrica;
 // - com região informada, ela é aplicada a todos os clientes daquela fábrica.
@@ -63,7 +64,7 @@ const CADASTROS = {
     modelo: "grupoOperacao",
     entidade: "GrupoOperacao",
     uso: "containers",
-    incluir: { regiao: { select: { id: true, nome: true } }, local: { select: { id: true, nome: true, tipo: true, cidade: true, uf: true } } },
+    incluir: { regiao: { select: { id: true, nome: true } }, local: { select: { id: true, nome: true, tipo: SELECT_TIPO, cidade: true, uf: true } } },
     rotulo: (r) => `${r.cliente} / ${r.fabrica}`,
     ordem: [{ cliente: "asc" }, { fabrica: "asc" }],
     validar: (b, parcial) => {
@@ -82,9 +83,9 @@ const CADASTROS = {
     },
     antesDeSalvar: async (tx, dados, corpo, antes) => {
       if (dados.localId) {
-        const local = await tx.local.findUnique({ where: { id: dados.localId } });
+        const local = await tx.local.findUnique({ where: { id: dados.localId }, include: { tipo: true } });
         if (!local) throw erroHttp(400, "Local da fábrica não encontrado.");
-        if (local.tipo === "PORTO") throw erroHttp(400, "O local da fábrica precisa ser do tipo Fábrica ou Armazém.");
+        if (local.tipo.funcao !== "CARREGAMENTO") throw erroHttp(400, "O local da fábrica precisa ser um local de carregamento (ex.: Fábrica ou Armazém).");
       }
       return sincronizarRegiaoDaFabrica(tx, dados, corpo, antes);
     },

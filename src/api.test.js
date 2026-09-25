@@ -594,26 +594,69 @@ test("permissões por usuário: padrão do perfil, personalizar, valer na hora, 
   assert.ok(log.some((l) => l.acao === "PERMISSOES" && l.descricao.includes("liberou: Gerar e imprimir etiquetas")));
 });
 
-test("locais: tipos, coordenadas validadas e busca de endereço sem chave", async () => {
-  assert.equal((await agentes.OPERADOR.post("/api/locais").send({ nome: "X", tipo: "PORTO" })).status, 403);
-  // Coordenadas trocadas (lat/lon invertidas) caem fora do Brasil.
-  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Santos", tipo: "PORTO", latitude: -46.31, longitude: -23.95 })).status, 400);
-  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Santos", tipo: "PORTO", latitude: -23.95 })).status, 400, "lat sem lon");
+test("tipos de local: padrões da migração, cadastro, rótulos por função e travas", async () => {
+  const padrao = (await agentes.VISUALIZACAO.get("/api/tipos-local")).body;
+  const tipo = (nome) => padrao.find((t) => t.nome === nome);
+  assert.deepEqual(padrao.map((t) => t.nome).sort(), ["Armazém", "Fábrica", "Porto / Terminal", "Terminal Ferroviário"]);
+  assert.equal(tipo("Terminal Ferroviário").funcao, "RETIRADA_ENTREGA");
+  assert.equal(tipo("Terminal Ferroviário").rotuloColeta, "Coleta ferroviária");
+  assert.equal(tipo("Armazém").rotuloChegada, "Chegada no armazém");
+  ids.tipo = Object.fromEntries(padrao.map((t) => [t.nome, t.id]));
 
-  const santos = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Porto de Santos", tipo: "PORTO", cidade: "Santos", uf: "sp", latitude: -23.9566, longitude: -46.3136, filaHoras: 6 });
+  const novo = { nome: "Terminal Fluvial", funcao: "RETIRADA_ENTREGA", rotuloColeta: "Coleta no terminal fluvial", rotuloEntrega: "Entrega no terminal fluvial" };
+  assert.equal((await agentes.OPERADOR.post("/api/tipos-local").send(novo)).status, 403, "operador não cadastra");
+  assert.equal((await agentes.SUPERVISOR.post("/api/tipos-local").send({ ...novo, rotuloEntrega: "" })).status, 400, "rótulo da função é obrigatório");
+  assert.equal((await agentes.SUPERVISOR.post("/api/tipos-local").send({ ...novo, funcao: "OUTRA" })).status, 400);
+  const criado = await agentes.SUPERVISOR.post("/api/tipos-local").send({ ...novo, rotuloChegada: "ignorado" });
+  assert.equal(criado.status, 201);
+  assert.equal(criado.body.rotuloChegada, null, "rótulo de outra função não é gravado");
+  assert.equal((await agentes.SUPERVISOR.post("/api/tipos-local").send(novo)).status, 409, "nome repetido");
+
+  // Com local cadastrado: função travada e exclusão bloqueada; mudar só o rótulo pode.
+  const local = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Terminal Rio Madeira", tipoId: criado.body.id });
+  assert.equal(local.status, 201);
+  assert.equal(local.body.tipo.nome, "Terminal Fluvial");
+  const mudaFuncao = await agentes.SUPERVISOR.patch(`/api/tipos-local/${criado.body.id}`).send({ funcao: "CARREGAMENTO", rotuloChegada: "a", rotuloSaida: "b" });
+  assert.equal(mudaFuncao.status, 409);
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/tipos-local/${criado.body.id}`)).status, 409);
+  const renomeia = await agentes.SUPERVISOR.patch(`/api/tipos-local/${criado.body.id}`).send({ rotuloColeta: "Coleta fluvial" });
+  assert.equal(renomeia.body.rotuloColeta, "Coleta fluvial");
+  assert.equal(renomeia.body.rotuloEntrega, "Entrega no terminal fluvial", "o outro rótulo não muda");
+
+  // Tipo inativo não aceita local novo; sem locais, pode excluir.
+  await agentes.SUPERVISOR.patch(`/api/tipos-local/${criado.body.id}`).send({ ativo: false });
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Outro fluvial", tipoId: criado.body.id })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/locais/${local.body.id}`)).status, 204);
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/tipos-local/${criado.body.id}`)).status, 204);
+  const log = (await agentes.ADMIN.get("/api/logs?entidade=TipoLocal")).body;
+  assert.ok(log.some((l) => l.acao === "CRIAR" && l.descricao.includes("Terminal Fluvial")));
+});
+
+test("locais: tipos, coordenadas validadas e busca de endereço sem chave", async () => {
+  const PORTO = ids.tipo["Porto / Terminal"];
+  assert.equal((await agentes.OPERADOR.post("/api/locais").send({ nome: "X", tipoId: PORTO })).status, 403);
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "X", tipoId: 99999 })).status, 400, "tipo inexistente");
+  // Coordenadas trocadas (lat/lon invertidas) caem fora do Brasil.
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Santos", tipoId: PORTO, latitude: -46.31, longitude: -23.95 })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Santos", tipoId: PORTO, latitude: -23.95 })).status, 400, "lat sem lon");
+
+  const santos = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Porto de Santos", tipoId: PORTO, cidade: "Santos", uf: "sp", latitude: -23.9566, longitude: -46.3136, filaHoras: 6 });
   assert.equal(santos.status, 201);
   assert.equal(santos.body.uf, "SP");
   assert.equal(santos.body.filaHoras, 6);
   // Fábrica a ~1.000 km em linha reta (Rio Verde/GO).
-  const rioVerde = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Fábrica Rio Verde", tipo: "FABRICA", latitude: -17.7923, longitude: -50.9281 });
-  const perto = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Armazém Cubatão", tipo: "ARMAZEM", latitude: -23.8953, longitude: -46.4253 });
+  const rioVerde = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Fábrica Rio Verde", tipoId: ids.tipo["Fábrica"], latitude: -17.7923, longitude: -50.9281, filaHoras: 3 });
+  assert.equal(rioVerde.body.filaHoras, null, "fila/gate só vale para local de retirada/entrega");
+  const perto = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Armazém Cubatão", tipoId: ids.tipo["Armazém"], latitude: -23.8953, longitude: -46.4253 });
+  const ferro = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Terminal Ferroviário Paulínia", tipoId: ids.tipo["Terminal Ferroviário"], latitude: -22.76, longitude: -47.15 });
+  ids.ferro = ferro.body.id;
   ids.santos = santos.body.id;
   ids.rioVerde = rioVerde.body.id;
   ids.cubatao = perto.body.id;
 
   assert.equal((await agentes.SUPERVISOR.get("/api/locais/geocodificar?q=Santos")).status, 503, "sem ORS_API_KEY");
-  const soPortos = await agentes.VISUALIZACAO.get("/api/locais?tipo=PORTO");
-  assert.deepEqual(soPortos.body.map((l) => l.nome), ["Porto de Santos"]);
+  const retiradaEntrega = await agentes.VISUALIZACAO.get("/api/locais?funcao=RETIRADA_ENTREGA");
+  assert.deepEqual(retiradaEntrega.body.map((l) => l.nome).sort(), ["Porto de Santos", "Terminal Ferroviário Paulínia"]);
 });
 
 test("previsão de rota: trajeto longo com free time curto gera RISCO_DEMURRAGE; perto não", async () => {
@@ -624,7 +667,7 @@ test("previsão de rota: trajeto longo com free time curto gera RISCO_DEMURRAGE;
   const armador = await agentes.SUPERVISOR.post("/api/armadores").send({ nome: "Armador Rota", freeTimeDias: 3, valorDiaria: 100 });
 
   const base = { tipo: "DRY_40", grupoId: grupo.body.id, armadorId: armador.body.id, portoEntregaId: ids.santos };
-  assert.equal((await agentes.OPERADOR.post("/api/containers").send({ ...base, numero: "MSCU1234566", confirmarDigito: true, portoRetiradaId: ids.rioVerde })).status, 400, "retirada precisa ser porto");
+  assert.equal((await agentes.OPERADOR.post("/api/containers").send({ ...base, numero: "MSCU1234566", confirmarDigito: true, portoRetiradaId: ids.rioVerde })).status, 400, "retirada precisa ser local de retirada/entrega");
 
   // Sem localCarregamentoId: herda a fábrica do Cliente/Fábrica. Coletado agora em Santos.
   const longe = await agentes.OPERADOR.post("/api/containers").send({ ...base, numero: "MSCU1234566", confirmarDigito: true, portoRetiradaId: ids.santos, coletadoEm: new Date() });
@@ -662,9 +705,30 @@ test("previsão de rota: trajeto longo com free time curto gera RISCO_DEMURRAGE;
   const depois = await agentes.OPERADOR.get(`/api/containers/${longe.body.id}`);
   assert.ok(depois.body.situacao.previsao.trechos[0].km < kmAntes, "fábrica mais perto → distância menor");
 
-  // Local em uso não é excluído; mudar o tipo também não.
+  // Local em uso não é excluído; mudar para um tipo de outra função também não (mesma função pode).
   assert.equal((await agentes.SUPERVISOR.delete(`/api/locais/${ids.santos}`)).status, 409);
-  assert.equal((await agentes.SUPERVISOR.patch(`/api/locais/${ids.santos}`).send({ tipo: "FABRICA" })).status, 409);
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/locais/${ids.santos}`).send({ tipoId: ids.tipo["Fábrica"] })).status, 409);
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/locais/${ids.cubatao}`).send({ tipoId: ids.tipo["Fábrica"] })).status, 200);
+  await agentes.SUPERVISOR.patch(`/api/locais/${ids.cubatao}`).send({ tipoId: ids.tipo["Armazém"] });
+
+  // Etapas com o nome do tipo do local: coleta em terminal ferroviário, carregamento em armazém.
+  const ferroviario = await agentes.OPERADOR.post("/api/containers").send({
+    ...base, armadorId: folgado.body.id, numero: "TGHU1234565", confirmarDigito: true,
+    portoRetiradaId: ids.ferro, localCarregamentoId: ids.cubatao,
+  });
+  assert.equal(ferroviario.status, 201, JSON.stringify(ferroviario.body));
+  assert.deepEqual(ferroviario.body.rotulosEtapa, {
+    COLETADO: "Coleta ferroviária", NA_FABRICA: "Chegada no armazém", SAIU_FABRICA: "Saída do armazém", ENTREGUE_PORTO: "Entrega no porto",
+  });
+  const naLista = (await agentes.VISUALIZACAO.get("/api/containers")).body.find((c) => c.id === ferroviario.body.id);
+  assert.equal(naLista.rotulosEtapa.COLETADO, "Coleta ferroviária", "lista também leva os nomes");
+  const noPatio = (await agentes.VISUALIZACAO.get("/api/painel")).body;
+  assert.ok(JSON.stringify(noPatio).includes("Coleta ferroviária"), "pátio também leva os nomes");
+  // O log da etapa usa o nome do tipo.
+  await agentes.OPERADOR.post(`/api/containers/${ferroviario.body.id}/avancar`).send({ statusPara: "COLETADO" });
+  const logEtapa = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${ferroviario.body.id}`)).body;
+  assert.ok(logEtapa.some((l) => l.descricao.includes("Programado → Coleta ferroviária")), JSON.stringify(logEtapa.map((l) => l.descricao)));
+  await agentes.SUPERVISOR.post(`/api/containers/${ferroviario.body.id}/cancelar`).send({ motivo: "teste de rótulos" });
 
   // Janela de rodagem configurável e validada.
   assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, rodagemInicioMin: 1200, rodagemFimMin: 1210 })).status, 400);

@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { custosDiarios, temposPorEtapa, diaBrasilia, inicioDoDiaISO, MOEDA_ESTADIA } from "../lib/custos.js";
+import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 
 export const custosRouter = Router();
 
@@ -41,7 +42,7 @@ custosRouter.get("/", asyncHandler(async (req, res) => {
         OR: [{ coletadoEm: { lt: fim } }, { chegadaFabricaEm: { lt: fim } }],
         AND: [{ OR: [{ entreguePortoEm: null }, { entreguePortoEm: { gte: inicio } }] }],
       },
-      include: { armador: { select: { nome: true } } },
+      include: { armador: { select: { nome: true } }, ...SELECT_LOCAIS_ETAPAS },
     }),
     prisma.grupoOperacao.findMany({ include: { regiao: true }, orderBy: [{ fabrica: "asc" }, { cliente: "asc" }] }),
     prisma.regiao.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
@@ -73,6 +74,7 @@ custosRouter.get("/", asyncHandler(async (req, res) => {
         numero: c.numero,
         tipo: c.tipo,
         status: c.status,
+        rotulosEtapa: rotulosDasEtapas(c),
         grupoId: c.grupoId,
         armador: c.armador.nome,
         coletadoEm: c.coletadoEm,

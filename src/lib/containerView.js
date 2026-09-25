@@ -2,6 +2,7 @@ import { calcularSituacao, semaforo, ehReefer } from "./prazos.js";
 import { estimarCiclo } from "./estimativa.js";
 import { configRodagem } from "./previsao.js";
 import { LIMITE_ATRASO_MIN } from "./leituras.js";
+import { rotulosDasEtapas } from "./tiposLocal.js";
 
 const CAMPOS_DECIMAIS = ["custoEstadiaPorHora", "valorDiaria", "setpoint", "tempMin", "tempMax"];
 export const CAMPOS_LOCAL = ["latitude", "longitude", "filaHoras"];
@@ -40,6 +41,8 @@ export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = nul
     portoRetirada: c.portoRetirada ? decimaisParaNumero(c.portoRetirada, CAMPOS_LOCAL) : c.portoRetirada,
     localCarregamento: c.localCarregamento ? decimaisParaNumero(c.localCarregamento, CAMPOS_LOCAL) : c.localCarregamento,
     portoEntrega: c.portoEntrega ? decimaisParaNumero(c.portoEntrega, CAMPOS_LOCAL) : c.portoEntrega,
+    // Nome das etapas conforme o tipo dos locais (ex.: COLETADO → "Coleta ferroviária").
+    rotulosEtapa: rotulosDasEtapas(c),
     situacao,
     semaforo: semaforo(situacao),
   };

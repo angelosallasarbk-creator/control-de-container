@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { montarContainer } from "../lib/containerView.js";
+import { SELECT_LOCAIS_ETAPAS } from "../lib/tiposLocal.js";
 import { montarContextos } from "../lib/previsao.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 
@@ -12,13 +13,13 @@ const somarPorMoeda = (acc, moeda, valor) => {
   if (valor > 0) acc[moeda] = Math.round(((acc[moeda] ?? 0) + valor) * 100) / 100;
 };
 
-// Visão do pátio: containers ativos agrupados por Cliente / Fábrica (com a região da fábrica),
+// Visão do pátio: containers ativos agrupados por Ponto de Carregamento (com a região da fábrica),
 // com semáforo e custos. A separação em abas por região é feita na tela.
 painelRouter.get("/", asyncHandler(async (_req, res) => {
   const [containers, grupos, alertasAbertos, config] = await Promise.all([
     prisma.container.findMany({
       where: { status: { notIn: STATUS_ENCERRADOS } },
-      include: { grupo: { include: { regiao: true } }, armador: true, produto: true, leituras: { orderBy: { lidaEm: "desc" }, take: 50 } },
+      include: { grupo: { include: { regiao: true } }, armador: true, produto: true, ...SELECT_LOCAIS_ETAPAS, leituras: { orderBy: { lidaEm: "desc" }, take: 50 } },
       orderBy: [{ chegadaFabricaEm: "asc" }, { criadoEm: "asc" }],
     }),
     prisma.grupoOperacao.findMany({
@@ -87,6 +88,7 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
       tipo: c.tipo,
       reefer: c.reefer,
       status: c.status,
+      rotulosEtapa: c.rotulosEtapa,
       semaforo: c.semaforo,
       posicaoPatio: c.posicaoPatio,
       armador: c.armador.nome,

@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { ROTULO_STATUS, ROTULO_TIPO, fmtMoeda, fmtDataHora, fmtData } from "../formato.js";
+import { rotuloEtapa, ROTULO_TIPO, fmtMoeda, fmtDataHora, fmtData } from "../formato.js";
 import { resumir, serieTendencia, impactos, emReais, fmtPorMoeda, moedasSemCotacao, totalContainer, somarEm } from "../custos.js";
 import GraficoBarras from "../components/GraficoBarras.vue";
 
@@ -140,7 +140,7 @@ const graficosTendencia = computed(() => {
   return graficos;
 });
 
-// Custo por Cliente/Fábrica (visão geral da região)
+// Custo por Ponto de Carregamento (visão geral da região)
 const porGrupo = computed(() => {
   if (!dados.value || grupoAtual.value !== "geral") return [];
   return gruposDaRegiao.value
@@ -190,7 +190,7 @@ function exportarCsv() {
   const cab = ["Container", "Tipo", "Cliente", "Fábrica", "Região", "Armador", "Etapa", "Coleta", "Chegada fábrica", "Saída fábrica", "Entrega porto",
     "Horas além da meta", "Custo estadia", "Moeda estadia", "Diárias demurrage", "Custo demurrage", "Moeda demurrage", "Total estimado (R$)"];
   const linhas = detalhamento.value.map((c) => [
-    c.numero, ROTULO_TIPO[c.tipo], c.grupo.cliente, c.grupo.fabrica, c.grupo.regiao?.nome ?? "", c.armador, ROTULO_STATUS[c.status],
+    c.numero, ROTULO_TIPO[c.tipo], c.grupo.cliente, c.grupo.fabrica, c.grupo.regiao?.nome ?? "", c.armador, rotuloEtapa(c, c.status),
     fmtDataHora(c.coletadoEm), fmtDataHora(c.chegadaFabricaEm), fmtDataHora(c.saidaFabricaEm), fmtDataHora(c.entreguePortoEm),
     num(c.estadiaHoras), num(c.estadiaValor), c.estadiaMoeda, c.diarias, num(c.demurrageValor), c.demurrageMoeda, num(c.totalReais),
   ]);
@@ -238,7 +238,7 @@ watch(preset, (p) => {
         {{ a.nome }} <span class="aba-contagem">{{ a.rotuloValor }}</span>
       </button>
     </nav>
-    <nav class="abas sub" role="tablist" aria-label="Cliente / Fábrica">
+    <nav class="abas sub" role="tablist" aria-label="Ponto de Carregamento">
       <button class="aba" :class="{ ativa: grupoAtual === 'geral' }" @click="selecionar({ grupo: 'geral' })">Visão geral</button>
       <button
         v-for="g in gruposDaRegiao" :key="g.id" class="aba" :class="{ ativa: grupoAtual === String(g.id) }"
@@ -297,9 +297,9 @@ watch(preset, (p) => {
       </div>
     </div>
 
-    <!-- Por Cliente/Fábrica -->
+    <!-- Por Ponto de Carregamento -->
     <div v-if="grupoAtual === 'geral' && porGrupo.length" class="card">
-      <h2>Custo por Cliente / Fábrica</h2>
+      <h2>Custo por Ponto de Carregamento</h2>
       <GraficoBarras
         v-if="graficoPorGrupo" :rotulos="graficoPorGrupo.rotulos" :series="graficoPorGrupo.series" horizontal
         :altura="Math.max(140, graficoPorGrupo.rotulos.length * 44 + 60)"
@@ -308,7 +308,7 @@ watch(preset, (p) => {
         <table>
           <thead>
             <tr>
-              <th>Cliente / Fábrica</th><th v-if="regiaoAtual === 'todas'">Região</th><th>Containers c/ custo</th>
+              <th>Ponto de Carregamento</th><th v-if="regiaoAtual === 'todas'">Região</th><th>Containers c/ custo</th>
               <th>Horas além da meta</th><th>Estadia</th><th>Diárias</th><th>Demurrage</th><th>Total</th>
             </tr>
           </thead>
@@ -346,7 +346,7 @@ watch(preset, (p) => {
         <table class="pequeno">
           <thead>
             <tr>
-              <th>Container</th><th v-if="grupoAtual === 'geral'">Cliente / Fábrica</th><th>Armador</th><th>Etapa</th>
+              <th>Container</th><th v-if="grupoAtual === 'geral'">Ponto de Carregamento</th><th>Armador</th><th>Etapa</th>
               <th title="Coleta → chegada na fábrica">Até fábrica</th><th title="Chegada → saída">Na fábrica</th><th title="Saída → entrega no porto">Até porto</th>
               <th>Horas além da meta</th><th>Estadia</th><th>Diárias</th><th>Demurrage</th><th>Total</th>
             </tr>
@@ -356,7 +356,7 @@ watch(preset, (p) => {
               <td class="mono negrito">{{ c.numero }}<div class="mudo">{{ ROTULO_TIPO[c.tipo] }}</div></td>
               <td v-if="grupoAtual === 'geral'">{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</td>
               <td>{{ c.armador }}</td>
-              <td><span class="chip azul">{{ ROTULO_STATUS[c.status] }}</span></td>
+              <td><span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span></td>
               <td>{{ fmtDias(c.tempos.ateFabrica) }}</td>
               <td :class="c.estadiaHoras ? 'txt-VENCIDO' : ''">{{ fmtDias(c.tempos.naFabrica) }}<div class="mudo">meta {{ c.metaEstadiaHoras }}h</div></td>
               <td>{{ fmtDias(c.tempos.atePorto) }}</td>

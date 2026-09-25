@@ -44,10 +44,10 @@ enum TipoAlerta {
   RISCO_DEADLINE  // previsão de entrega passa do deadline do navio
 }
 
-enum TipoLocal {
-  FABRICA
-  ARMAZEM
-  PORTO
+// Onde o tipo de local pode ser usado no trajeto do container.
+enum FuncaoLocal {
+  RETIRADA_ENTREGA // retirada do vazio / entrega do cheio (porto, terminal ferroviário…); tem fila/gate
+  CARREGAMENTO     // onde o container é ovado (fábrica, armazém…)
 }
 
 enum NivelAlerta {
@@ -91,7 +91,7 @@ model Regiao {
   grupos    GrupoOperacao[]
 }
 
-// Grupo de operação = Cliente / Fábrica. Cada grupo tem sua meta de estadia.
+// Grupo de operação = Ponto de Carregamento (Cliente + Fábrica). Cada grupo tem sua meta de estadia.
 // A região é da fábrica: todos os grupos da mesma fábrica ficam na mesma região
 // (garantido na validação do cadastro, ver routes/cadastros.js).
 model GrupoOperacao {
@@ -114,11 +114,28 @@ model GrupoOperacao {
   @@index([regiaoId])
 }
 
-// Ponto físico: fábrica, armazém (carregamento) ou porto/terminal (retirada e entrega).
+// Tipo de local cadastrável (Fábrica, Armazém, Porto / Terminal, Terminal Ferroviário…).
+// Os rótulos dão nome às etapas do container que acontecem nesse tipo de local
+// (ex.: "Coleta ferroviária"); só os da função do tipo são usados.
+model TipoLocal {
+  id            Int         @id @default(autoincrement())
+  nome          String      @unique
+  funcao        FuncaoLocal
+  rotuloColeta  String?     // RETIRADA_ENTREGA
+  rotuloEntrega String?     // RETIRADA_ENTREGA
+  rotuloChegada String?     // CARREGAMENTO
+  rotuloSaida   String?     // CARREGAMENTO
+  ativo         Boolean     @default(true)
+  criadoEm      DateTime    @default(now())
+  locais        Local[]
+}
+
+// Ponto físico do trajeto; o tipo define se é carregamento ou retirada/entrega.
 model Local {
   id          Int       @id @default(autoincrement())
   nome        String    @unique
-  tipo        TipoLocal
+  tipoId      Int
+  tipo        TipoLocal @relation(fields: [tipoId], references: [id])
   endereco    String?
   cidade      String?
   uf          String?
@@ -134,6 +151,8 @@ model Local {
   entregas              Container[]      @relation("PortoEntrega")
   distanciasOrigem      DistanciaRota[]  @relation("Origem")
   distanciasDestino     DistanciaRota[]  @relation("Destino")
+
+  @@index([tipoId])
 }
 
 // Cache da distância rodoviária entre dois locais (calculada uma vez; recalculada se as

@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from "vue";
-import { ROTULO_STATUS, ROTULO_TIPO, fmtHoras, fmtTemp, fmtMoeda, fmtFolga, fmtDataHora } from "../formato.js";
+import { rotuloEtapa, ROTULO_TIPO, fmtHoras, fmtTemp, fmtMoeda, fmtFolga, fmtDataHora } from "../formato.js";
 
 const props = defineProps({ c: { type: Object, required: true } });
 
@@ -24,7 +24,7 @@ const textoDemurrage = computed(() => {
       <span>{{ ROTULO_TIPO[c.tipo] }} · {{ c.armador }}</span>
       <span v-if="c.posicaoPatio" style="white-space: nowrap">📍 {{ c.posicaoPatio }}</span>
     </div>
-    <div class="linha-tile"><span class="chip azul">{{ ROTULO_STATUS[c.status] }}</span></div>
+    <div class="linha-tile"><span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span></div>
 
     <template v-if="c.estadia && c.status !== 'SAIU_FABRICA'">
       <div class="linha-tile">
@@ -45,7 +45,7 @@ const textoDemurrage = computed(() => {
       <span v-else class="mudo">sem leitura</span>
     </div>
     <div v-if="c.temperatura?.semLeitura" class="linha-tile txt-ATENCAO"><span>⏱ leitura atrasada</span></div>
-    <div v-if="c.previsao" class="linha-tile" :title="`Entrega prevista no porto: ${fmtDataHora(c.previsao.previsaoEntrega)}`">
+    <div v-if="c.previsao" class="linha-tile" :title="`Entrega prevista: ${fmtDataHora(c.previsao.previsaoEntrega)}`">
       <span>Previsão</span>
       <span :class="`txt-${c.previsao.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : c.previsao.riscoDemurrage}`">
         <template v-if="c.previsao.riscoDemurrage === 'CRITICO'">⚠ ~{{ c.previsao.diasDemurragePrevistos }} diária(s)</template>

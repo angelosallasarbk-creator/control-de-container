@@ -10,7 +10,7 @@ import { containersRouter } from "./routes/containers.js";
 import { painelRouter } from "./routes/painel.js";
 import { alertasRouter } from "./routes/alertas.js";
 import { custosRouter } from "./routes/custos.js";
-import { locaisRouter, rotasRouter } from "./routes/locais.js";
+import { locaisRouter, rotasRouter, tiposLocalRouter } from "./routes/locais.js";
 import { etiquetasRouter } from "./routes/etiquetas.js";
 import { qrRouter } from "./routes/qr.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
@@ -42,6 +42,7 @@ export function criarApp() {
   app.use("/api/alertas", alertasRouter);
   app.use("/api/custos", custosRouter);
   app.use("/api/locais", locaisRouter);
+  app.use("/api/tipos-local", tiposLocalRouter);
   app.use("/api/rotas", rotasRouter);
   app.use("/api/etiquetas", etiquetasRouter);
   app.use("/api/qr", qrRouter);

@@ -8,7 +8,7 @@ export const CATALOGO_PERMISSOES = [
   { chave: "containers.operar", grupo: "Containers", nome: "Operar containers", descricao: "Cadastrar containers, avançar etapas, editar dados, registrar temperatura na ficha e reconhecer alertas." },
   { chave: "containers.prazos", grupo: "Containers", nome: "Alterar prazos do container", descricao: "Mudar meta de estadia, custo/h, free time e faixa de temperatura de um container específico." },
   { chave: "containers.corrigir", grupo: "Containers", nome: "Desfazer e cancelar etapas", descricao: "Desfazer a última etapa registrada e cancelar containers." },
-  { chave: "cadastros.editar", grupo: "Cadastros", nome: "Editar cadastros", descricao: "Regiões, Cliente/Fábrica, Armadores, Produtos e Locais (inclusive busca de endereço)." },
+  { chave: "cadastros.editar", grupo: "Cadastros", nome: "Editar cadastros", descricao: "Regiões, Ponto de Carregamento, Armadores, Produtos, Locais e Tipos de local (inclusive busca de endereço)." },
   { chave: "etiquetas.emitir", grupo: "Etiquetas QR", nome: "Gerar e imprimir etiquetas", descricao: "Gerar lotes de etiquetas QR e imprimir (navegador/ZPL) as etiquetas que a própria pessoa gerou." },
   { chave: "etiquetas.cancelar", grupo: "Etiquetas QR", nome: "Cancelar e excluir etiquetas", descricao: "Inutilizar (cancelar) etiquetas QR que a própria pessoa gerou e excluir as que nunca foram usadas (sem container e sem leituras)." },
   { chave: "qr.registrar", grupo: "Etiquetas QR", nome: "Registrar leituras pelo celular", descricao: "Ligar etiqueta a container e registrar temperatura lendo o QR ou digitando o código." },

@@ -39,7 +39,17 @@ export const ROTULO_ALERTA = {
   RISCO_DEADLINE: "Risco de deadline",
 };
 
-export const ROTULO_TIPO_LOCAL = { FABRICA: "Fábrica", ARMAZEM: "Armazém", PORTO: "Porto / Terminal" };
+// Nome da etapa conforme o tipo do local do container (ex.: COLETADO → "Coleta ferroviária"),
+// vindo do servidor em c.rotulosEtapa; sem local definido, o nome genérico.
+export const rotuloEtapa = (c, status) => c?.rotulosEtapa?.[status] ?? ROTULO_STATUS[status];
+// Texto do botão que leva à etapa: "Registrar coleta ferroviária".
+export function acaoEtapa(c, status) {
+  const r = c?.rotulosEtapa?.[status];
+  return r ? `Registrar ${r.charAt(0).toLowerCase()}${r.slice(1)}` : ACAO_ETAPA[status];
+}
+
+export const ROTULO_FUNCAO_LOCAL = { RETIRADA_ENTREGA: "Retirada/entrega do container", CARREGAMENTO: "Carregamento (ovação)" };
+export const ehRetiradaEntrega = (l) => l?.tipo?.funcao === "RETIRADA_ENTREGA";
 
 // Minutos desde 00:00 ↔ "HH:MM" (janela de rodagem nas Configurações).
 export const minutosParaHora = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;

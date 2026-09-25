@@ -95,8 +95,8 @@ test("programado com deadline: simula coleta agora e diz até quando coletar", (
 test("sem locais ou sem distância: indica o que falta", () => {
   const p = estimarCiclo({ ...base, portoEntregaId: null }, ctx(100, 100), new Date(), cfg);
   assert.equal(p.disponivel, false);
-  assert.deepEqual(p.faltando, ["porto de entrega"]);
+  assert.deepEqual(p.faltando, ["local de entrega"]);
   const semKm = estimarCiclo(base, ctx(null, 100), new Date(), cfg);
-  assert.match(semKm.faltando[0], /distância porto/);
+  assert.match(semKm.faltando[0], /distância retirada/);
   assert.equal(estimarCiclo({ ...base, status: "ENTREGUE_PORTO" }, ctx(1, 1), new Date(), cfg), null);
 });

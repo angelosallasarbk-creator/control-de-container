@@ -80,11 +80,11 @@ function nivelRisco(folgaHoras, limiteAtencaoHoras) {
 export function estimarCiclo(c, ctx, agora, cfg) {
   if (["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)) return null;
   const faltando = [];
-  if (!c.portoRetiradaId) faltando.push("porto de retirada");
+  if (!c.portoRetiradaId) faltando.push("local de retirada");
   if (!c.localCarregamentoId) faltando.push("local de carregamento");
-  if (!c.portoEntregaId) faltando.push("porto de entrega");
-  if (!faltando.length && (ctx?.kmIda === null || ctx?.kmIda === undefined)) faltando.push("distância porto → carregamento (confira as coordenadas)");
-  if (!faltando.length && (ctx?.kmVolta === null || ctx?.kmVolta === undefined)) faltando.push("distância carregamento → porto (confira as coordenadas)");
+  if (!c.portoEntregaId) faltando.push("local de entrega");
+  if (!faltando.length && (ctx?.kmIda === null || ctx?.kmIda === undefined)) faltando.push("distância retirada → carregamento (confira as coordenadas)");
+  if (!faltando.length && (ctx?.kmVolta === null || ctx?.kmVolta === undefined)) faltando.push("distância carregamento → entrega (confira as coordenadas)");
   if (faltando.length) return { disponivel: false, faltando };
 
   const hipotetico = !c.coletadoEm;
@@ -110,10 +110,10 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   const cicloHoras = (entrega - coleta) / HORA;
 
   const trechos = [
-    { etapa: "Porto → carregamento (vazio)", km: ctx.kmIda, fonte: ctx.fonteIda, inicio: coleta, fim: chegadaFabrica, real: Boolean(c.chegadaFabricaEm), hipotetico },
+    { etapa: "Retirada → carregamento (vazio)", km: ctx.kmIda, fonte: ctx.fonteIda, inicio: coleta, fim: chegadaFabrica, real: Boolean(c.chegadaFabricaEm), hipotetico },
     { etapa: "No local de carregamento", horas: ctx.tempoFabricaHoras, fonte: ctx.fonteTempoFabrica, amostras: ctx.amostrasFabrica, inicio: chegadaFabrica, fim: saidaFabrica, real: Boolean(c.saidaFabricaEm) },
-    { etapa: "Carregamento → porto (cheio)", km: ctx.kmVolta, fonte: ctx.fonteVolta, inicio: saidaFabrica, fim: chegadaPorto, real: false },
-    { etapa: "Fila / gate no terminal", horas: ctx.filaEntregaHoras, inicio: chegadaPorto, fim: entrega, real: false },
+    { etapa: "Carregamento → entrega (cheio)", km: ctx.kmVolta, fonte: ctx.fonteVolta, inicio: saidaFabrica, fim: chegadaPorto, real: false },
+    { etapa: "Fila / gate na entrega", horas: ctx.filaEntregaHoras, inicio: chegadaPorto, fim: entrega, real: false },
   ].map((t) => ({ ...t, km: arred(t.km), horas: arred(t.horas ?? (t.fim - t.inicio) / HORA), duracaoHoras: arred((t.fim - t.inicio) / HORA) }));
 
   return {

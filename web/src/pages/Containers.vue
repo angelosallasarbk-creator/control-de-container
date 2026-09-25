@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora, fmtFolga } from "../formato.js";
+import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, rotuloEtapa, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora, fmtFolga } from "../formato.js";
 import NovoContainer from "../components/NovoContainer.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
@@ -90,7 +90,7 @@ function textoDemurrage(d) {
           </select>
         </div>
         <div class="campo">
-          <label>Cliente / Fábrica</label>
+          <label>Ponto de Carregamento</label>
           <select v-model="filtro.grupoId" @change="carregar">
             <option value="">Todos</option>
             <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
@@ -117,7 +117,7 @@ function textoDemurrage(d) {
           <ThOrdenavel chave="semaforo" :ordem="ordem" titulo="Situação: crítico primeiro no crescente"><span class="sr-only">Situação</span></ThOrdenavel>
           <ThOrdenavel chave="numero" :ordem="ordem">Container</ThOrdenavel>
           <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
-          <ThOrdenavel chave="grupo" :ordem="ordem">Cliente / Fábrica</ThOrdenavel>
+          <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Carregamento</ThOrdenavel>
           <ThOrdenavel chave="armador" :ordem="ordem">Armador</ThOrdenavel>
           <ThOrdenavel chave="etapa" :ordem="ordem" titulo="Na ordem do processo">Etapa</ThOrdenavel>
           <ThOrdenavel chave="estadia" :ordem="ordem" titulo="Pelo tempo que falta para a meta: mais urgente primeiro no crescente">Estadia</ThOrdenavel>
@@ -134,7 +134,7 @@ function textoDemurrage(d) {
           <td>{{ ROTULO_TIPO[c.tipo] }}</td>
           <td>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</td>
           <td>{{ c.armador.nome }}</td>
-          <td><span class="chip azul">{{ ROTULO_STATUS[c.status] }}</span></td>
+          <td><span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span></td>
           <td :class="c.situacao.estadia && `txt-${c.situacao.estadia.situacao}`">
             <template v-if="c.situacao.estadia">{{ fmtHoras(c.situacao.estadia.horasDecorridas) }} / {{ c.situacao.estadia.metaHoras }}h</template>
             <span v-else class="mudo">—</span>

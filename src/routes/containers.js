@@ -12,6 +12,7 @@ import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib
 import { montarContextos } from "../lib/previsao.js";
 import { registrarLeitura } from "../lib/leituras.js";
 import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
+import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
 
 export const containersRouter = Router();
 
@@ -42,30 +43,33 @@ const ROTULO_STATUS = {
 // Tolerância para relógio do celular/computador levemente adiantado.
 const FOLGA_FUTURO_MS = 5 * 60 * 1000;
 
-const SELECT_LOCAL = { select: { id: true, nome: true, tipo: true, cidade: true, uf: true, latitude: true, longitude: true, filaHoras: true } };
+const SELECT_LOCAL = { select: { id: true, nome: true, tipo: SELECT_TIPO, cidade: true, uf: true, latitude: true, longitude: true, filaHoras: true } };
 const INCLUDE_BASICO = {
   grupo: true, armador: true, produto: true,
   portoRetirada: SELECT_LOCAL, localCarregamento: SELECT_LOCAL, portoEntrega: SELECT_LOCAL,
 };
 
-// Valida um local do trajeto: existe, está ativo (ou já era o atual) e é do tipo certo.
-const TIPOS_DO_CAMPO = {
-  portoRetiradaId: { tipos: ["PORTO"], rotulo: "Porto de retirada" },
-  localCarregamentoId: { tipos: ["FABRICA", "ARMAZEM"], rotulo: "Local de carregamento" },
-  portoEntregaId: { tipos: ["PORTO"], rotulo: "Porto de entrega" },
+// Valida um local do trajeto: existe, está ativo (ou já era o atual) e o tipo tem a função certa.
+const FUNCAO_DO_CAMPO = {
+  portoRetiradaId: { funcao: "RETIRADA_ENTREGA", rotulo: "Local de retirada", exemplo: "porto ou terminal ferroviário" },
+  localCarregamentoId: { funcao: "CARREGAMENTO", rotulo: "Local de carregamento", exemplo: "fábrica ou armazém" },
+  portoEntregaId: { funcao: "RETIRADA_ENTREGA", rotulo: "Local de entrega", exemplo: "porto ou terminal ferroviário" },
 };
+
+// Nome da etapa conforme o tipo do local (ex.: "Coleta ferroviária"); sem local, o genérico.
+const nomeEtapa = (c, status) => rotulosDasEtapas(c)[status] ?? ROTULO_STATUS[status];
 async function validarLocais(corpo, atual = {}) {
   const dados = {};
-  for (const [campo, { tipos, rotulo }] of Object.entries(TIPOS_DO_CAMPO)) {
+  for (const [campo, { funcao, rotulo, exemplo }] of Object.entries(FUNCAO_DO_CAMPO)) {
     if (!(campo in corpo)) continue;
     if (corpo[campo] === null || corpo[campo] === "") {
       dados[campo] = null;
       continue;
     }
     const localId = validarId(corpo[campo], rotulo);
-    const local = await prisma.local.findUnique({ where: { id: localId } });
+    const local = await prisma.local.findUnique({ where: { id: localId }, include: { tipo: true } });
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
-    if (!tipos.includes(local.tipo)) throw erroHttp(400, `${rotulo} precisa ser um local do tipo ${tipos.map((t) => t.toLowerCase()).join(" ou ")}.`);
+    if (local.tipo.funcao !== funcao) throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome}; escolha um local de ${ROTULO_FUNCAO[funcao].toLowerCase()} (ex.: ${exemplo}).`);
     if (!local.ativo && atual[campo] !== localId) throw erroHttp(400, `${rotulo}: o local "${local.nome}" está inativo.`);
     dados[campo] = localId;
   }
@@ -169,7 +173,7 @@ containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(a
     return res.status(422).json({ erro: "O dígito verificador não confere. Confira o número digitado.", codigo: "DIGITO_INVALIDO" });
   }
   const tipo = umDe(b.tipo, TIPOS, "Tipo de container", { obrigatorio: true });
-  const grupoId = validarId(b.grupoId, "Cliente / Fábrica");
+  const grupoId = validarId(b.grupoId, "Ponto de Carregamento");
   const armadorId = validarId(b.armadorId, "Armador");
   const produtoId = b.produtoId ? validarId(b.produtoId, "Produto") : null;
 
@@ -178,14 +182,14 @@ containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(a
     prisma.armador.findUnique({ where: { id: armadorId } }),
     produtoId ? prisma.produto.findUnique({ where: { id: produtoId } }) : null,
   ]);
-  if (!grupo?.ativo) throw erroHttp(400, "Cliente / Fábrica inexistente ou inativo.");
+  if (!grupo?.ativo) throw erroHttp(400, "Ponto de Carregamento inexistente ou inativo.");
   if (!armador?.ativo) throw erroHttp(400, "Armador inexistente ou inativo.");
   if (produtoId && !produto?.ativo) throw erroHttp(400, "Produto inexistente ou inativo.");
   if (ehReefer(tipo) && !produto) throw erroHttp(400, "Container reefer precisa de um produto (define a faixa de temperatura).");
 
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta");
   if (coletadoEm && coletadoEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "A coleta não pode estar no futuro.");
-  // Local de carregamento não informado → o local padrão do Cliente/Fábrica.
+  // Local de carregamento não informado → o local padrão do Ponto de Carregamento.
   const locais = await validarLocais({ localCarregamentoId: grupo.localId, ...b });
 
   const dados = {
@@ -289,7 +293,7 @@ containersRouter.patch("/:id", requirePermissao("containers.operar"), asyncHandl
     dadosAntes: antes,
     dadosDepois: depois,
   });
-  if (Object.keys(TIPOS_DO_CAMPO).some((c) => c in dados)) await prepararRota(containerId);
+  if (Object.keys(FUNCAO_DO_CAMPO).some((c) => c in dados)) await prepararRota(containerId);
   await sincronizarAlertas(containerId);
   res.json(await detalhe(containerId));
 }));
@@ -303,14 +307,14 @@ containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asy
   const observacao = texto(b.observacao, "Observação", { max: 1000 });
 
   await prisma.$transaction(async (tx) => {
-    const c = await tx.container.findUnique({ where: { id: containerId } });
+    const c = await tx.container.findUnique({ where: { id: containerId }, include: SELECT_LOCAIS_ETAPAS });
     if (!c) throw erroHttp(404, "Container não encontrado.");
     const posicao = FLUXO.indexOf(c.status);
     if (posicao === -1 || posicao === FLUXO.length - 1) throw erroHttp(409, "Este container já está encerrado.");
     const proximo = FLUXO[posicao + 1];
     // O front envia a etapa esperada: se outra pessoa avançou antes, evita pular uma etapa sem querer.
     if (b.statusPara && b.statusPara !== proximo) {
-      throw erroHttp(409, `O container já mudou de etapa (agora: ${ROTULO_STATUS[c.status]}). Atualize a tela.`);
+      throw erroHttp(409, `O container já mudou de etapa (agora: ${nomeEtapa(c, c.status)}). Atualize a tela.`);
     }
     validarMomento(ocorridoEm, c);
     await tx.container.update({ where: { id: containerId }, data: { status: proximo, [CAMPO_DATA[proximo]]: ocorridoEm } });
@@ -323,7 +327,7 @@ containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asy
         acao: "AVANCAR",
         entidade: "Container",
         entidadeId: containerId,
-        descricao: `Container ${c.numero}: ${ROTULO_STATUS[c.status]} → ${ROTULO_STATUS[proximo]}`,
+        descricao: `Container ${c.numero}: ${nomeEtapa(c, c.status)} → ${nomeEtapa(c, proximo)}`,
       },
       tx
     );
@@ -338,7 +342,7 @@ containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asy
 containersRouter.post("/:id/desfazer", requirePermissao("containers.corrigir"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   await prisma.$transaction(async (tx) => {
-    const c = await tx.container.findUnique({ where: { id: containerId } });
+    const c = await tx.container.findUnique({ where: { id: containerId }, include: SELECT_LOCAIS_ETAPAS });
     if (!c) throw erroHttp(404, "Container não encontrado.");
     const ultimo = await tx.eventoContainer.findFirst({ where: { containerId }, orderBy: [{ registradoEm: "desc" }, { id: "desc" }] });
     if (!ultimo || !ultimo.statusDe || ultimo.statusPara !== c.status) throw erroHttp(409, "Não há etapa para desfazer.");
@@ -350,7 +354,7 @@ containersRouter.post("/:id/desfazer", requirePermissao("containers.corrigir"), 
         acao: "DESFAZER",
         entidade: "Container",
         entidadeId: containerId,
-        descricao: `Container ${c.numero}: etapa "${ROTULO_STATUS[c.status]}" desfeita (volta para ${ROTULO_STATUS[ultimo.statusDe]})`,
+        descricao: `Container ${c.numero}: etapa "${nomeEtapa(c, c.status)}" desfeita (volta para ${nomeEtapa(c, ultimo.statusDe)})`,
         dadosAntes: ultimo,
       },
       tx

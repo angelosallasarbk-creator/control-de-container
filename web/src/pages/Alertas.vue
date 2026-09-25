@@ -2,7 +2,7 @@
 import { computed, inject, onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { ROTULO_ALERTA, ROTULO_STATUS, fmtDataHora, tempoDesde } from "../formato.js";
+import { ROTULO_ALERTA, rotuloEtapa, fmtDataHora, tempoDesde } from "../formato.js";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
@@ -68,7 +68,7 @@ const linhas = computed(() => ordem.ordenar(lista.value));
       </select>
     </div>
     <div class="campo">
-      <label>Cliente / Fábrica</label>
+      <label>Ponto de Carregamento</label>
       <select v-model="filtro.grupoId" @change="carregar">
         <option value="">Todos</option>
         <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
@@ -85,7 +85,7 @@ const linhas = computed(() => ordem.ordenar(lista.value));
           <ThOrdenavel chave="nivel" :ordem="ordem" titulo="Crítico primeiro no crescente">Nível</ThOrdenavel>
           <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
           <ThOrdenavel chave="container" :ordem="ordem">Container</ThOrdenavel>
-          <ThOrdenavel chave="grupo" :ordem="ordem">Cliente / Fábrica</ThOrdenavel>
+          <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Carregamento</ThOrdenavel>
           <ThOrdenavel chave="mensagem" :ordem="ordem">Mensagem</ThOrdenavel>
           <ThOrdenavel chave="aberto" :ordem="ordem" titulo="Mais antigo primeiro no crescente">Aberto</ThOrdenavel>
           <ThOrdenavel chave="tratamento" :ordem="ordem" titulo="Pendentes (não reconhecidos) primeiro no crescente">Tratamento</ThOrdenavel>
@@ -97,7 +97,7 @@ const linhas = computed(() => ordem.ordenar(lista.value));
           <td class="negrito">{{ ROTULO_ALERTA[a.tipo] }}</td>
           <td>
             <router-link :to="`/containers/${a.container.id}`" class="mono">{{ a.container.numero }}</router-link>
-            <div class="mudo pequeno">{{ ROTULO_STATUS[a.container.status] }}</div>
+            <div class="mudo pequeno">{{ rotuloEtapa(a.container, a.container.status) }}</div>
           </td>
           <td>{{ a.container.grupo.cliente }} / {{ a.container.grupo.fabrica }}</td>
           <td>{{ a.mensagem }}</td>

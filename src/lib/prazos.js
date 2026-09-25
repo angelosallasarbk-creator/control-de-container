@@ -29,7 +29,7 @@ export function ehReefer(tipo) {
   return String(tipo).startsWith("REEFER");
 }
 
-// Estadia na fábrica: da chegada até a saída, comparada à meta do grupo (Cliente/Fábrica).
+// Estadia na fábrica: da chegada até a saída, comparada à meta do grupo (Ponto de Carregamento).
 export function calcularEstadia(c, agora) {
   if (!c.chegadaFabricaEm) return null;
   const inicio = new Date(c.chegadaFabricaEm);

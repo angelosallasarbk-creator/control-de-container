@@ -4,12 +4,14 @@ import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { texto, id as validarId, umDe } from "../lib/validacao.js";
+import { SELECT_LOCAIS_ETAPAS, comRotulosEtapa } from "../lib/tiposLocal.js";
 
 export const alertasRouter = Router();
 
 const INCLUDE_CONTAINER = {
-  container: { select: { id: true, numero: true, status: true, grupo: { select: { cliente: true, fabrica: true } } } },
+  container: { select: { id: true, numero: true, status: true, grupo: { select: { cliente: true, fabrica: true } }, ...SELECT_LOCAIS_ETAPAS } },
 };
+const serializarAlerta = (a) => ({ ...a, container: comRotulosEtapa(a.container) });
 
 alertasRouter.get("/", asyncHandler(async (req, res) => {
   const where = {};
@@ -23,7 +25,7 @@ alertasRouter.get("/", asyncHandler(async (req, res) => {
     orderBy: [{ nivel: "desc" }, { abertoEm: "desc" }],
     take: req.query.estado === "historico" ? 300 : undefined,
   });
-  res.json(alertas);
+  res.json(alertas.map(serializarAlerta));
 }));
 
 // Consultado pela tela a cada poucos segundos para o sino e o aviso de novos alertas críticos.
@@ -59,5 +61,5 @@ alertasRouter.post("/:id/reconhecer", requirePermissao("containers.operar"), asy
     entidadeId: alertaId,
     descricao: `Alerta ${alerta.tipo}/${alerta.nivel} do container ${alerta.container.numero} reconhecido: ${acaoTomada}`,
   });
-  res.json(atualizado);
+  res.json(serializarAlerta(atualizado));
 }));

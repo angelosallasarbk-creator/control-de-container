@@ -34,7 +34,7 @@ export function totalContainer(c, cotacoes) {
   return emReais({ [c.estadiaMoeda]: c.estadiaValor, [c.demurrageMoeda]: c.demurrageValor }, cotacoes);
 }
 
-// ---------- Resumo de um escopo (conjunto de Cliente/Fábrica) ----------
+// ---------- Resumo de um escopo (conjunto de Ponto de Carregamento) ----------
 export function resumir(dados, grupoIds) {
   const ids = new Set(grupoIds);
   const r = { estadia: {}, demurrage: {}, estadiaHoras: 0, diarias: 0, containersComCusto: 0, containersNoPeriodo: 0, horasSemValor: 0 };
@@ -125,7 +125,7 @@ export function impactos(dados, grupoIds, gruposPorId) {
     itens.push({ nivel: "alto", texto: `${maior} representa ${pct(valor, r.totalReais)}% do custo estimado (${fmtMoeda(valor)} de ${fmtMoeda(r.totalReais)}).` });
   }
 
-  // 2. Concentração por Cliente/Fábrica (só quando há mais de um no escopo)
+  // 2. Concentração por Ponto de Carregamento (só quando há mais de um no escopo)
   if (ids.size > 1 && r.totalReais) {
     const porGrupo = new Map();
     for (const c of conts) porGrupo.set(c.grupoId, (porGrupo.get(c.grupoId) ?? 0) + (totalContainer(c, cot) ?? 0));
@@ -206,7 +206,7 @@ export function impactos(dados, grupoIds, gruposPorId) {
 
   // 8. Horas excedidas sem valor cadastrado
   if (r.horasSemValor > 0) {
-    itens.push({ nivel: "aviso", texto: `${fmtH(r.horasSemValor)} de estadia excedida estão sem valor: cadastre o custo por hora em Cliente / Fábrica para estimar esse custo.` });
+    itens.push({ nivel: "aviso", texto: `${fmtH(r.horasSemValor)} de estadia excedida estão sem valor: cadastre o custo por hora em Ponto de Carregamento para estimar esse custo.` });
   }
   return itens;
 }

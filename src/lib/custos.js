@@ -1,6 +1,6 @@
 // Custo estimado lançado DIA A DIA (competência), para tendência e recorte por período:
 // - demurrage: cada diária cai no dia de calendário (Brasília) em que é cobrada;
-// - estadia: cada hora além da meta cai no dia em que passou, × custo/h do Cliente/Fábrica.
+// - estadia: cada hora além da meta cai no dia em que passou, × custo/h do Ponto de Carregamento.
 // Mesmas regras de src/lib/prazos.js — a soma dos dias bate com calcularEstadia/calcularDemurrage.
 import { inicioDoDiaBrasilia } from "./prazos.js";
 

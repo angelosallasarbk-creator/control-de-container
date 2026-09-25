@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
-import { ROTULO_TIPO, paraInputLocal, deInputLocal, fmtTemp, fmtMoeda } from "../formato.js";
+import { ROTULO_TIPO, paraInputLocal, deInputLocal, fmtTemp, fmtMoeda, ehRetiradaEntrega } from "../formato.js";
 import PrevisaoCiclo from "./PrevisaoCiclo.vue";
 
 const emit = defineEmits(["fechar", "criado"]);
@@ -34,14 +34,14 @@ onMounted(async () => {
   }
 });
 
-const portos = computed(() => locais.value.filter((l) => l.tipo === "PORTO"));
-const carregamentos = computed(() => locais.value.filter((l) => l.tipo !== "PORTO"));
+const portos = computed(() => locais.value.filter(ehRetiradaEntrega));
+const carregamentos = computed(() => locais.value.filter((l) => !ehRetiradaEntrega(l)));
 
-// Local de carregamento vem do Cliente/Fábrica escolhido (pode ser trocado, ex.: armazém).
+// Local de carregamento vem do Ponto de Carregamento escolhido (pode ser trocado, ex.: armazém).
 watch(() => f.grupoId, () => {
   if (grupo.value?.localId) f.localCarregamentoId = grupo.value.localId;
 });
-// Porto de entrega costuma ser o mesmo da retirada: preenche se ainda estiver vazio.
+// Local de entrega costuma ser o mesmo da retirada: preenche se ainda estiver vazio.
 watch(() => f.portoRetiradaId, (novo) => {
   if (novo && !f.portoEntregaId) f.portoEntregaId = novo;
 });
@@ -113,7 +113,7 @@ async function salvar(confirmarDigito = false) {
     <form class="modal" @submit.prevent="salvar(false)">
       <h2>Novo container</h2>
       <div v-if="faltamCadastros" class="aviso">
-        Antes de cadastrar containers, cadastre pelo menos um <router-link to="/cadastros/grupos">Cliente / Fábrica</router-link> e um
+        Antes de cadastrar containers, cadastre pelo menos um <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link> e um
         <router-link to="/cadastros/armadores">Armador</router-link>.
       </div>
       <div v-if="erro" class="erro">{{ erro }}</div>
@@ -138,7 +138,7 @@ async function salvar(confirmarDigito = false) {
           </select>
         </div>
         <div class="campo">
-          <label>Cliente / Fábrica *</label>
+          <label>Ponto de Carregamento *</label>
           <select v-model="f.grupoId" required>
             <option value="" disabled>Selecione…</option>
             <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
@@ -166,7 +166,7 @@ async function salvar(confirmarDigito = false) {
       <h3 style="margin-bottom: 0">Trajeto</h3>
       <div class="grade-form">
         <div class="campo">
-          <label>Porto de retirada (vazio)</label>
+          <label>Local de retirada (vazio)</label>
           <select v-model="f.portoRetiradaId">
             <option value="">— não informado —</option>
             <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
@@ -180,14 +180,14 @@ async function salvar(confirmarDigito = false) {
           </select>
         </div>
         <div class="campo">
-          <label>Porto de entrega (cheio)</label>
+          <label>Local de entrega (cheio)</label>
           <select v-model="f.portoEntregaId">
             <option value="">— não informado —</option>
             <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
           </select>
         </div>
       </div>
-      <div v-if="!portos.length" class="dica pequeno mudo">Nenhum porto cadastrado — <router-link to="/locais">cadastrar em Locais</router-link>. O trajeto é opcional, mas sem ele não há previsão de risco.</div>
+      <div v-if="!portos.length" class="dica pequeno mudo">Nenhum local de retirada/entrega (porto, terminal…) cadastrado — <router-link to="/locais">cadastrar em Locais</router-link>. O trajeto é opcional, mas sem ele não há previsão de risco.</div>
       <div v-if="simulando" class="mudo pequeno">Calculando rota…</div>
       <div v-else-if="simulacao" class="card" style="background: var(--superficie-2); box-shadow: none">
         <PrevisaoCiclo :p="simulacao" :free-time-dias="armador?.freeTimeDias ?? null" compacto />
@@ -204,7 +204,7 @@ async function salvar(confirmarDigito = false) {
       </div>
       <div class="campo"><label>Observação</label><textarea v-model="f.observacao" rows="2" maxlength="1000"></textarea></div>
 
-      <label class="linha"><input v-model="f.jaColetado" type="checkbox" /> O container já foi coletado no porto (inicia a contagem de demurrage)</label>
+      <label class="linha"><input v-model="f.jaColetado" type="checkbox" /> O container já foi coletado (inicia a contagem de demurrage)</label>
       <div v-if="f.jaColetado" class="campo" style="max-width: 260px">
         <label>Data/hora da coleta</label>
         <input v-model="f.coletadoEm" type="datetime-local" required />

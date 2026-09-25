@@ -9,6 +9,7 @@ import { validarNumeroContainer } from "../lib/iso6346.js";
 import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { decimal, dataHora, inteiro } from "../lib/validacao.js";
 import { estadoDaEtiqueta } from "./etiquetas.js";
+import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 
 export const qrRouter = Router();
 
@@ -16,7 +17,7 @@ const TOKEN = /^[A-Za-z0-9_-]{22}$/;
 
 async function buscarEtiqueta(token) {
   if (!TOKEN.test(token)) throw erroHttp(404, "Etiqueta não reconhecida. Confira se o QR é do Controle de Container.");
-  const e = await prisma.etiquetaQR.findUnique({ where: { token }, include: { container: { include: { grupo: true } } } });
+  const e = await prisma.etiquetaQR.findUnique({ where: { token }, include: { container: { include: { grupo: true, ...SELECT_LOCAIS_ETAPAS } } } });
   if (!e) throw erroHttp(404, "Etiqueta não reconhecida. Confira se o QR é do Controle de Container.");
   return e;
 }
@@ -29,7 +30,7 @@ async function resumo(e, req) {
   return {
     etiqueta: { codigo: e.codigo, estado: estadoDaEtiqueta(e), vinculadaEm: e.vinculadaEm, vinculadaPor: e.vinculadaPor, motivoCancelamento: e.motivoCancelamento },
     container: c && {
-      id: c.id, numero: c.numero, tipo: c.tipo, reefer: ehReefer(c.tipo), status: c.status,
+      id: c.id, numero: c.numero, tipo: c.tipo, reefer: ehReefer(c.tipo), status: c.status, rotulosEtapa: rotulosDasEtapas(c),
       cliente: c.grupo.cliente, fabrica: c.grupo.fabrica,
       setpoint: c.setpoint === null ? null : Number(c.setpoint),
       tempMin: c.tempMin === null ? null : Number(c.tempMin),

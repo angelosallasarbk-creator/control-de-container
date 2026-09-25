@@ -179,7 +179,7 @@ tr.clicavel { cursor: pointer; }
 .aba:hover:not(:disabled) { background: var(--superficie); color: var(--texto); }
 .aba.ativa { color: var(--primaria); border-bottom-color: var(--primaria); background: var(--superficie); }
 .aba-contagem { font-weight: 400; color: var(--texto-2); font-size: 12px; }
-/* Segundo nível de abas (Cliente / Fábrica dentro da região) */
+/* Segundo nível de abas (Ponto de Carregamento dentro da região) */
 .abas.sub { border-bottom-width: 1px; margin-top: -8px; }
 .abas.sub .aba { font-weight: 500; padding: 7px 12px; font-size: 13px; border-bottom-width: 2px; margin-bottom: -1px; }
 .abas.sub .aba.ativa { background: none; }
