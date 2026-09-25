@@ -79,6 +79,11 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
     - **Planejado:** é o plano congelado, gravado na primeira previsão completa do ciclo. Isso acontece no cadastro, ou quando o trajeto for completado depois, desde que o container ainda não tenha chegado ao carregamento. O plano parte da coleta programada, se houver, e **nunca muda**.
     - **ETA:** é a previsão atualizada com o que já aconteceu, a mesma da aba Trajeto. Aparece em vermelho, com "+Xh", quando passa do planejado.
     - **Realizado:** é o que foi registrado por um usuário ou de forma automática. Fica verde com ✓ quando está no prazo e vermelho com ⏱ quando atrasou ou está pendente depois do planejado. A tolerância é ajustável em *Configurações → Geral* ("Tolerância do no prazo nas etapas", padrão 60 min).
+- **Filtros da tela de Containers (cabeçalho, ao lado de Grid / Tabela):** Região e Ponto de Carregamento, em listas suspensas com caixas de seleção.
+  - Permitem marcar vários itens, e têm "Selecionar todos", "Limpar" e busca de ponto de carregamento.
+  - Valem para os dois modelos (Grid e Tabela) e ficam lembrados.
+  - Ao marcar regiões, a lista de pontos de carregamento mostra só os daquelas regiões.
+  - No Grid, se o container aberto sair do filtro, abre o primeiro da lista filtrada.
 - **Menu:** as seções Cadastros e Administração recolhem e expandem. O estado fica lembrado, e a seção da tela aberta fica sempre visível.
 - **Previsão de container "Programado":** a simulação parte da **coleta programada**. Se ela não existir ou já tiver passado, parte de agora.
 - **Alertas**: abertos e histórico. Faixa vermelha no topo + sino + bipe quando surge alerta crítico não reconhecido (consulta a cada 30 s).

@@ -25,6 +25,11 @@ const telaLarga = window.matchMedia("(min-width: 1101px)");
 function aoCarregarLista(lista) {
   if (!props.id && telaLarga.matches && lista.length) router.replace(`/containers/${lista[0].id}`);
 }
+// Filtro de Região / Ponto de Carregamento mudou e o container aberto saiu da lista: abre o primeiro.
+function aoFiltrarLista(lista) {
+  if (!telaLarga.matches || !lista.length || lista.some((x) => String(x.id) === String(props.id))) return;
+  router.replace(`/containers/${lista[0].id}`);
+}
 const novoAberto = ref(false);
 function criado(x) {
   novoAberto.value = false;
@@ -323,7 +328,7 @@ function reconhecido() {
 
 <template>
   <div class="mestre-detalhe">
-    <ListaContainersLateral ref="refLista" :selecionado="id" :class="{ 'so-largo': id }" @carregada="aoCarregarLista" @novo="novoAberto = true" />
+    <ListaContainersLateral ref="refLista" :selecionado="id" :class="{ 'so-largo': id }" @carregada="aoCarregarLista" @filtrada="aoFiltrarLista" @novo="novoAberto = true" />
 
     <section v-if="!id" class="detalhe so-largo">
       <div class="card vazio">Selecione um container na lista.</div>

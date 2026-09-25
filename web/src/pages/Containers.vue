@@ -7,15 +7,15 @@ import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, rotuloEtapa, fmtHoras, fmtTemp, fmtM
 import NovoContainer from "../components/NovoContainer.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
+import { passaFiltroContainers } from "../filtroContainers.js";
 
 const auth = useAuthStore();
 const router = useRouter();
 const lista = ref([]);
-const grupos = ref([]);
 const carregando = ref(false);
 const erro = ref(null);
 const novoAberto = ref(false);
-const filtro = reactive({ situacao: "ativos", grupoId: "", status: "", busca: "" });
+const filtro = reactive({ situacao: "ativos", status: "", busca: "" });
 
 async function carregar() {
   carregando.value = true;
@@ -29,10 +29,7 @@ async function carregar() {
   }
 }
 
-onMounted(async () => {
-  grupos.value = await api.listar("grupos").catch(() => []);
-  carregar();
-});
+onMounted(carregar);
 
 let atraso = null;
 function buscarComAtraso() {
@@ -64,7 +61,8 @@ const ordem = useOrdenacao({
   deadline: (c) => (c.deadline ? new Date(c.deadline) : null),
   previsao: (c) => (c.situacao.previsao?.disponivel ? c.situacao.previsao.folgaHoras : null),
 });
-const linhas = computed(() => ordem.ordenar(lista.value));
+// Região / Ponto de Carregamento: filtros do cabeçalho (múltipla escolha, valem também no Grid).
+const linhas = computed(() => ordem.ordenar(lista.value.filter(passaFiltroContainers)));
 
 function textoDemurrage(d) {
   if (!d) return "—";
@@ -87,13 +85,6 @@ function textoDemurrage(d) {
             <option value="ativos">Ativos</option>
             <option value="encerrados">Encerrados (entregues/cancelados)</option>
             <option value="todos">Todos</option>
-          </select>
-        </div>
-        <div class="campo">
-          <label>Ponto de Carregamento</label>
-          <select v-model="filtro.grupoId" @change="carregar">
-            <option value="">Todos</option>
-            <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
           </select>
         </div>
         <div class="campo">

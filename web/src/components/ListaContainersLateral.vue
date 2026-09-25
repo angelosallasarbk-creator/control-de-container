@@ -6,10 +6,11 @@ import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth.js";
 import { api } from "../api.js";
 import { FLUXO, ROTULO_STATUS, ROTULO_TIPO, rotuloEtapa } from "../formato.js";
+import { filtroContainers, passaFiltroContainers } from "../filtroContainers.js";
 import Icone from "./Icone.vue";
 
 const props = defineProps({ selecionado: { type: [Number, String], default: null } });
-const emit = defineEmits(["carregada", "novo"]);
+const emit = defineEmits(["carregada", "filtrada", "novo"]);
 const router = useRouter();
 const auth = useAuthStore();
 const refItens = ref(null);
@@ -41,7 +42,7 @@ async function carregar() {
   try {
     lista.value = await api.containers(parametros(filtro.value));
     erro.value = null;
-    emit("carregada", lista.value);
+    emit("carregada", visiveis.value);
     rolarAteSelecionado();
   } catch (e) {
     erro.value = e.message;
@@ -68,11 +69,16 @@ async function rolarAteSelecionado() {
 watch(() => props.selecionado, rolarAteSelecionado);
 
 const rota = (c) => [c.portoRetirada?.nome, c.localCarregamento?.nome, c.portoEntrega?.nome].filter(Boolean).join(" → ");
+// Filtros do cabeçalho (Região / Ponto de Carregamento) + busca da própria lista.
 const visiveis = computed(() => {
   const t = busca.value.trim().toLowerCase();
-  if (!t) return lista.value;
-  return lista.value.filter((c) => `${c.numero} ${c.navio ?? ""} ${c.booking ?? ""} ${rota(c)}`.toLowerCase().includes(t));
+  return lista.value.filter(
+    (c) => passaFiltroContainers(c) && (!t || `${c.numero} ${c.navio ?? ""} ${c.booking ?? ""} ${rota(c)}`.toLowerCase().includes(t))
+  );
 });
+// Mudou o filtro do cabeçalho: a ficha decide se troca o container aberto.
+watch(() => [filtroContainers.regioes, filtroContainers.grupos], () => emit("filtrada", visiveis.value), { deep: true });
+const filtrando = computed(() => filtroContainers.regioes.length || filtroContainers.grupos.length);
 const abrir = (c) => router.push(`/containers/${c.id}`);
 </script>
 
@@ -113,7 +119,9 @@ const abrir = (c) => router.push(`/containers/${c.id}`);
         <span class="mudo">{{ ROTULO_TIPO[c.tipo] }}</span>
         <span v-if="rota(c)" class="rota">{{ rota(c) }}</span>
       </button>
-      <div v-if="!carregando && !visiveis.length" class="vazio pequeno">Nenhum container encontrado.</div>
+      <div v-if="!carregando && !visiveis.length" class="vazio pequeno">
+        Nenhum container encontrado{{ filtrando ? " com os filtros de Região / Ponto de Carregamento" : "" }}.
+      </div>
     </div>
   </aside>
 </template>

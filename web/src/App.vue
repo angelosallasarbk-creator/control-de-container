@@ -7,6 +7,7 @@ import { ROTULO_ALERTA, ROTULO_PERFIL } from "./formato.js";
 import Login from "./pages/Login.vue";
 import Icone from "./components/Icone.vue";
 import { visaoContainers, definirVisaoContainers } from "./visaoContainers.js";
+import FiltrosContainers from "./components/FiltrosContainers.vue";
 
 const auth = useAuthStore();
 const route = useRoute();
@@ -326,6 +327,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
               <Icone nome="tabela" :tamanho="16" /> Tabela
             </button>
           </div>
+          <FiltrosContainers v-if="['containers', 'ficha'].includes(route.name)" />
         </div>
         <router-link v-if="!ehPortaria" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
           <span class="btn pequeno" aria-hidden="true">🔔</span>
