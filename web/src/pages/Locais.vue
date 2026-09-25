@@ -140,7 +140,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
         As coordenadas são usadas para calcular a distância de cada trajeto e prever o risco de demurrage.
       </div>
     </div>
-    <button v-if="auth.pode('cadastros')" class="primario" @click="abrir(null)">+ Novo local</button>
+    <button v-if="auth.pode('cadastros.editar')" class="primario" @click="abrir(null)">+ Novo local</button>
   </div>
   <div v-if="erro && !editando" class="erro">{{ erro }}</div>
   <div v-if="aviso" class="sucesso">{{ aviso }}</div>
@@ -162,7 +162,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
     <div class="tabela-wrap">
       <table>
         <thead>
-          <tr><th>Local</th><th>Tipo</th><th>Cidade / UF</th><th>Coordenadas</th><th>Fila/gate</th><th>Em uso</th><th>Situação</th><th v-if="auth.pode('cadastros')"></th></tr>
+          <tr><th>Local</th><th>Tipo</th><th>Cidade / UF</th><th>Coordenadas</th><th>Fila/gate</th><th>Em uso</th><th>Situação</th><th v-if="auth.pode('cadastros.editar')"></th></tr>
         </thead>
         <tbody>
           <tr v-for="l in visiveis" :key="l.id" :style="{ opacity: l.ativo ? 1 : 0.55 }">
@@ -179,7 +179,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
             </td>
             <td>{{ l.emUso }}</td>
             <td><span class="chip" :class="l.ativo ? 'verde' : ''">{{ l.ativo ? "Ativo" : "Inativo" }}</span></td>
-            <td v-if="auth.pode('cadastros')" style="text-align: right; white-space: nowrap">
+            <td v-if="auth.pode('cadastros.editar')" style="text-align: right; white-space: nowrap">
               <button class="pequeno" @click="abrir(l)">Editar</button>
               <button class="pequeno" @click="alternarAtivo(l)">{{ l.ativo ? "Desativar" : "Ativar" }}</button>
               <button v-if="!l.emUso" class="pequeno perigo" @click="excluir(l)">Excluir</button>

@@ -166,10 +166,10 @@ function reconhecido() {
           <div class="mudo" style="margin-top: 4px">{{ c.grupo.cliente }} / {{ c.grupo.fabrica }} · {{ c.armador.nome }}<template v-if="c.produto"> · {{ c.produto.nome }}</template></div>
         </div>
         <div class="linha">
-          <button v-if="auth.pode('operar') && proximo" class="primario" @click="abrirAvancar">{{ ACAO_ETAPA[proximo] }}</button>
-          <button v-if="auth.pode('operar')" @click="abrirEditar">Editar</button>
-          <button v-if="auth.pode('cadastros') && c.eventos.length > 1 && c.status !== 'CANCELADO'" @click="desfazer">Desfazer etapa</button>
-          <button v-if="auth.pode('cadastros') && !encerrado" class="perigo" @click="motivoCancelamento = ''; modal = 'cancelar'">Cancelar</button>
+          <button v-if="auth.pode('containers.operar') && proximo" class="primario" @click="abrirAvancar">{{ ACAO_ETAPA[proximo] }}</button>
+          <button v-if="auth.pode('containers.operar')" @click="abrirEditar">Editar</button>
+          <button v-if="auth.pode('containers.corrigir') && c.eventos.length > 1 && c.status !== 'CANCELADO'" @click="desfazer">Desfazer etapa</button>
+          <button v-if="auth.pode('containers.corrigir') && !encerrado" class="perigo" @click="motivoCancelamento = ''; modal = 'cancelar'">Cancelar</button>
         </div>
       </div>
       <div v-if="mensagem" class="sucesso" style="margin-top: 12px">{{ mensagem }}</div>
@@ -249,7 +249,7 @@ function reconhecido() {
       </div>
       <PrevisaoCiclo v-if="s.previsao" :p="s.previsao" :free-time-dias="c.freeTimeDias" />
       <div v-else-if="encerrado" class="mudo pequeno">Ciclo encerrado.</div>
-      <div v-if="auth.pode('operar') && !encerrado && s.previsao && !s.previsao.disponivel" style="margin-top: 8px">
+      <div v-if="auth.pode('containers.operar') && !encerrado && s.previsao && !s.previsao.disponivel" style="margin-top: 8px">
         <button class="pequeno" @click="abrirEditar">Informar trajeto</button>
       </div>
     </div>
@@ -265,7 +265,7 @@ function reconhecido() {
             <td>{{ a.mensagem }}<div class="mudo pequeno">aberto há {{ tempoDesde(a.abertoEm) }}</div></td>
             <td>
               <span v-if="a.reconhecidoEm" class="pequeno mudo">✔ {{ a.reconhecidoPor }}: {{ a.acaoTomada }}</span>
-              <button v-else-if="auth.pode('operar')" class="pequeno" @click="modal = { alerta: a }">Reconhecer</button>
+              <button v-else-if="auth.pode('containers.operar')" class="pequeno" @click="modal = { alerta: a }">Reconhecer</button>
             </td>
           </tr>
         </tbody>
@@ -285,7 +285,7 @@ function reconhecido() {
         </div>
         <div v-if="s.temperatura?.semLeitura" class="aviso" style="margin-bottom: 10px">Leitura atrasada: sem registro há {{ fmtHoras(s.temperatura.minutosSemLeitura / 60) }}.</div>
 
-        <form v-if="auth.pode('operar') && !encerrado" class="filtros" style="margin-bottom: 12px" @submit.prevent="registrarLeitura">
+        <form v-if="auth.pode('containers.operar') && !encerrado" class="filtros" style="margin-bottom: 12px" @submit.prevent="registrarLeitura">
           <div class="campo" style="min-width: 110px; max-width: 130px">
             <label>Temperatura (°C)</label>
             <input v-model="leitura.temperatura" inputmode="decimal" placeholder="-18,0" required />
@@ -447,7 +447,7 @@ function reconhecido() {
           <div class="campo"><label>Posição no pátio</label><input v-model="ed.posicaoPatio" maxlength="40" /></div>
         </div>
         <div class="campo"><label>Observação</label><textarea v-model="ed.observacao" rows="2" maxlength="1000"></textarea></div>
-        <template v-if="auth.pode('cadastros')">
+        <template v-if="auth.pode('containers.prazos')">
           <h3>Prazos deste container</h3>
           <div class="dica mudo pequeno">Copiados do cadastro na criação. Altere só se houve negociação específica (ex.: free time estendido pelo armador).</div>
           <div class="grade-form">

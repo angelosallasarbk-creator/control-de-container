@@ -1,19 +1,13 @@
 import { defineStore } from "pinia";
 import { api } from "../api.js";
 
-// Mesmas regras do backend (src/lib/auth.js → PERMISSOES). A tela só esconde botões;
-// quem garante a permissão é a API.
-const PODE = {
-  cadastros: ["ADMIN", "SUPERVISOR"],
-  operar: ["ADMIN", "SUPERVISOR", "OPERADOR"],
-  administrar: ["ADMIN"],
-};
-
 // usuario: undefined = carregando, null = deslogado, objeto = logado.
+// usuario.permissoes vem do servidor (padrão do perfil ou personalizado pelo administrador).
+// A tela só esconde botões; quem garante a permissão é a API.
 export const useAuthStore = defineStore("auth", {
   state: () => ({ usuario: undefined }),
   getters: {
-    pode: (state) => (acao) => Boolean(state.usuario && PODE[acao]?.includes(state.usuario.perfil)),
+    pode: (state) => (chave) => Boolean(state.usuario?.permissoes?.includes(chave)),
   },
   actions: {
     async carregar() {
@@ -21,6 +15,15 @@ export const useAuthStore = defineStore("auth", {
         this.usuario = await api.me();
       } catch {
         this.usuario = null;
+      }
+    },
+    // Atualização silenciosa (a cada ~30s): permissão liberada/retirada pelo admin aparece sem
+    // relogar; conta desativada volta para o login.
+    async atualizar() {
+      try {
+        this.usuario = await api.me();
+      } catch (e) {
+        if (e.status === 401) this.usuario = null;
       }
     },
     async login(email, senha) {

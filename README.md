@@ -74,14 +74,27 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 - **Cadastros**: Regiões, Cliente/Fábrica, Armadores, Produtos. Cadastro já usado não pode ser excluído, só desativado.
 - **Usuários**, **Integração** (tokens), **Configurações e log** de auditoria.
 
-### Perfis
+### Perfis e permissões por usuário
 
-| Perfil | Pode |
-|---|---|
-| Administrador | tudo, inclusive usuários, tokens e configurações |
-| Supervisor | cadastros, prazos por container, desfazer/cancelar, ver log |
-| Operador | cadastrar containers, avançar etapas, registrar temperatura, reconhecer alertas |
-| Visualização | só consulta |
+Cada perfil tem um **conjunto padrão** de permissões. Em *Configurações → Perfis e permissões*, o administrador pode **personalizar usuário a usuário**, marcando ou desmarcando cada permissão. Um usuário personalizado aparece como "personalizado", e o botão "Padrão do perfil" desfaz a personalização.
+
+| Permissão | Libera | Padrão |
+|---|---|---|
+| Operar containers | cadastrar, avançar etapas, editar dados, temperatura na ficha, reconhecer alertas | Supervisor, Operador |
+| Alterar prazos do container | meta, custo/h, free time e faixa de temperatura de um container | Supervisor |
+| Desfazer e cancelar etapas | desfazer a última etapa, cancelar container | Supervisor |
+| Editar cadastros | regiões, cliente/fábrica, armadores, produtos, locais | Supervisor |
+| Gerar e imprimir etiquetas | gerar lotes e imprimir (navegador/ZPL) **as próprias** etiquetas | Supervisor |
+| Cancelar etiquetas | inutilizar as próprias etiquetas | Supervisor |
+| Registrar leituras pelo celular | ligar etiqueta e registrar temperatura pelo QR/código | Supervisor, Operador |
+| Ver log de auditoria | consultar o histórico de alterações | Supervisor |
+
+- **Administrador:** acesso total, não configurável. Usuários, permissões, integração e as regras de Configurações são **exclusivos do administrador** e não podem ser liberados, para ninguém se trancar fora nem se autopromover.
+- **Visualização:** por padrão, só consulta.
+- **Troca de perfil:** trocar o perfil de um usuário descarta a personalização dele e aplica o padrão do novo perfil.
+- **Mudanças valem na hora:** a cada requisição o servidor relê o usuário no banco. Permissão liberada ou retirada vale imediatamente na API, e a tela se atualiza em até 30 s, sem sair e entrar. **Conta desativada é bloqueada na hora**; antes, a sessão de 12 h continuava válida. Toda mudança fica no log, com "liberou" e "retirou".
+
+**Configurações** é organizada em abas: Geral · Custos · Previsão de rota · Etiquetas QR · Perfis e permissões (só administrador) · Log de auditoria (quem tem a permissão). Quem não é administrador vê as regras apenas para leitura.
 
 ## Porta automática de temperatura
 

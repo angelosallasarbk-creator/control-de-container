@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { texto, id as validarId, umDe } from "../lib/validacao.js";
 
@@ -41,7 +41,7 @@ alertasRouter.get("/resumo", asyncHandler(async (_req, res) => {
   });
 }));
 
-alertasRouter.post("/:id/reconhecer", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+alertasRouter.post("/:id/reconhecer", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const alertaId = validarId(req.params.id);
   const acaoTomada = texto(req.body?.acaoTomada, "Ação tomada", { obrigatorio: true, max: 1000 });
   const alerta = await prisma.alerta.findUnique({ where: { id: alertaId }, include: INCLUDE_CONTAINER });

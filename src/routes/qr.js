@@ -2,7 +2,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao, tem } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { registrarLeitura, sincronizarAlertas } from "../lib/leituras.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
@@ -21,7 +21,7 @@ async function buscarEtiqueta(token) {
   return e;
 }
 
-async function resumo(e, usuario) {
+async function resumo(e, req) {
   const c = e.container;
   const ultimas = c
     ? await prisma.leituraTemperatura.findMany({ where: { containerId: c.id }, orderBy: { lidaEm: "desc" }, take: 3, select: { temperatura: true, lidaEm: true, fonte: true, origem: true } })
@@ -37,7 +37,7 @@ async function resumo(e, usuario) {
       coletadoEm: c.coletadoEm, entreguePortoEm: c.entreguePortoEm, canceladoEm: c.canceladoEm,
       ultimasLeituras: ultimas.map((l) => ({ ...l, temperatura: Number(l.temperatura) })),
     },
-    podeRegistrar: PERMISSOES.operar.includes(usuario.perfil),
+    podeRegistrar: tem(req, "qr.registrar"),
   };
 }
 
@@ -71,11 +71,11 @@ qrRouter.get("/codigo/:codigo", asyncHandler(async (req, res) => {
 }));
 
 qrRouter.get("/:token", asyncHandler(async (req, res) => {
-  res.json(await resumo(await buscarEtiqueta(req.params.token), req.usuario));
+  res.json(await resumo(await buscarEtiqueta(req.params.token), req));
 }));
 
 // 1ª leitura: liga a etiqueta a um container ativo (e já registra a temperatura, se reefer).
-qrRouter.post("/:token/vincular", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+qrRouter.post("/:token/vincular", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
   const b = req.body ?? {};
   const e = await buscarEtiqueta(req.params.token);
   if (e.status === "CANCELADA") throw erroHttp(409, `A etiqueta ${e.codigo} está cancelada e não pode ser usada.`);
@@ -128,11 +128,11 @@ qrRouter.post("/:token/vincular", requireRole(...PERMISSOES.operar), asyncHandle
     }
   });
   if (reefer) await sincronizarAlertas(container.id);
-  res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req.usuario)), resultado: reefer ? avaliar(container, temperatura) : null });
+  res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: reefer ? avaliar(container, temperatura) : null });
 }));
 
 // Leituras seguintes: etiqueta já ligada — só temperatura e data/hora.
-qrRouter.post("/:token/leituras", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+qrRouter.post("/:token/leituras", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
   const b = req.body ?? {};
   const e = await buscarEtiqueta(req.params.token);
   const estado = estadoDaEtiqueta(e);
@@ -146,5 +146,5 @@ qrRouter.post("/:token/leituras", requireRole(...PERMISSOES.operar), asyncHandle
     extras: { etiquetaId: e.id, ...lerLocalizacao(b) },
   });
   await sincronizarAlertas(e.container.id);
-  res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req.usuario)), resultado: avaliar(e.container, temperatura) });
+  res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: avaliar(e.container, temperatura) });
 }));

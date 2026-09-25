@@ -107,7 +107,7 @@ const linhas = computed(() => ordem.ordenar(lista.value));
           </td>
           <td class="pequeno">
             <template v-if="a.reconhecidoEm">✔ {{ a.reconhecidoPor }}<div class="mudo">{{ a.acaoTomada }}</div></template>
-            <button v-else-if="!a.encerradoEm && auth.pode('operar')" class="pequeno" @click="selecionado = a">Reconhecer</button>
+            <button v-else-if="!a.encerradoEm && auth.pode('containers.operar')" class="pequeno" @click="selecionado = a">Reconhecer</button>
             <span v-else class="mudo">—</span>
           </td>
         </tr>

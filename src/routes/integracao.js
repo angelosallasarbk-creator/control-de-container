@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import rateLimit from "express-rate-limit";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
 import { normalizarNumero } from "../lib/iso6346.js";
@@ -103,7 +103,7 @@ integracaoPublicaRouter.post("/temperaturas", autenticarToken, asyncHandler(asyn
 // ---------- Gestão dos tokens (ADMIN, com login) ----------
 
 export const tokensRouter = Router();
-tokensRouter.use(requireRole(...PERMISSOES.administrar));
+tokensRouter.use(requirePermissao("administrar"));
 
 tokensRouter.get("/", asyncHandler(async (_req, res) => {
   const tokens = await prisma.tokenIntegracao.findMany({

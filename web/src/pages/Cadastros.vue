@@ -195,7 +195,7 @@ async function excluir(r) {
           {{ cfg.ajuda }}<template v-if="!cfg.rotuloUso"> Ao editar, você escolhe se os valores novos valem também para os containers em andamento; entregues e cancelados mantêm os valores da época.</template>
         </div>
       </div>
-      <button v-if="auth.pode('cadastros')" class="primario" @click="abrir(null)">+ Novo</button>
+      <button v-if="auth.pode('cadastros.editar')" class="primario" @click="abrir(null)">+ Novo</button>
     </div>
     <div v-if="erro && !editando" class="erro">{{ erro }}</div>
     <div v-if="aviso" class="sucesso">{{ aviso }}</div>
@@ -207,7 +207,7 @@ async function excluir(r) {
             <th v-for="col in cfg.colunas" :key="col.rotulo">{{ col.rotulo }}</th>
             <th>{{ cfg.rotuloUso ?? "Containers" }}</th>
             <th>Situação</th>
-            <th v-if="auth.pode('cadastros')"></th>
+            <th v-if="auth.pode('cadastros.editar')"></th>
           </tr>
         </thead>
         <tbody>
@@ -215,7 +215,7 @@ async function excluir(r) {
             <td v-for="col in cfg.colunas" :key="col.rotulo">{{ col.valor(r) }}</td>
             <td>{{ r.emUso }}</td>
             <td><span class="chip" :class="r.ativo ? 'verde' : ''">{{ r.ativo ? "Ativo" : "Inativo" }}</span></td>
-            <td v-if="auth.pode('cadastros')" style="text-align: right; white-space: nowrap">
+            <td v-if="auth.pode('cadastros.editar')" style="text-align: right; white-space: nowrap">
               <button class="pequeno" @click="abrir(r)">Editar</button>
               <button class="pequeno" @click="alternarAtivo(r)">{{ r.ativo ? "Desativar" : "Ativar" }}</button>
               <button v-if="!r.emUso" class="pequeno perigo" @click="excluir(r)">Excluir</button>

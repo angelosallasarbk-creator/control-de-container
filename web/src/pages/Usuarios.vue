@@ -10,10 +10,10 @@ const form = reactive({ email: "", nome: "", perfil: "OPERADOR", senha: "" });
 const enviando = ref(false);
 
 const DESCRICAO_PERFIL = {
-  ADMIN: "Tudo, inclusive usuários, integração e configurações.",
-  SUPERVISOR: "Cadastros, containers, prazos negociados, desfazer/cancelar etapas.",
-  OPERADOR: "Cadastrar containers, avançar etapas, registrar temperatura, reconhecer alertas.",
-  VISUALIZACAO: "Somente consulta.",
+  ADMIN: "Tudo, inclusive usuários, permissões, integração e configurações.",
+  SUPERVISOR: "Padrão: tudo, exceto administração (cadastros, containers, prazos, desfazer/cancelar, etiquetas QR, log).",
+  OPERADOR: "Padrão: operar containers (cadastrar, avançar, temperatura, alertas) e registrar leituras pelo celular.",
+  VISUALIZACAO: "Padrão: somente consulta.",
 };
 
 async function carregar() {
@@ -74,7 +74,10 @@ async function alternarAtivo(u) {
         <tr v-for="u in lista" :key="u.id" :style="{ opacity: u.ativo ? 1 : 0.55 }">
           <td>{{ u.nome }}</td>
           <td>{{ u.email }}</td>
-          <td>{{ ROTULO_PERFIL[u.perfil] }}</td>
+          <td>
+            {{ ROTULO_PERFIL[u.perfil] }}
+            <router-link v-if="u.personalizado" to="/configuracoes?aba=permissoes" class="chip amarelo" style="margin-left: 6px" title="Permissões diferentes do padrão do perfil">personalizado</router-link>
+          </td>
           <td>{{ fmtDataHora(u.criadoEm) }}</td>
           <td><span class="chip" :class="u.ativo ? 'verde' : ''">{{ u.ativo ? "Ativo" : "Inativo" }}</span></td>
           <td style="text-align: right; white-space: nowrap">
@@ -97,7 +100,10 @@ async function alternarAtivo(u) {
         <select v-model="form.perfil">
           <option v-for="(r, v) in ROTULO_PERFIL" :key="v" :value="v">{{ r }}</option>
         </select>
-        <span class="dica">{{ DESCRICAO_PERFIL[form.perfil] }}</span>
+        <span class="dica">{{ DESCRICAO_PERFIL[form.perfil] }} Ajuste fino por usuário em Configurações → Perfis e permissões.</span>
+        <span v-if="editando.id && editando.personalizado && form.perfil !== editando.perfil" class="dica txt-ATENCAO">
+          Este usuário tem permissões personalizadas; ao trocar o perfil, elas são descartadas e vale o padrão do novo perfil.
+        </span>
       </div>
       <div class="campo">
         <label>{{ editando.id ? "Nova senha (deixe em branco para manter)" : "Senha *" }}</label>

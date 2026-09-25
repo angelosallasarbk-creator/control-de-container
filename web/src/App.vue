@@ -149,13 +149,18 @@ async function atualizarAlertas() {
   }
 }
 
+// Observa só login/logout (o e-mail): a atualização periódica troca o objeto do usuário e,
+// se o watch olhasse o objeto inteiro, reiniciaria o ciclo a cada atualização.
 watch(
-  () => auth.usuario,
-  (u) => {
+  () => auth.usuario?.email,
+  (email) => {
     clearInterval(timer);
-    if (u) {
+    if (email) {
       atualizarAlertas();
-      timer = setInterval(atualizarAlertas, INTERVALO_ALERTAS_MS);
+      timer = setInterval(() => {
+        atualizarAlertas();
+        auth.atualizar(); // permissões alteradas pelo admin aparecem sem relogar
+      }, INTERVALO_ALERTAS_MS);
     }
   }
 );
@@ -208,7 +213,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         <router-link to="/cadastros/grupos">Cliente / Fábrica</router-link>
         <router-link to="/cadastros/armadores">Armadores</router-link>
         <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
-        <template v-if="auth.pode('cadastros')">
+        <template v-if="auth.pode('administrar') || auth.pode('auditoria.ver')">
           <div class="lateral-secao">Administração</div>
           <router-link v-if="auth.pode('administrar')" to="/usuarios">Usuários</router-link>
           <router-link v-if="auth.pode('administrar')" to="/integracao">Integração</router-link>

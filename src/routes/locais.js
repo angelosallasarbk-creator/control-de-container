@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
@@ -57,7 +57,7 @@ locaisRouter.get("/", asyncHandler(async (req, res) => {
 }));
 
 // Busca de endereço (ORS). Não grava nada: a tela usa o resultado para preencher o formulário.
-locaisRouter.get("/geocodificar", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+locaisRouter.get("/geocodificar", requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
   const q = texto(req.query.q, "Texto da busca", { obrigatorio: true, max: 200 });
   try {
     res.json(await geocodificar(q));
@@ -68,7 +68,7 @@ locaisRouter.get("/geocodificar", requireRole(...PERMISSOES.cadastros), asyncHan
   }
 }));
 
-locaisRouter.post("/", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+locaisRouter.post("/", requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
   const dados = validar(req.body ?? {}, false);
   validarCoordenadas(dados);
   const criado = await prisma.local.create({ data: dados, include: { _count: { select: USO } } }).catch((err) => {
@@ -79,7 +79,7 @@ locaisRouter.post("/", requireRole(...PERMISSOES.cadastros), asyncHandler(async 
   res.status(201).json(serializar(criado));
 }));
 
-locaisRouter.patch("/:id", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+locaisRouter.patch("/:id", requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
   const localId = validarId(req.params.id);
   const antes = await prisma.local.findUnique({ where: { id: localId }, include: { _count: { select: USO } } });
   if (!antes) throw erroHttp(404, "Local não encontrado.");
@@ -121,7 +121,7 @@ locaisRouter.patch("/:id", requireRole(...PERMISSOES.cadastros), asyncHandler(as
   res.json(serializar(depois));
 }));
 
-locaisRouter.delete("/:id", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+locaisRouter.delete("/:id", requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
   const localId = validarId(req.params.id);
   const antes = await prisma.local.findUnique({ where: { id: localId }, include: { _count: { select: USO } } });
   if (!antes) throw erroHttp(404, "Local não encontrado.");

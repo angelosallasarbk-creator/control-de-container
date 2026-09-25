@@ -76,6 +76,8 @@ model Usuario {
   nome      String
   senhaHash String
   perfil    Perfil   @default(VISUALIZACAO)
+  // Permissões personalizadas (lista de chaves de src/lib/permissoes.js). null = padrão do perfil.
+  permissoes Json?
   ativo     Boolean  @default(true)
   criadoEm  DateTime @default(now())
 }

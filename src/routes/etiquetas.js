@@ -2,7 +2,7 @@ import { Router } from "express";
 import os from "node:os";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { gerarCodigo, gerarToken, urlDaEtiqueta, zplDoLote, MODELOS_ETIQUETA, DPI_SUPORTADOS } from "../lib/etiquetas.js";
@@ -88,7 +88,7 @@ async function marcarImpressas(req, ids, meio) {
 export const etiquetasRouter = Router();
 
 // A folha de impressão do navegador chama isto quando a janela de impressão fecha (afterprint).
-etiquetasRouter.post("/impressas", asyncHandler(async (req, res) => {
+etiquetasRouter.post("/impressas", requirePermissao("etiquetas.emitir"), asyncHandler(async (req, res) => {
   const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).slice(0, MAX_POR_LOTE).map((i) => validarId(i, "Etiqueta"));
   if (!ids.length) throw erroHttp(400, "Nenhuma etiqueta informada.");
   const etiquetas = (await etiquetasDoUsuario(req, ids)).filter((e) => e.status !== "CANCELADA");
@@ -142,7 +142,7 @@ etiquetasRouter.get("/impressao", asyncHandler(async (_req, res) => {
   });
 }));
 
-etiquetasRouter.post("/lotes", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+etiquetasRouter.post("/lotes", requirePermissao("etiquetas.emitir"), asyncHandler(async (req, res) => {
   const quantidade = inteiro(req.body?.quantidade, "Quantidade", { obrigatorio: true, min: 1, max: MAX_POR_LOTE });
   const lote = await prisma.$transaction(async (tx) => {
     const l = await tx.loteEtiquetas.create({ data: { quantidade, criadoPor: req.usuario.email } });
@@ -164,7 +164,7 @@ etiquetasRouter.post("/lotes", requireRole(...PERMISSOES.cadastros), asyncHandle
   res.status(201).json({ lote, etiquetas: etiquetas.map(serializar) });
 }));
 
-etiquetasRouter.post("/:id/cancelar", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+etiquetasRouter.post("/:id/cancelar", requirePermissao("etiquetas.cancelar"), asyncHandler(async (req, res) => {
   const etiquetaId = validarId(req.params.id, "Etiqueta");
   const motivo = texto(req.body?.motivo, "Motivo", { obrigatorio: true, max: 300 });
   const e = await prisma.etiquetaQR.findUnique({ where: { id: etiquetaId }, include: INCLUDE });
@@ -184,7 +184,7 @@ etiquetasRouter.post("/:id/cancelar", requireRole(...PERMISSOES.cadastros), asyn
 }));
 
 // Arquivo ZPL (linguagem da Zebra) para imprimir direto na impressora de etiquetas.
-etiquetasRouter.post("/zpl", asyncHandler(async (req, res) => {
+etiquetasRouter.post("/zpl", requirePermissao("etiquetas.emitir"), asyncHandler(async (req, res) => {
   const b = req.body ?? {};
   const ids = (Array.isArray(b.ids) ? b.ids : []).slice(0, MAX_POR_LOTE).map((i) => validarId(i, "Etiqueta"));
   if (!ids.length) throw erroHttp(400, "Selecione ao menos uma etiqueta.");

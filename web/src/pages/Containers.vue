@@ -104,7 +104,7 @@ function textoDemurrage(d) {
           </select>
         </div>
       </div>
-      <button v-if="auth.pode('operar')" class="primario" @click="novoAberto = true">+ Novo container</button>
+      <button v-if="auth.pode('containers.operar')" class="primario" @click="novoAberto = true">+ Novo container</button>
     </div>
   </div>
 

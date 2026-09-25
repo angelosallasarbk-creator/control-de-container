@@ -81,6 +81,9 @@ export const api = {
   excluir: (recurso, id) => request(`/${recurso}/${id}`, { method: "DELETE" }),
 
   usuarios: () => request("/usuarios"),
+  catalogoPermissoes: () => request("/usuarios/permissoes/catalogo"),
+  // permissoes: lista de chaves, ou null para voltar ao padrão do perfil.
+  salvarPermissoes: (id, permissoes) => request(`/usuarios/${id}/permissoes`, { method: "PUT", body: { permissoes } }),
   criarUsuario: (dados) => request("/usuarios", { method: "POST", body: dados }),
   atualizarUsuario: (id, dados) => request(`/usuarios/${id}`, { method: "PATCH", body: dados }),
 

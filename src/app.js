@@ -3,6 +3,7 @@ import express from "express";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { requireAuth } from "./lib/auth.js";
+import { carregarUsuarioAtual } from "./lib/permissoes.js";
 import { authRouter } from "./routes/auth.js";
 import { cadastrosRouter } from "./routes/cadastros.js";
 import { containersRouter } from "./routes/containers.js";
@@ -32,8 +33,9 @@ export function criarApp() {
   // Porta automática de temperatura: autenticada por token próprio, não pelo login.
   app.use("/api/integracao", integracaoPublicaRouter);
 
-  // Tudo em /api daqui para baixo exige sessão válida.
-  app.use("/api", requireAuth);
+  // Tudo em /api daqui para baixo exige sessão válida — e relê o usuário no banco (conta
+  // desativada ou permissão alterada vale na hora, sem esperar a sessão expirar).
+  app.use("/api", requireAuth, carregarUsuarioAtual);
   app.use("/api", cadastrosRouter);
   app.use("/api/containers", containersRouter);
   app.use("/api/painel", painelRouter);

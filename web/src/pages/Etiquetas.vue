@@ -195,7 +195,7 @@ async function cancelar(e) {
           <router-link to="/leitura">Registrar pelo código</router-link> com o código impresso.</span>
       </div>
     </div>
-    <form v-if="auth.pode('cadastros')" class="linha" @submit.prevent="gerar">
+    <form v-if="auth.pode('etiquetas.emitir')" class="linha" @submit.prevent="gerar">
       <div class="campo" style="width: 110px"><label>Quantidade</label><input v-model.number="quantidade" type="number" min="1" max="500" required /></div>
       <button type="submit" class="primario" :disabled="gerando" style="align-self: flex-end">{{ gerando ? "Gerando…" : "Gerar etiquetas" }}</button>
     </form>
@@ -250,8 +250,8 @@ async function cancelar(e) {
       </div>
     </div>
     <div class="linha" style="margin-top: 12px">
-      <button class="primario" :disabled="!selecionadas.size || !!enderecoProblema" @click="imprimirNavegador">🖨 Imprimir pelo navegador</button>
-      <button :disabled="!selecionadas.size || !!enderecoProblema" @click="baixarZpl">⬇ Baixar arquivo ZPL (Zebra)</button>
+      <button class="primario" :disabled="!auth.pode('etiquetas.emitir') || !selecionadas.size || !!enderecoProblema" @click="imprimirNavegador">🖨 Imprimir pelo navegador</button>
+      <button :disabled="!auth.pode('etiquetas.emitir') || !selecionadas.size || !!enderecoProblema" @click="baixarZpl">⬇ Baixar arquivo ZPL (Zebra)</button>
       <span class="mudo pequeno">
         Navegador: escolha a Zebra e o mesmo tamanho de papel na janela de impressão, margens "Nenhuma", escala 100%.
         ZPL: envie o arquivo direto à impressora (ex.: Zebra Setup Utilities → "Enviar arquivo").
@@ -324,10 +324,10 @@ async function cancelar(e) {
             <td class="pequeno">{{ fmtDataHora(e.criadoEm) }}</td>
             <td style="text-align: right; white-space: nowrap">
               <a :href="`/q/${e.token}`" target="_blank" rel="noopener" class="pequeno" title="Abre a página que o celular vê">abrir</a>
-              <button v-if="auth.pode('cadastros') && ['LIVRE', 'VINCULADA'].includes(e.estado)" class="pequeno perigo" style="margin-left: 8px" @click="cancelar(e)">Cancelar</button>
+              <button v-if="auth.pode('etiquetas.cancelar') && ['LIVRE', 'VINCULADA'].includes(e.estado)" class="pequeno perigo" style="margin-left: 8px" @click="cancelar(e)">Cancelar</button>
             </td>
           </tr>
-          <tr v-if="!lista.length && !carregando"><td :colspan="filtro.todos ? 10 : 9" class="vazio">Nenhuma etiqueta ainda. {{ auth.pode("cadastros") ? "Informe a quantidade e clique em Gerar etiquetas." : "" }}</td></tr>
+          <tr v-if="!lista.length && !carregando"><td :colspan="filtro.todos ? 10 : 9" class="vazio">Nenhuma etiqueta ainda. {{ auth.pode("etiquetas.emitir") ? "Informe a quantidade e clique em Gerar etiquetas." : "" }}</td></tr>
         </tbody>
       </table>
     </div>

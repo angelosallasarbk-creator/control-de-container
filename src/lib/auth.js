@@ -38,18 +38,4 @@ export function requireAuth(req, res, next) {
   }
 }
 
-// Perfis que podem executar cada tipo de ação. VISUALIZACAO só lê.
-export const PERMISSOES = {
-  cadastros: ["ADMIN", "SUPERVISOR"],
-  operar: ["ADMIN", "SUPERVISOR", "OPERADOR"],
-  administrar: ["ADMIN"],
-};
-
-export function requireRole(...perfisPermitidos) {
-  return (req, res, next) => {
-    if (!perfisPermitidos.includes(req.usuario?.perfil)) {
-      return res.status(403).json({ erro: "Seu perfil não tem permissão para esta ação." });
-    }
-    next();
-  };
-}
+// Autorização por ação: ver src/lib/permissoes.js (requirePermissao / carregarUsuarioAtual).

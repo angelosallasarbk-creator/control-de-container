@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { decimaisParaNumero } from "../lib/containerView.js";
 import { texto, inteiro, decimal, id as validarId } from "../lib/validacao.js";
@@ -167,7 +167,7 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     res.json(registros.map((r) => ({ ...serializar(r), emAndamento: emAndamento.get(r.id) ?? 0 })));
   }));
 
-  cadastrosRouter.post(`/${rota}`, requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+  cadastrosRouter.post(`/${rota}`, requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
     const corpo = req.body ?? {};
     const dados = cfg.validar(corpo, false);
     cfg.validarConjunto?.(dados);
@@ -187,7 +187,7 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     res.status(201).json(serializar(criado));
   }));
 
-  cadastrosRouter.patch(`/${rota}/:id`, requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+  cadastrosRouter.patch(`/${rota}/:id`, requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
     const registroId = validarId(req.params.id);
     const corpo = req.body ?? {};
     const antes = await repo().findUnique({ where: { id: registroId } });
@@ -232,7 +232,7 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     res.json({ ...serializar(depois), propagados, containersAtualizados: containersAtualizados.length });
   }));
 
-  cadastrosRouter.delete(`/${rota}/:id`, requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+  cadastrosRouter.delete(`/${rota}/:id`, requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
     const registroId = validarId(req.params.id);
     const antes = await repo().findUnique({ where: { id: registroId }, include: { _count: { select: { [cfg.uso]: true } } } });
     if (!antes) throw erroHttp(404, "Cadastro não encontrado.");

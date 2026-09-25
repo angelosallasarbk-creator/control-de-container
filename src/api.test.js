@@ -410,7 +410,8 @@ test("etiquetas QR: gerar, ligar ao container, ler, substituir, encerrar e ZPL",
   assert.deepEqual(lista.body.map((x) => x.codigo), [e2.codigo]);
 
   // ZPL e endereço do QR.
-  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "sem-protocolo" })).status, 400);
+  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://x.y" })).status, 403, "operador sem 'Gerar e imprimir etiquetas'");
+  assert.equal((await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "sem-protocolo" })).status, 400);
   // Quem gerou (supervisor) imprime; e1 está cancelada (substituída) e fica fora do ZPL.
   const zpl = await agentes.SUPERVISOR.post("/api/etiquetas/zpl").send({ ids: [e1.id, e2.id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" });
   assert.equal(zpl.status, 200);
@@ -474,6 +475,74 @@ test("etiquetas QR: cada usuário vê, imprime e cancela só as que gerou; contr
   assert.equal((await agentes.OPERADOR.get("/api/qr/codigo/CC-ZZZZZZ")).status, 404);
   assert.equal((await agentes.OPERADOR.get("/api/qr/codigo/abc")).status, 400);
   assert.equal((await request(app).get(`/api/qr/codigo/${semPrefixo}`)).status, 401, "exige login");
+});
+
+test("permissões por usuário: padrão do perfil, personalizar, valer na hora, desativar bloqueia", async () => {
+  // /me traz as permissões efetivas.
+  const me = await agentes.OPERADOR.get("/api/auth/me");
+  assert.deepEqual(me.body.permissoes, ["containers.operar", "qr.registrar"]);
+  assert.ok((await agentes.ADMIN.get("/api/auth/me")).body.permissoes.includes("administrar"));
+
+  // Catálogo e lista (só admin).
+  assert.equal((await agentes.SUPERVISOR.get("/api/usuarios/permissoes/catalogo")).status, 403);
+  const cat = await agentes.ADMIN.get("/api/usuarios/permissoes/catalogo");
+  assert.ok(cat.body.catalogo.some((p) => p.chave === "etiquetas.emitir"));
+  const usuarios = (await agentes.ADMIN.get("/api/usuarios")).body;
+  const op = usuarios.find((u) => u.email === "operador@teste.local");
+  assert.equal(op.personalizado, false);
+
+  // Operador sem a permissão não gera etiqueta; admin libera → passa a gerar NA HORA (sem relogar).
+  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).status, 403);
+  assert.equal((await agentes.SUPERVISOR.put(`/api/usuarios/${op.id}/permissoes`).send({ permissoes: [] })).status, 403, "só admin configura");
+  assert.equal((await agentes.ADMIN.put(`/api/usuarios/${op.id}/permissoes`).send({ permissoes: ["inventada"] })).status, 400);
+  const lib = await agentes.ADMIN.put(`/api/usuarios/${op.id}/permissoes`).send({ permissoes: ["containers.operar", "qr.registrar", "etiquetas.emitir"] });
+  assert.equal(lib.status, 200);
+  assert.equal(lib.body.personalizado, true);
+  const loteOp = await agentes.OPERADOR.post("/api/etiquetas/lotes").send({ quantidade: 1 });
+  assert.equal(loteOp.status, 201, "liberado sem precisar sair e entrar");
+  assert.equal(loteOp.body.etiquetas[0].geradaPor, "operador@teste.local");
+  assert.equal((await agentes.OPERADOR.post("/api/etiquetas/zpl").send({ ids: [loteOp.body.etiquetas[0].id], larguraMm: 50, alturaMm: 30, dpi: 203, baseUrl: "http://192.168.0.10:5174" })).status, 200);
+  assert.equal((await agentes.OPERADOR.post(`/api/etiquetas/${loteOp.body.etiquetas[0].id}/cancelar`).send({ motivo: "x" })).status, 403, "cancelar é outra permissão");
+
+  // Retirar "Operar containers": não cadastra mais container nem reconhece alerta.
+  await agentes.ADMIN.put(`/api/usuarios/${op.id}/permissoes`).send({ permissoes: ["qr.registrar"] });
+  assert.equal((await agentes.OPERADOR.post("/api/containers").send({ numero: "MSCU1111110", tipo: "DRY_40", grupoId: ids.grupo, armadorId: ids.armador })).status, 403);
+  assert.deepEqual((await agentes.OPERADOR.get("/api/auth/me")).body.permissoes, ["qr.registrar"]);
+
+  // Supervisor sem "Alterar prazos": edita dados do container, mas não o prazo.
+  const sup = usuarios.find((u) => u.email === "supervisor@teste.local");
+  const semPrazos = cat.body.padroes.SUPERVISOR.filter((c) => c !== "containers.prazos");
+  await agentes.ADMIN.put(`/api/usuarios/${sup.id}/permissoes`).send({ permissoes: semPrazos });
+  const algum = (await agentes.SUPERVISOR.get("/api/containers")).body[0];
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/containers/${algum.id}`).send({ observacao: "ok" })).status, 200);
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/containers/${algum.id}`).send({ freeTimeDias: 30 })).status, 403);
+
+  // Mandar a mesma lista do padrão = volta a "padrão"; null também.
+  const volta = await agentes.ADMIN.put(`/api/usuarios/${sup.id}/permissoes`).send({ permissoes: cat.body.padroes.SUPERVISOR });
+  assert.equal(volta.body.personalizado, false);
+  assert.equal((await agentes.ADMIN.put(`/api/usuarios/${op.id}/permissoes`).send({ permissoes: null })).body.personalizado, false);
+
+  // Trocar o perfil descarta a personalização.
+  await agentes.ADMIN.put(`/api/usuarios/${op.id}/permissoes`).send({ permissoes: ["qr.registrar"] });
+  const promovido = await agentes.ADMIN.patch(`/api/usuarios/${op.id}`).send({ perfil: "SUPERVISOR" });
+  assert.equal(promovido.body.personalizado, false);
+  assert.ok(promovido.body.permissoes.includes("cadastros.editar"));
+  await agentes.ADMIN.patch(`/api/usuarios/${op.id}`).send({ perfil: "OPERADOR" });
+
+  // Administrador não é configurável.
+  const adm = usuarios.find((u) => u.email === "admin@teste.local");
+  assert.equal((await agentes.ADMIN.put(`/api/usuarios/${adm.id}/permissoes`).send({ permissoes: [] })).status, 400);
+
+  // Desativar a conta bloqueia na hora (antes, a sessão de 12h continuava valendo).
+  const vis = usuarios.find((u) => u.email === "visualizacao@teste.local");
+  await agentes.ADMIN.patch(`/api/usuarios/${vis.id}`).send({ ativo: false });
+  assert.equal((await agentes.VISUALIZACAO.get("/api/painel")).status, 401);
+  await agentes.ADMIN.patch(`/api/usuarios/${vis.id}`).send({ ativo: true });
+  assert.equal((await agentes.VISUALIZACAO.get("/api/painel")).status, 200);
+
+  // A troca de permissões fica no log.
+  const log = (await agentes.ADMIN.get("/api/logs?entidade=Usuario")).body;
+  assert.ok(log.some((l) => l.acao === "PERMISSOES" && l.descricao.includes("liberou: Gerar e imprimir etiquetas")));
 });
 
 test("locais: tipos, coordenadas validadas e busca de endereço sem chave", async () => {

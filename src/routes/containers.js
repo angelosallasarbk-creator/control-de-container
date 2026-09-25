@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao, tem } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
@@ -158,7 +158,7 @@ containersRouter.get("/:id", asyncHandler(async (req, res) => {
 
 // ---------- Cadastro ----------
 
-containersRouter.post("/", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const b = req.body ?? {};
   const { numero, formatoValido, digitoValido } = validarNumeroContainer(b.numero);
   if (!formatoValido) {
@@ -245,7 +245,7 @@ containersRouter.post("/", requireRole(...PERMISSOES.operar), asyncHandler(async
 }));
 
 // Edição de dados cadastrais e, por supervisor, dos prazos negociados (free time, meta, faixa).
-containersRouter.patch("/:id", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+containersRouter.patch("/:id", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   const antes = await buscarContainer(containerId);
   const b = req.body ?? {};
@@ -262,8 +262,8 @@ containersRouter.patch("/:id", requireRole(...PERMISSOES.operar), asyncHandler(a
 
   const camposPrazo = ["metaEstadiaHoras", "custoEstadiaPorHora", "freeTimeDias", "setpoint", "tempMin", "tempMax", "toleranciaMinutos"];
   if (camposPrazo.some((c) => c in b)) {
-    if (!["ADMIN", "SUPERVISOR"].includes(req.usuario.perfil)) {
-      throw erroHttp(403, "Só supervisor ou administrador pode alterar prazos e faixa de temperatura de um container.");
+    if (!tem(req, "containers.prazos")) {
+      throw erroHttp(403, "Seu usuário não tem a permissão \"Alterar prazos do container\". Peça a um administrador.");
     }
     if ("metaEstadiaHoras" in b) dados.metaEstadiaHoras = inteiro(b.metaEstadiaHoras, "Meta de estadia (h)", { obrigatorio: true, min: 1, max: 2000 });
     if ("custoEstadiaPorHora" in b) dados.custoEstadiaPorHora = decimal(b.custoEstadiaPorHora, "Custo por hora excedida", { min: 0 });
@@ -296,7 +296,7 @@ containersRouter.patch("/:id", requireRole(...PERMISSOES.operar), asyncHandler(a
 
 // ---------- Etapas ----------
 
-containersRouter.post("/:id/avancar", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   const b = req.body ?? {};
   const ocorridoEm = dataHora(b.ocorridoEm, "Data/hora") ?? new Date();
@@ -335,7 +335,7 @@ containersRouter.post("/:id/avancar", requireRole(...PERMISSOES.operar), asyncHa
 
 // Desfaz a última etapa registrada (erro de digitação/clique). O evento some da linha do tempo,
 // mas fica registrado no log de auditoria.
-containersRouter.post("/:id/desfazer", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+containersRouter.post("/:id/desfazer", requirePermissao("containers.corrigir"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   await prisma.$transaction(async (tx) => {
     const c = await tx.container.findUnique({ where: { id: containerId } });
@@ -360,7 +360,7 @@ containersRouter.post("/:id/desfazer", requireRole(...PERMISSOES.cadastros), asy
   res.json(await detalhe(containerId));
 }));
 
-containersRouter.post("/:id/cancelar", requireRole(...PERMISSOES.cadastros), asyncHandler(async (req, res) => {
+containersRouter.post("/:id/cancelar", requirePermissao("containers.corrigir"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   const motivo = texto(req.body?.motivo, "Motivo do cancelamento", { obrigatorio: true, max: 1000 });
   await prisma.$transaction(async (tx) => {
@@ -383,7 +383,7 @@ containersRouter.post("/:id/cancelar", requireRole(...PERMISSOES.cadastros), asy
 
 // ---------- Temperatura (leitura manual) ----------
 
-containersRouter.post("/:id/leituras", requireRole(...PERMISSOES.operar), asyncHandler(async (req, res) => {
+containersRouter.post("/:id/leituras", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   const c = await buscarContainer(containerId);
   const temperatura = decimal(req.body?.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 });

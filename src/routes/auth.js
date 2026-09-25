@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { gerarToken, definirCookieAuth, limparCookieAuth, requireAuth } from "../lib/auth.js";
+import { permissoesEfetivas, carregarUsuarioAtual } from "../lib/permissoes.js";
 
 export const authRouter = Router();
 
@@ -30,7 +31,7 @@ authRouter.post("/login", loginLimiter, asyncHandler(async (req, res) => {
     return res.status(401).json({ erro: "Conta desativada. Fale com um administrador." });
   }
   definirCookieAuth(res, gerarToken(usuario));
-  res.json({ email: usuario.email, nome: usuario.nome, perfil: usuario.perfil });
+  res.json({ email: usuario.email, nome: usuario.nome, perfil: usuario.perfil, permissoes: permissoesEfetivas(usuario) });
 }));
 
 authRouter.post("/logout", (_req, res) => {
@@ -38,7 +39,8 @@ authRouter.post("/logout", (_req, res) => {
   res.status(204).end();
 });
 
-authRouter.get("/me", requireAuth, (req, res) => {
+// A tela consulta periodicamente: permissões/perfil alterados pelo admin aparecem sem relogar.
+authRouter.get("/me", requireAuth, carregarUsuarioAtual, (req, res) => {
   const { email, nome, perfil } = req.usuario;
-  res.json({ email, nome, perfil });
+  res.json({ email, nome, perfil, permissoes: req.permissoes });
 });

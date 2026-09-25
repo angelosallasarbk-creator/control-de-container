@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requireRole, PERMISSOES } from "../lib/auth.js";
+import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao, salvarConfiguracao } from "../lib/configuracao.js";
 import { executarVerificacao } from "../lib/verificador.js";
@@ -13,7 +13,7 @@ configuracaoRouter.get("/", asyncHandler(async (_req, res) => {
   res.json(await lerConfiguracao());
 }));
 
-configuracaoRouter.put("/", requireRole(...PERMISSOES.administrar), asyncHandler(async (req, res) => {
+configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async (req, res) => {
   const antes = await lerConfiguracao();
   const intervaloLeituraMinutos = inteiro(req.body?.intervaloLeituraMinutos, "Intervalo máximo entre leituras (min)", {
     obrigatorio: true,
@@ -52,7 +52,7 @@ configuracaoRouter.put("/", requireRole(...PERMISSOES.administrar), asyncHandler
 }));
 
 export const logsRouter = Router();
-logsRouter.use(requireRole(...PERMISSOES.cadastros));
+logsRouter.use(requirePermissao("auditoria.ver"));
 
 logsRouter.get("/", asyncHandler(async (req, res) => {
   const where = {};
