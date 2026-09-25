@@ -44,6 +44,13 @@ function agora() {
   f.lidaEm = paraInputLocal();
   horarioEditado.value = false;
 }
+// Teclado numérico do celular muitas vezes não tem "-": o botão ± troca o sinal.
+const negativa = computed(() => String(f.temperatura).trim().startsWith("-"));
+function inverterSinal() {
+  const v = String(f.temperatura).trim().replace(/^[-−+]+/, "");
+  f.temperatura = negativa.value ? v : `-${v}`;
+  document.getElementById("temp")?.focus();
+}
 const horarioDaLeitura = () => (horarioEditado.value ? deInputLocal(f.lidaEm) : new Date().toISOString());
 
 function obterLocalizacao() {
@@ -171,22 +178,26 @@ function novaLeitura() {
 
           <div class="campo">
             <label for="temp">Temperatura (°C){{ estado === "LIVRE" ? " — obrigatória se for reefer" : "" }}</label>
-            <input
-              id="temp" v-model="f.temperatura" class="grande-campo" inputmode="decimal" placeholder="-18,0" autocomplete="off"
-              :required="temperaturaExigida && estado !== 'LIVRE'"
-            />
+            <div class="campo-com-botao botao-antes">
+              <button type="button" class="sinal" :aria-label="negativa ? 'Tornar positiva' : 'Tornar negativa'" @click="inverterSinal">±</button>
+              <input
+                id="temp" v-model="f.temperatura" class="grande-campo" inputmode="decimal" placeholder="-18,0" autocomplete="off"
+                :required="temperaturaExigida && estado !== 'LIVRE'"
+              />
+            </div>
+            <span class="dica">Temperatura negativa: toque em <strong>±</strong> (o teclado numérico do celular nem sempre tem o "-").</span>
           </div>
 
           <div class="campo">
             <label for="quando">Data e hora da leitura</label>
-            <div class="linha-horario">
-              <input id="quando" v-model="f.lidaEm" type="datetime-local" class="grande-campo" required @input="horarioEditado = true" />
+            <div class="campo-com-botao">
+              <input id="quando" v-model="f.lidaEm" type="datetime-local" class="grande-campo horario" required @input="horarioEditado = true" />
               <button type="button" @click="agora">Agora</button>
             </div>
             <span class="dica">Já vem com o horário atual. Ajuste só se a leitura foi feita antes.</span>
           </div>
 
-          <label v-if="podeLocalizar" class="linha pequeno"><input v-model="enviarLocalizacao" type="checkbox" /> Registrar minha localização (prova de que a leitura foi no local)</label>
+          <label v-if="podeLocalizar" class="check-local pequeno"><input v-model="enviarLocalizacao" type="checkbox" /> Registrar minha localização (prova de que a leitura foi no local)</label>
 
           <button type="submit" class="primario bloco" :disabled="enviando">{{ enviando ? "Salvando…" : "Salvar" }}</button>
         </form>
@@ -206,9 +217,21 @@ function novaLeitura() {
 .ultimas { border-top: 1px solid var(--borda); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; }
 .grande-campo { font-size: 20px; padding: 12px; }
 #numero { text-transform: uppercase; }
-.linha-horario { display: flex; gap: 8px; align-items: stretch; }
-.linha-horario input { flex: 1; min-width: 0; }
-.linha-horario button { flex-shrink: 0; }
+/* Grade (e não flex): o campo de data/hora do celular tem largura mínima própria e empurrava
+   o botão "Agora" para fora da tela; minmax(0, 1fr) obriga o campo a caber. */
+.campo-com-botao { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
+.campo-com-botao.botao-antes { grid-template-columns: auto minmax(0, 1fr); }
+.campo-com-botao input { width: 100%; min-width: 0; box-sizing: border-box; }
+.campo-com-botao button { white-space: nowrap; }
+.horario { font-size: 17px; -webkit-appearance: none; appearance: none; }
+.sinal { font-size: 24px; font-weight: 700; min-width: 56px; justify-content: center; }
+/* Telas bem estreitas (ex.: iPhone SE): "Agora" desce para a data/hora aparecer inteira. */
+@media (max-width: 350px) {
+  .campo-com-botao:not(.botao-antes) { grid-template-columns: 1fr; }
+  .campo-com-botao:not(.botao-antes) button { justify-content: center; }
+}
+.check-local { display: flex; align-items: flex-start; gap: 10px; }
+.check-local input { flex-shrink: 0; width: 20px; height: 20px; margin: 2px 0 0; }
 .formulario .campo label { font-size: 14px; }
 button.bloco { width: 100%; justify-content: center; font-size: 18px; padding: 14px; border-radius: 10px; }
 .grande { font-size: 16px; padding: 16px; }
