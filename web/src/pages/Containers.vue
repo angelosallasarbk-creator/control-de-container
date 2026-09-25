@@ -1,10 +1,12 @@
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora, fmtFolga } from "../formato.js";
 import NovoContainer from "../components/NovoContainer.vue";
+import ThOrdenavel from "../components/ThOrdenavel.vue";
+import { useOrdenacao } from "../composables/useOrdenacao.js";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -42,6 +44,27 @@ function criado(c) {
   novoAberto.value = false;
   router.push(`/containers/${c.id}`);
 }
+
+// Colunas de situação e prazo: crescente = mais urgente primeiro.
+const GRAVIDADE = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
+const ordem = useOrdenacao({
+  semaforo: (c) => GRAVIDADE[c.semaforo],
+  numero: (c) => c.numero,
+  tipo: (c) => ROTULO_TIPO[c.tipo],
+  grupo: (c) => `${c.grupo.cliente} / ${c.grupo.fabrica}`,
+  armador: (c) => c.armador.nome,
+  etapa: (c) => (c.status === "CANCELADO" ? FLUXO.length : FLUXO.indexOf(c.status)),
+  estadia: (c) => c.situacao.estadia?.horasRestantes ?? null,
+  demurrage: (c) => {
+    const d = c.situacao.demurrage;
+    if (!d) return null;
+    return d.diasExcedidos > 0 ? -d.diasExcedidos : d.diasRestantes;
+  },
+  temperatura: (c) => c.situacao.temperatura?.ultima?.temperatura ?? null,
+  deadline: (c) => (c.deadline ? new Date(c.deadline) : null),
+  previsao: (c) => (c.situacao.previsao?.disponivel ? c.situacao.previsao.folgaHoras : null),
+});
+const linhas = computed(() => ordem.ordenar(lista.value));
 
 function textoDemurrage(d) {
   if (!d) return "—";
@@ -91,21 +114,21 @@ function textoDemurrage(d) {
     <table>
       <thead>
         <tr>
-          <th></th>
-          <th>Container</th>
-          <th>Tipo</th>
-          <th>Cliente / Fábrica</th>
-          <th>Armador</th>
-          <th>Etapa</th>
-          <th>Estadia</th>
-          <th>Demurrage</th>
-          <th>Temperatura</th>
-          <th>Deadline</th>
-          <th title="Previsão de entrega no porto e folga até o fim do free time">Previsão</th>
+          <ThOrdenavel chave="semaforo" :ordem="ordem" titulo="Situação: crítico primeiro no crescente"><span class="sr-only">Situação</span></ThOrdenavel>
+          <ThOrdenavel chave="numero" :ordem="ordem">Container</ThOrdenavel>
+          <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
+          <ThOrdenavel chave="grupo" :ordem="ordem">Cliente / Fábrica</ThOrdenavel>
+          <ThOrdenavel chave="armador" :ordem="ordem">Armador</ThOrdenavel>
+          <ThOrdenavel chave="etapa" :ordem="ordem" titulo="Na ordem do processo">Etapa</ThOrdenavel>
+          <ThOrdenavel chave="estadia" :ordem="ordem" titulo="Pelo tempo que falta para a meta: mais urgente primeiro no crescente">Estadia</ThOrdenavel>
+          <ThOrdenavel chave="demurrage" :ordem="ordem" titulo="Pelos dias livres restantes: vencidos primeiro no crescente">Demurrage</ThOrdenavel>
+          <ThOrdenavel chave="temperatura" :ordem="ordem">Temperatura</ThOrdenavel>
+          <ThOrdenavel chave="deadline" :ordem="ordem">Deadline</ThOrdenavel>
+          <ThOrdenavel chave="previsao" :ordem="ordem" titulo="Pela folga até o fim do free time: menor folga primeiro no crescente">Previsão</ThOrdenavel>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in lista" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
+        <tr v-for="c in linhas" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
           <td><span class="ponto" :class="c.semaforo" :title="c.semaforo"></span></td>
           <td class="mono negrito">{{ c.numero }}<div v-if="c.booking" class="mudo pequeno">BK {{ c.booking }}</div></td>
           <td>{{ ROTULO_TIPO[c.tipo] }}</td>

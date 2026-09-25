@@ -1,9 +1,11 @@
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_ALERTA, ROTULO_STATUS, fmtDataHora, tempoDesde } from "../formato.js";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
+import ThOrdenavel from "../components/ThOrdenavel.vue";
+import { useOrdenacao } from "../composables/useOrdenacao.js";
 
 const emit = defineEmits(["alertas-mudaram"]);
 const auth = useAuthStore();
@@ -35,6 +37,18 @@ function reconhecido() {
   carregar();
   emit("alertas-mudaram");
 }
+
+// Nível: crescente = crítico primeiro. Tratamento: pendentes primeiro no crescente.
+const ordem = useOrdenacao({
+  nivel: (a) => (a.nivel === "CRITICO" ? 0 : 1),
+  tipo: (a) => ROTULO_ALERTA[a.tipo],
+  container: (a) => a.container.numero,
+  grupo: (a) => `${a.container.grupo.cliente} / ${a.container.grupo.fabrica}`,
+  mensagem: (a) => a.mensagem,
+  aberto: (a) => new Date(a.abertoEm),
+  tratamento: (a) => (a.reconhecidoEm ? `1 ${a.reconhecidoPor}` : "0"),
+});
+const linhas = computed(() => ordem.ordenar(lista.value));
 </script>
 
 <template>
@@ -67,10 +81,18 @@ function reconhecido() {
   <div class="card tabela-wrap" style="padding: 0">
     <table>
       <thead>
-        <tr><th>Nível</th><th>Tipo</th><th>Container</th><th>Cliente / Fábrica</th><th>Mensagem</th><th>Aberto</th><th>Tratamento</th></tr>
+        <tr>
+          <ThOrdenavel chave="nivel" :ordem="ordem" titulo="Crítico primeiro no crescente">Nível</ThOrdenavel>
+          <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
+          <ThOrdenavel chave="container" :ordem="ordem">Container</ThOrdenavel>
+          <ThOrdenavel chave="grupo" :ordem="ordem">Cliente / Fábrica</ThOrdenavel>
+          <ThOrdenavel chave="mensagem" :ordem="ordem">Mensagem</ThOrdenavel>
+          <ThOrdenavel chave="aberto" :ordem="ordem" titulo="Mais antigo primeiro no crescente">Aberto</ThOrdenavel>
+          <ThOrdenavel chave="tratamento" :ordem="ordem" titulo="Pendentes (não reconhecidos) primeiro no crescente">Tratamento</ThOrdenavel>
+        </tr>
       </thead>
       <tbody>
-        <tr v-for="a in lista" :key="a.id">
+        <tr v-for="a in linhas" :key="a.id">
           <td><span class="chip" :class="a.nivel === 'CRITICO' ? 'vermelho' : 'amarelo'">{{ a.nivel === "CRITICO" ? "Crítico" : "Atenção" }}</span></td>
           <td class="negrito">{{ ROTULO_ALERTA[a.tipo] }}</td>
           <td>
