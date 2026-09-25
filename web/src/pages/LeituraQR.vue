@@ -234,7 +234,7 @@ function novaLeitura() {
       <span class="espaco">Controle de Container</span>
       <span class="pequeno">{{ auth.usuario?.nome }}</span>
       <button v-if="info?.modoTransportador" type="button" class="pequeno sair" @click="auth.logout()">Sair</button>
-      <router-link v-if="info?.modoPortaria" to="/" class="btn pequeno sair">Pátio</router-link>
+      <router-link v-if="info?.modoPortaria" to="/" class="btn pequeno sair">Home</router-link>
     </header>
 
     <main class="movel-corpo">

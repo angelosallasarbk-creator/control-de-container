@@ -15,7 +15,7 @@ const router = useRouter();
 
 // Perfis de campo usam só parte do sistema (a API também bloqueia o resto):
 // - Transportador: só as telas do QR; qualquer outra rota vai para "Registrar pelo código".
-// - Portaria: telas do QR + Pátio (consulta); outras rotas voltam ao Pátio.
+// - Portaria: telas do QR + Home (consulta); outras rotas voltam à Home.
 const TELAS_DO_PERFIL = {
   TRANSPORTADOR: { telas: ["leitura-qr", "leitura-codigo"], inicio: "/leitura" },
   PORTARIA: { telas: ["painel", "leitura-qr", "leitura-codigo"], inicio: "/" },
@@ -253,7 +253,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         <button v-else-if="menuFlutuante" class="fechar-menu" title="Manter menu aberto" aria-label="Manter menu aberto" @click="fixarMenu">📌</button>
       </div>
       <nav>
-        <router-link to="/">Pátio</router-link>
+        <router-link to="/">Home</router-link>
         <router-link v-if="ehPortaria" to="/leitura">Registrar pelo código</router-link>
         <template v-else>
         <router-link to="/containers" :class="{ ativo: route.path.startsWith('/containers') }">Containers</router-link>
@@ -336,7 +336,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
       </header>
       </div>
       <main class="pagina">
-        <!-- key = path (não fullPath): trocar só a query, como a aba de região do Pátio, não recria a tela.
+        <!-- key = path (não fullPath): trocar só a query, como a aba de região da Home, não recria a tela.
              meta.chave fixa (ficha do container): trocar de container na lista lateral não recria a lista. -->
         <router-view :key="route.meta.chave ?? route.path" />
       </main>

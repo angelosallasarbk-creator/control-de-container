@@ -69,12 +69,17 @@ async function rolarAteSelecionado() {
 watch(() => props.selecionado, rolarAteSelecionado);
 
 const rota = (c) => [c.portoRetirada?.nome, c.localCarregamento?.nome, c.portoEntrega?.nome].filter(Boolean).join(" → ");
+// Mais crítico primeiro: vermelho, amarelo, verde; na mesma cor, mantém a ordem da API
+// (mais recentes primeiro). O primeiro da lista é o que o Grid abre ao entrar na tela.
+const CRITICIDADE = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
 // Filtros do cabeçalho (Região / Ponto de Carregamento) + busca da própria lista.
 const visiveis = computed(() => {
   const t = busca.value.trim().toLowerCase();
-  return lista.value.filter(
-    (c) => passaFiltroContainers(c) && (!t || `${c.numero} ${c.navio ?? ""} ${c.booking ?? ""} ${rota(c)}`.toLowerCase().includes(t))
-  );
+  return lista.value
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => passaFiltroContainers(c) && (!t || `${c.numero} ${c.navio ?? ""} ${c.booking ?? ""} ${rota(c)}`.toLowerCase().includes(t)))
+    .sort((a, b) => (CRITICIDADE[a.c.semaforo] ?? 3) - (CRITICIDADE[b.c.semaforo] ?? 3) || a.i - b.i)
+    .map(({ c }) => c);
 });
 // Mudou o filtro do cabeçalho: a ficha decide se troca o container aberto.
 watch(() => [filtroContainers.regioes, filtroContainers.grupos], () => emit("filtrada", visiveis.value), { deep: true });

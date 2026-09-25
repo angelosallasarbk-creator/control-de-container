@@ -12,7 +12,7 @@ const auth = useAuthStore();
 const CONFIG = {
   regioes: {
     titulo: "Regiões",
-    ajuda: "Cada região ativa vira uma aba no Pátio. Vincule as fábricas à região em Ponto de Carregamento.",
+    ajuda: "Cada região ativa vira uma aba na Home. Vincule as fábricas à região em Ponto de Carregamento.",
     rotuloUso: "Pontos de Carregamento",
     colunas: [{ rotulo: "Região", valor: (r) => r.nome }],
     campos: [{ chave: "nome", rotulo: "Nome da região", tipo: "text", obrigatorio: true }],
