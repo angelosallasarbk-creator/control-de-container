@@ -14,6 +14,7 @@ enum Perfil {
   VISUALIZACAO
   TRANSPORTADOR // só telas do QR; ao ler a etiqueta registra a coleta (local de retirada)
   PORTARIA // QR + Pátio (consulta); ao ler a etiqueta registra entrada/saída no ponto de carregamento
+  GESTOR_TRANSPORTADORA // só a tela de Motoristas da própria transportadora (bloquear, sessões, importar)
 }
 
 // Ciclo de exportação: retira vazio no porto → ova na fábrica → entrega cheio no terminal.
@@ -98,6 +99,9 @@ model Usuario {
   posicoesEnviadas     PosicaoContainer[]
   solicitacoesPosicao  SolicitacaoPosicao[]
   mensagensSms         MensagemSms[]
+  // Perfil Gestor da transportadora: de qual transportadora ele cuida dos motoristas.
+  transportadoraId     Int?
+  transportadora       Transportadora?      @relation(fields: [transportadoraId], references: [id])
 }
 
 // Região agrupa fábricas; cada região vira uma aba no Pátio.
@@ -281,6 +285,9 @@ model Container {
   // Rastreamento por SMS: quem registrou algo pelo QR por último recebe os pedidos de posição.
   rastreioResponsavelId Int?
   rastreioResponsavel   Usuario?             @relation("RastreioResponsavel", fields: [rastreioResponsavelId], references: [id])
+  // …ou um motorista (acesso pelo celular, sem usuário). Só um dos dois fica preenchido.
+  rastreioMotoristaId   Int?
+  rastreioMotorista     Motorista?           @relation("RastreioMotorista", fields: [rastreioMotoristaId], references: [id])
   rastreioDesde         DateTime?
   rastreioUltimoEnvioEm DateTime? // último SMS (vínculo ou pedido de posição) — base do próximo
   posicoes              PosicaoContainer[]
@@ -420,32 +427,38 @@ model LogAuditoria {
 
 // Posição GPS do container: enviada pelo link do SMS ou junto de uma leitura do QR.
 model PosicaoContainer {
-  id           Int       @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   containerId  Int
-  container    Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  container    Container  @relation(fields: [containerId], references: [id], onDelete: Cascade)
   usuarioId    Int?
-  usuario      Usuario?  @relation(fields: [usuarioId], references: [id])
-  latitude     Decimal   @db.Decimal(9, 6)
-  longitude    Decimal   @db.Decimal(9, 6)
+  usuario      Usuario?   @relation(fields: [usuarioId], references: [id])
+  motoristaId  Int?
+  motorista    Motorista? @relation(fields: [motoristaId], references: [id])
+  latitude     Decimal    @db.Decimal(9, 6)
+  longitude    Decimal    @db.Decimal(9, 6)
   precisaoM    Int?
   origem       String // LINK_SMS | QR
   etapa        String // status do container no momento
-  registradaEm DateTime  @default(now())
+  registradaEm DateTime   @default(now())
 
   @@index([containerId, registradaEm])
 }
 
 // Um pedido de posição enviado por SMS. O link leva um código aleatório; só o hash fica aqui.
 model SolicitacaoPosicao {
-  id           Int       @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   containerId  Int
-  container    Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  usuarioId    Int
-  usuario      Usuario   @relation(fields: [usuarioId], references: [id])
-  tokenHash    String    @unique
-  criadaEm     DateTime  @default(now())
+  container    Container  @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  // Destinatário: usuário OU motorista.
+  usuarioId    Int?
+  usuario      Usuario?   @relation(fields: [usuarioId], references: [id])
+  motoristaId  Int?
+  motorista    Motorista? @relation(fields: [motoristaId], references: [id])
+  tokenHash    String     @unique
+  criadaEm     DateTime   @default(now())
   expiraEm     DateTime
   respondidaEm DateTime?
+  motivo       String? // por que foi pedido (trecho crítico, intervalo, manual…)
 
   @@index([containerId])
 }
@@ -457,12 +470,84 @@ model MensagemSms {
   container   Container? @relation(fields: [containerId], references: [id], onDelete: Cascade)
   usuarioId   Int?
   usuario     Usuario?   @relation(fields: [usuarioId], references: [id])
+  motoristaId Int?
+  motorista   Motorista? @relation(fields: [motoristaId], references: [id])
   telefone    String?
   tipo        String // VINCULO | POSICAO
   status      String // ENVIADA | SIMULADA | FALHA | SEM_CELULAR
   texto       String
   erro        String?
+  motivo      String? // pedidos de posição: por que foi pedido
   criadaEm    DateTime   @default(now())
 
   @@index([containerId, criadaEm])
+}
+
+// Transportadora: agrupa os motoristas; o Gestor da transportadora cuida só dos dela.
+model Transportadora {
+  id         Int         @id @default(autoincrement())
+  nome       String      @unique
+  cnpj       String?
+  ativo      Boolean     @default(true)
+  criadoEm   DateTime    @default(now())
+  motoristas Motorista[]
+  gestores   Usuario[]
+}
+
+// Motorista: NÃO é usuário do sistema. Identidade = celular verificado por código SMS; acessa só
+// as telas do QR. Cadastro livre no primeiro acesso (ou importado pelo gestor); o gestor bloqueia.
+model Motorista {
+  id               Int            @id @default(autoincrement())
+  nome             String
+  celular          String         @unique // E.164 (+55…)
+  cpf              String?
+  placa            String?
+  transportadoraId Int
+  transportadora   Transportadora @relation(fields: [transportadoraId], references: [id])
+  bloqueado        Boolean        @default(false)
+  bloqueadoEm      DateTime?
+  bloqueadoPor     String?
+  consentimentoEm  DateTime? // aceite do termo (LGPD) no primeiro acesso; null = importado, ainda não aceitou
+  ultimoAcessoEm   DateTime?
+  criadoEm         DateTime       @default(now())
+  criadoPor        String? // null = cadastrou-se pelo QR; senão, quem importou/cadastrou
+
+  sessoes             SessaoMotorista[]
+  rastreios           Container[]          @relation("RastreioMotorista")
+  posicoes            PosicaoContainer[]
+  solicitacoesPosicao SolicitacaoPosicao[]
+  mensagensSms        MensagemSms[]
+
+  @@index([transportadoraId])
+}
+
+// Código de 6 dígitos enviado por SMS para entrar (vale 15 min; pedir outro encerra o anterior).
+// Só o hash (HMAC) fica no banco.
+model CodigoAcessoMotorista {
+  id          Int       @id @default(autoincrement())
+  celular     String
+  codigoHash  String
+  criadoEm    DateTime  @default(now())
+  expiraEm    DateTime
+  tentativas  Int       @default(0)
+  encerradoEm DateTime? // usado, substituído por um novo ou esgotou as tentativas
+  ip          String?
+
+  @@index([celular, criadoEm])
+}
+
+// Sessão do motorista no celular (cookie httpOnly, 60 dias). Só o hash do token fica no banco.
+model SessaoMotorista {
+  id          Int       @id @default(autoincrement())
+  motoristaId Int
+  motorista   Motorista @relation(fields: [motoristaId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  criadaEm    DateTime  @default(now())
+  expiraEm    DateTime
+  ultimoUsoEm DateTime?
+  revogadaEm  DateTime?
+  revogadaPor String?
+  dispositivo String? // navegador/celular (User-Agent resumido) — para o gestor reconhecer a sessão
+
+  @@index([motoristaId])
 }

@@ -7,7 +7,8 @@ import CampoSenha from "../components/CampoSenha.vue";
 const lista = ref([]);
 const erro = ref(null);
 const editando = ref(null);
-const form = reactive({ email: "", nome: "", perfil: "OPERADOR", celular: "", senha: "" });
+const form = reactive({ email: "", nome: "", perfil: "OPERADOR", celular: "", transportadoraId: "", senha: "" });
+const transportadoras = ref([]);
 const enviando = ref(false);
 const aviso = ref(null);
 
@@ -30,6 +31,7 @@ const DESCRICAO_PERFIL = {
   OPERADOR: "Padrão: operar containers (cadastrar, avançar, temperatura, alertas) e registrar leituras pelo celular.",
   VISUALIZACAO: "Padrão: somente consulta.",
   PORTARIA: "Leitura das etiquetas QR na portaria do ponto de carregamento: ao ler, informa ENTRADA ou SAÍDA (e temperatura, se reefer); consulta a Home.",
+  GESTOR_TRANSPORTADORA: "Só a tela Motoristas, com os motoristas da transportadora escolhida: ver, pré-cadastrar (inclusive por planilha), bloquear e encerrar acessos.",
   TRANSPORTADOR: "Só a leitura das etiquetas QR no celular: ao ler, informa o local de retirada (porto/ferrovia) e registra a coleta; cadastra o container se não existir; registra temperatura.",
 };
 
@@ -44,7 +46,8 @@ onMounted(carregar);
 
 function abrir(u) {
   editando.value = u ?? {};
-  Object.assign(form, { email: u?.email ?? "", nome: u?.nome ?? "", perfil: u?.perfil ?? "OPERADOR", celular: u?.celular ?? "", senha: "" });
+  Object.assign(form, { email: u?.email ?? "", nome: u?.nome ?? "", perfil: u?.perfil ?? "OPERADOR", celular: u?.celular ?? "", transportadoraId: u?.transportadoraId ?? "", senha: "" });
+  if (!transportadoras.value.length) api.listar("transportadoras", { ativos: "1" }).then((l) => (transportadoras.value = l)).catch(() => {});
   erro.value = null;
 }
 
@@ -53,7 +56,7 @@ async function salvar() {
   erro.value = null;
   try {
     if (editando.value.id) {
-      const dados = { nome: form.nome, perfil: form.perfil, celular: form.celular };
+      const dados = { nome: form.nome, perfil: form.perfil, celular: form.celular, transportadoraId: form.transportadoraId || null };
       if (form.senha) dados.senha = form.senha;
       await api.atualizarUsuario(editando.value.id, dados);
     } else {
@@ -93,7 +96,7 @@ async function alternarAtivo(u) {
           <td>{{ u.nome }}</td>
           <td>{{ u.email }}</td>
           <td>
-            {{ ROTULO_PERFIL[u.perfil] }}
+            {{ ROTULO_PERFIL[u.perfil] }}<span v-if="u.transportadora" class="mudo"> · {{ u.transportadora.nome }}</span>
             <router-link v-if="u.personalizado" to="/configuracoes?aba=permissoes" class="chip amarelo" style="margin-left: 6px" title="Permissões diferentes do padrão do perfil">personalizado</router-link>
           </td>
           <td class="mudo">{{ u.celular || "—" }}</td>
@@ -126,6 +129,14 @@ async function alternarAtivo(u) {
           <option v-for="(r, v) in ROTULO_PERFIL" :key="v" :value="v">{{ r }}</option>
         </select>
         <span class="dica">{{ DESCRICAO_PERFIL[form.perfil] }} Ajuste fino por usuário em Configurações → Perfis e permissões.</span>
+      </div>
+      <div v-if="form.perfil === 'GESTOR_TRANSPORTADORA'" class="campo">
+        <label for="transp-gestor">Transportadora *</label>
+        <select id="transp-gestor" v-model="form.transportadoraId" required>
+          <option value="" disabled>Escolha…</option>
+          <option v-for="t in transportadoras" :key="t.id" :value="t.id">{{ t.nome }}</option>
+        </select>
+        <span class="dica">Cadastre em Cadastros → Transportadoras.</span>
         <span v-if="editando.id && editando.personalizado && form.perfil !== editando.perfil" class="dica txt-ATENCAO">
           Este usuário tem permissões personalizadas; ao trocar o perfil, elas são descartadas e vale o padrão do novo perfil.
         </span>

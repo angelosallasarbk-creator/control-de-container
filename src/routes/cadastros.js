@@ -108,6 +108,25 @@ const CADASTROS = {
       return d;
     },
   },
+  // Transportadoras: agrupam os motoristas (acesso pelo celular) e os gestores de cada uma.
+  transportadoras: {
+    modelo: "transportadora",
+    entidade: "Transportadora",
+    uso: "motoristas",
+    rotulo: (r) => r.nome,
+    ordem: [{ nome: "asc" }],
+    validar: (b, parcial) => {
+      const d = {};
+      if (!parcial || "nome" in b) d.nome = texto(b.nome, "Nome da transportadora", { obrigatorio: true, max: 120 });
+      if ("cnpj" in b) {
+        const cnpj = String(b.cnpj ?? "").replace(/\D/g, "");
+        if (cnpj && cnpj.length !== 14) throw erroHttp(400, "CNPJ deve ter 14 números.");
+        d.cnpj = cnpj || null;
+      }
+      if ("ativo" in b) d.ativo = Boolean(b.ativo);
+      return d;
+    },
+  },
   produtos: {
     modelo: "produto",
     entidade: "Produto",

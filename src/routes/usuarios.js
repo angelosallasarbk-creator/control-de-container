@@ -16,8 +16,18 @@ import { texto, id as validarId, umDe } from "../lib/validacao.js";
 export const usuariosRouter = Router();
 usuariosRouter.use(requirePermissao("administrar"));
 
-const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO", "TRANSPORTADOR", "PORTARIA"];
-const SELECT = { id: true, email: true, nome: true, perfil: true, celular: true, ativo: true, criadoEm: true };
+const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO", "TRANSPORTADOR", "PORTARIA", "GESTOR_TRANSPORTADORA"];
+const SELECT = { id: true, email: true, nome: true, perfil: true, celular: true, ativo: true, criadoEm: true, transportadoraId: true, transportadora: { select: { id: true, nome: true } } };
+
+// Gestor da transportadora precisa estar ligado a uma transportadora ativa; os outros perfis, não.
+async function transportadoraDoPerfil(perfil, valor) {
+  if (perfil !== "GESTOR_TRANSPORTADORA") return null;
+  const id = Number(valor);
+  if (!Number.isInteger(id) || id <= 0) throw erroHttp(400, "Escolha a transportadora do gestor.");
+  const t = await prisma.transportadora.findUnique({ where: { id } });
+  if (!t?.ativo) throw erroHttp(400, "Transportadora não encontrada ou inativa.");
+  return id;
+}
 
 // Celular para os SMS de rastreamento, gravado no formato internacional (+55…).
 function celular(valor) {
@@ -96,8 +106,10 @@ usuariosRouter.post("/", asyncHandler(async (req, res) => {
     nome: texto(b.nome, "Nome", { obrigatorio: true, max: 120 }),
     perfil: umDe(b.perfil, PERFIS, "Perfil", { obrigatorio: true }),
     celular: celular(b.celular),
+    transportadoraId: null,
     senhaHash: await bcrypt.hash(validarSenha(b.senha), 10),
   };
+  dados.transportadoraId = await transportadoraDoPerfil(dados.perfil, b.transportadoraId);
   const criado = await prisma.usuario.create({ data: dados, select: { ...SELECT, permissoes: true } }).catch((err) => {
     if (err.code === "P2002") throw erroHttp(409, "Já existe um usuário com esse e-mail.");
     throw err;
@@ -119,6 +131,9 @@ usuariosRouter.patch("/:id", asyncHandler(async (req, res) => {
   if (trocouPerfil) dados.permissoes = Prisma.DbNull;
   if ("ativo" in b) dados.ativo = Boolean(b.ativo);
   if ("celular" in b) dados.celular = celular(b.celular);
+  if ("perfil" in b || "transportadoraId" in b) {
+    dados.transportadoraId = await transportadoraDoPerfil(dados.perfil ?? antes.perfil, "transportadoraId" in b ? b.transportadoraId : antes.transportadoraId);
+  }
   if (b.senha) {
     dados.senhaHash = await bcrypt.hash(validarSenha(b.senha), 10);
     // Senha redefinida derruba as sessões abertas (inclusive "lembrar meu login" de 30 dias).

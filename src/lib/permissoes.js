@@ -23,15 +23,20 @@ export const PADRAO_POR_PERFIL = {
   VISUALIZACAO: [],
   TRANSPORTADOR: ["qr.registrar"],
   PORTARIA: ["qr.registrar"],
+  GESTOR_TRANSPORTADORA: [],
 };
 
 // Perfis de campo usam só parte do sistema; o resto da API fica fechado para eles.
 // - Transportador: só as telas do QR (celular).
 // - Portaria: telas do QR + consulta do Pátio (e o resumo de alertas que o Pátio mostra).
+// - Gestor da transportadora: só a gestão dos motoristas da própria transportadora.
+// `escrita` = onde o perfil pode gravar (fora dali, só consulta).
 const API_DO_PERFIL = {
-  TRANSPORTADOR: { rotas: ["/qr/"], mensagem: "O perfil Transportador acessa apenas a leitura das etiquetas QR." },
-  PORTARIA: { rotas: ["/qr/", "/painel", "/alertas/resumo"], mensagem: "O perfil Portaria acessa apenas a leitura das etiquetas QR e a consulta do Pátio." },
+  TRANSPORTADOR: { rotas: ["/qr/"], escrita: ["/qr/"], mensagem: "O perfil Transportador acessa apenas a leitura das etiquetas QR." },
+  PORTARIA: { rotas: ["/qr/", "/painel", "/alertas/resumo"], escrita: ["/qr/"], mensagem: "O perfil Portaria acessa apenas a leitura das etiquetas QR e a consulta do Pátio." },
+  GESTOR_TRANSPORTADORA: { rotas: ["/motoristas"], escrita: ["/motoristas"], mensagem: "O perfil Gestor da transportadora acessa apenas a gestão dos motoristas." },
 };
+export const ehGestorTransportadora = (req) => req.usuario?.perfil === "GESTOR_TRANSPORTADORA";
 export const ehTransportador = (req) => req.usuario?.perfil === "TRANSPORTADOR";
 export const ehPortaria = (req) => req.usuario?.perfil === "PORTARIA";
 export function restringirPerfisDeCampo(req, res, next) {
@@ -39,8 +44,8 @@ export function restringirPerfisDeCampo(req, res, next) {
   if (regra && !regra.rotas.some((r) => req.path === r || req.path.startsWith(r.endsWith("/") ? r : `${r}/`))) {
     return res.status(403).json({ erro: regra.mensagem });
   }
-  // Consulta do Pátio: nada de gravar fora do QR.
-  if (regra && req.method !== "GET" && !req.path.startsWith("/qr/")) return res.status(403).json({ erro: regra.mensagem });
+  // Fora das rotas de escrita do perfil (ex.: consulta do Pátio), só leitura.
+  if (regra && req.method !== "GET" && !regra.escrita.some((r) => req.path.startsWith(r))) return res.status(403).json({ erro: regra.mensagem });
   next();
 }
 
@@ -66,7 +71,7 @@ export async function carregarUsuarioAtual(req, res, next) {
     if ((req.usuario.sv ?? 0) !== (u.sessoesValidasApos?.getTime() ?? 0)) {
       return res.status(401).json({ erro: "Sua senha foi alterada. Entre novamente." });
     }
-    req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil };
+    req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil, transportadoraId: u.transportadoraId };
     req.permissoes = permissoesEfetivas(u);
     next();
   } catch (err) {

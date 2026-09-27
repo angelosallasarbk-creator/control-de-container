@@ -32,6 +32,7 @@ const irPara = (chave) => router.replace({ query: { ...route.query, aba: chave }
 const podeEditar = computed(() => auth.pode("administrar"));
 // Liga/desliga do rastreamento (o servidor guarda 1/0).
 const smsLigado = computed({ get: () => Boolean(cfg.rastreioSmsAtivo), set: (v) => (cfg.rastreioSmsAtivo = v ? 1 : 0) });
+const personalizado = computed({ get: () => Boolean(cfg.rastreioPersonalizado), set: (v) => (cfg.rastreioPersonalizado = v ? 1 : 0) });
 
 // ---------- Regras (uma única configuração, salva por aba) ----------
 const cfg = reactive({ intervaloLeituraMinutos: null, cotacaoUSD: 0, cotacaoEUR: 0, urlPublica: "" });
@@ -211,10 +212,28 @@ onMounted(async () => {
       usuário (Configurações → Usuários). O envio usa a conta Brevo (créditos de SMS); sem a chave configurada no servidor, o SMS é só simulado.
     </div>
     <div class="grade-form">
-      <label style="grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; justify-content: flex-start; font-weight: 600; cursor: pointer">
-        <input v-model="smsLigado" type="checkbox" :disabled="!podeEditar" style="width: auto" />
+      <label class="chave-linha">
+        <input v-model="smsLigado" type="checkbox" :disabled="!podeEditar" />
         <span>Enviar SMS de rastreamento</span>
       </label>
+    </div>
+
+    <h3 class="subtitulo">Quando pedir a posição</h3>
+    <label class="chave-linha">
+      <input v-model="personalizado" type="checkbox" :disabled="!podeEditar" />
+      <span>Intervalo personalizado</span>
+    </label>
+    <p class="mudo pequeno" style="margin: 4px 0 10px">
+      <template v-if="personalizado">Pede a posição a cada intervalo fixo enquanto o container estiver ativo. Atenção ao custo: em trânsito, 30 min = até 48 SMS por dia por container.</template>
+      <template v-else>
+        <strong>Padrão — só em trechos críticos</strong> (menos SMS). Pede a posição quando:
+        a <strong>previsão estoura</strong> (passou do horário planejado da próxima etapa além da tolerância da aba Geral),
+        há <strong>risco de prazo</strong> (alerta aberto de risco de demurrage, risco de deadline, free time ou deadline),
+        o container está <strong>parado</strong> (2 últimas posições no mesmo lugar, até 500 m) ou está <strong>sem posição</strong> há muito tempo.
+        No ponto de carregamento só vale o risco de prazo. Na ficha, o botão <strong>"Solicitar posição"</strong> pede na hora.
+      </template>
+    </p>
+    <div v-if="personalizado" class="grade-form">
       <div class="campo">
         <label>Pedir a posição a cada (minutos)</label>
         <input v-model.number="cfg.rastreioIntervaloMin" type="number" min="10" max="1440" step="5" required :disabled="!podeEditar" />
@@ -223,7 +242,32 @@ onMounted(async () => {
       <div class="campo">
         <label>No ponto de carregamento, a cada (minutos)</label>
         <input v-model.number="cfg.rastreioIntervaloCarregamentoMin" type="number" min="10" max="1440" step="5" required :disabled="!podeEditar" />
-        <span class="dica">Da chegada até a saída do ponto de carregamento (container parado): {{ (cfg.rastreioIntervaloCarregamentoMin / 60).toFixed(1).replace(".0", "").replace(".", ",") }} h.</span>
+        <span class="dica">Da chegada até a saída do ponto de carregamento: {{ (cfg.rastreioIntervaloCarregamentoMin / 60).toFixed(1).replace(".0", "").replace(".", ",") }} h.</span>
+      </div>
+    </div>
+    <div v-else class="grade-form">
+      <div class="campo">
+        <label>Em trecho crítico, repetir a cada (minutos)</label>
+        <input v-model.number="cfg.rastreioCriticoIntervaloMin" type="number" min="15" max="1440" step="5" required :disabled="!podeEditar" />
+        <span class="dica">Enquanto houver previsão estourada, risco de prazo ou parado.</span>
+      </div>
+      <div class="campo">
+        <label>Parado há mais de (horas)</label>
+        <input v-model.number="cfg.rastreioParadoHoras" type="number" min="0.5" max="72" step="0.5" required :disabled="!podeEditar" />
+        <span class="dica">Tempo entre as 2 últimas posições no mesmo lugar (até 500 m).</span>
+      </div>
+      <div class="campo">
+        <label>Sem posição há mais de (horas)</label>
+        <input v-model.number="cfg.rastreioSemPosicaoHoras" type="number" min="1" max="168" step="1" required :disabled="!podeEditar" />
+        <span class="dica">Em trânsito: checagem esparsa (repete a cada este tempo sem resposta).</span>
+      </div>
+    </div>
+    <h3 class="subtitulo">Dados pessoais (LGPD)</h3>
+    <div class="grade-form">
+      <div class="campo">
+        <label>Guardar as posições GPS por (dias)</label>
+        <input v-model.number="cfg.retencaoPosicoesDias" type="number" min="30" max="3650" step="1" required :disabled="!podeEditar" />
+        <span class="dica">Posições mais antigas são apagadas automaticamente uma vez por dia.</span>
       </div>
     </div>
     <p class="mudo pequeno">O link do SMS usa o endereço do sistema da aba <a href="#" @click.prevent="irPara('etiquetas')">Etiquetas QR</a>.</p>
@@ -253,3 +297,9 @@ onMounted(async () => {
     </table>
   </div>
 </template>
+
+<style scoped>
+.chave-linha { display: flex; gap: 8px; align-items: center; font-weight: 600; cursor: pointer; grid-column: 1 / -1; }
+.chave-linha input { width: auto; margin: 0; }
+.subtitulo { margin: 16px 0 6px; font-size: 15px; }
+</style>

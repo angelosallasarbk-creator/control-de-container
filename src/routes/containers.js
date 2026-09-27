@@ -12,7 +12,7 @@ import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib
 import { montarContextos } from "../lib/previsao.js";
 import { registrarLeitura } from "../lib/leituras.js";
 import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
-import { resumoRastreamento } from "../lib/rastreamento.js";
+import { resumoRastreamento, solicitarPosicaoManual } from "../lib/rastreamento.js";
 import { gerarModelo, lerPlanilha } from "../lib/importacaoContainers.js";
 import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
 
@@ -241,6 +241,12 @@ containersRouter.post(
 
 containersRouter.get("/:id", asyncHandler(async (req, res) => {
   res.json(await detalhe(validarId(req.params.id)));
+}));
+
+// Botão "Solicitar posição" da aba Rastreamento: SMS agora para o responsável atual.
+containersRouter.post("/:id/solicitar-posicao", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
+  const r = await solicitarPosicaoManual({ containerId: validarId(req.params.id), solicitante: req.usuario });
+  res.status(201).json({ ...r, mensagem: r.status === "SIMULADA" ? `Pedido registrado para ${r.para} (SMS simulado — chave do Brevo não configurada).` : `SMS enviado para ${r.para}.` });
 }));
 
 // Aba "Rastreamento" da ficha: responsável pelos SMS, posições GPS e SMS enviados.

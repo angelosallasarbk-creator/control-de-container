@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth.js";
+// Versão do package.json (injetada pelo Vite no build) — rodapé do menu.
+const VERSAO = __VERSAO__;
 import { api } from "./api.js";
 import { ROTULO_ALERTA, ROTULO_PERFIL } from "./formato.js";
 import Login from "./pages/Login.vue";
@@ -19,10 +21,13 @@ const router = useRouter();
 const TELAS_DO_PERFIL = {
   TRANSPORTADOR: { telas: ["leitura-qr", "leitura-codigo"], inicio: "/leitura" },
   PORTARIA: { telas: ["painel", "leitura-qr", "leitura-codigo"], inicio: "/" },
+  // Gestor da transportadora: só a gestão dos motoristas da transportadora dele.
+  GESTOR_TRANSPORTADORA: { telas: ["motoristas"], inicio: "/motoristas" },
 };
 const restricao = computed(() => TELAS_DO_PERFIL[auth.usuario?.perfil] ?? null);
 const ehTransportador = computed(() => auth.usuario?.perfil === "TRANSPORTADOR");
 const ehPortaria = computed(() => auth.usuario?.perfil === "PORTARIA");
+const ehGestor = computed(() => auth.usuario?.perfil === "GESTOR_TRANSPORTADORA");
 // Só decide com a rota já resolvida: na carga inicial (ex.: QR aberto já logado) route.name ainda
 // é indefinido e redirecionaria a leitura do QR por engano.
 const foraDoPerfil = computed(() => Boolean(restricao.value && route.name && !route.meta.publica && !restricao.value.telas.includes(route.name)));
@@ -159,7 +164,7 @@ function bipar() {
 }
 
 async function atualizarAlertas() {
-  if (ehTransportador.value) return; // sem acesso a alertas
+  if (ehTransportador.value || ehGestor.value) return; // sem acesso a alertas
   try {
     const r = await api.resumoAlertas();
     const ids = new Set(r.criticosNaoReconhecidos.map((a) => a.id));
@@ -201,7 +206,7 @@ function trocarVisao(valor) {
 // seção da tela aberta fica sempre expandida para o item ativo não sumir.
 const CHAVE_SECOES = "cc_menu_secoes";
 const SECAO_DA_ROTA = [
-  ["cadastros", ["/cadastros", "/locais"]],
+  ["cadastros", ["/cadastros", "/locais", "/motoristas"]],
   ["administracao", ["/usuarios", "/integracao", "/configuracoes"]],
 ];
 function lerSecoes() {
@@ -255,9 +260,10 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         <button v-else-if="menuFlutuante" class="fechar-menu" title="Manter menu aberto" aria-label="Manter menu aberto" @click="fixarMenu">📌</button>
       </div>
       <nav>
-        <router-link to="/">Home</router-link>
+        <router-link v-if="ehGestor" to="/motoristas">Motoristas</router-link>
+        <router-link v-else to="/">Home</router-link>
         <router-link v-if="ehPortaria" to="/leitura">Registrar pelo código</router-link>
-        <template v-else>
+        <template v-else-if="!ehGestor">
         <router-link to="/containers" :class="{ ativo: route.path.startsWith('/containers') }">Containers</router-link>
         <router-link to="/alertas">
           Alertas
@@ -278,6 +284,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
           <router-link to="/cadastros/armadores">Armadores</router-link>
           <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
+          <router-link to="/cadastros/transportadoras">Transportadoras</router-link>
+          <router-link v-if="auth.pode('cadastros.editar')" to="/motoristas">Motoristas</router-link>
         </div>
         <template v-if="auth.pode('administrar') || auth.pode('auditoria.ver')">
           <button
@@ -298,6 +306,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         <div class="negrito" style="color: #fff">{{ auth.usuario.nome }}</div>
         <div>{{ ROTULO_PERFIL[auth.usuario.perfil] }}</div>
         <button class="pequeno" @click="auth.logout()">Sair</button>
+        <div class="versao" title="Versão do sistema">v{{ VERSAO }}</div>
       </div>
     </aside>
 
@@ -331,7 +340,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
           </div>
           <FiltrosContainers v-if="['containers', 'ficha'].includes(route.name)" />
         </div>
-        <router-link v-if="!ehPortaria" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
+        <router-link v-if="!ehPortaria && !ehGestor" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
           <span class="btn pequeno" aria-hidden="true">🔔</span>
           <span v-if="resumo?.naoReconhecidos" class="badge">{{ resumo.naoReconhecidos }}</span>
         </router-link>

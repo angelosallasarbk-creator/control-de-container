@@ -1238,7 +1238,7 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   assert.equal(cfg.rastreioIntervaloMin, 30);
   assert.equal(cfg.rastreioIntervaloCarregamentoMin, 240);
   assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioIntervaloMin: 2 })).status, 400);
-  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: true })).body.rastreioSmsAtivo, 1);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: true, rastreioPersonalizado: 1 })).body.rastreioSmsAtivo, 1);
 
   const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
   const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), produtoId: await ativo("produtos") };
@@ -1355,4 +1355,310 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   assert.ok(!caixaDeSaidaSms.slice(total).some((s) => s.texto.includes("RSTU5000005")));
   assert.equal((await request(app).get(`/api/posicao/${codigo1}`)).body.valido, false);
   await agentes.ADMIN.put("/api/configuracao").send(cfg);
+});
+
+test("rastreamento em trechos críticos: previsão estourada, risco de prazo, parado, sem posição e pedido manual", async () => {
+  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const MIN = 60e3, H = 60 * MIN;
+  const T = new Date();
+  const at = (ms) => new Date(T.getTime() + ms);
+
+  const u = await agentes.ADMIN.post("/api/usuarios").send({ email: "critico@teste.local", nome: "Motorista Crítico", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11 97777-0000" });
+  assert.equal(u.status, 201);
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  assert.equal(cfg.rastreioPersonalizado, 0, "padrão = trechos críticos");
+  assert.deepEqual([cfg.rastreioCriticoIntervaloMin, cfg.rastreioParadoHoras, cfg.rastreioSemPosicaoHoras], [60, 3, 12]);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioCriticoIntervaloMin: 5 })).status, 400);
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1, toleranciaPlanejadoMinutos: 60 });
+
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  let n = 0;
+  async function container(status, extra = {}) {
+    n++;
+    const numero = `CRTU${String(700000 + n).padStart(6, "0")}0`;
+    const r = await agentes.ADMIN.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await prisma.container.update({
+      where: { id: r.body.id },
+      data: { status, rastreioResponsavelId: u.body.id, rastreioDesde: at(-1 * H), rastreioUltimoEnvioEm: at(-1 * H), ...extra },
+    });
+    return r.body.id;
+  }
+  const posicao = (containerId, lat, lon, quando) =>
+    prisma.posicaoContainer.create({ data: { containerId, usuarioId: u.body.id, latitude: lat, longitude: lon, origem: "QR", etapa: "COLETADO", registradaEm: quando } });
+  const pedidos = (id) => prisma.mensagemSms.findMany({ where: { containerId: id, tipo: "POSICAO" }, orderBy: { id: "asc" } });
+
+  // A) Previsão estourada: chegada planejada T+1h, tolerância 60 min → só depois de T+2h.
+  const A = await container("COLETADO", { coletadoEm: at(-2 * H), rastreioUltimoEnvioEm: T, planejamento: { NA_FABRICA: at(1 * H).toISOString() } });
+  await posicao(A, -23.5, -46.6, T);
+  // B) Risco de prazo no ponto de carregamento (alerta aberto).
+  const B = await container("NA_FABRICA", { chegadaFabricaEm: at(-3 * H) });
+  // C) No carregamento, sem alerta e sem posição há muito tempo: parado lá é o esperado → nada.
+  const C = await container("NA_FABRICA", { chegadaFabricaEm: at(-3 * H), rastreioDesde: at(-20 * H), rastreioUltimoEnvioEm: at(-20 * H) });
+  // D) Parado: 2 posições a ~100 m uma da outra com 4 h entre elas. E) Andando: 5 km → nada.
+  const D = await container("COLETADO", { coletadoEm: at(-5 * H), rastreioUltimoEnvioEm: at(-2 * H) });
+  await posicao(D, -23.5, -46.6, at(-4 * H));
+  await posicao(D, -23.5009, -46.6, at(-10 * MIN));
+  const E = await container("COLETADO", { coletadoEm: at(-5 * H), rastreioUltimoEnvioEm: at(-2 * H) });
+  await posicao(E, -23.5, -46.6, at(-4 * H));
+  await posicao(E, -23.545, -46.6, at(-10 * MIN));
+  // F) Em trânsito sem nenhuma posição há 13 h.
+  const F = await container("SAIU_FABRICA", { saidaFabricaEm: at(-14 * H), rastreioDesde: at(-13 * H), rastreioUltimoEnvioEm: at(-13 * H) });
+  await prisma.alerta.create({ data: { containerId: B, tipo: "RISCO_DEMURRAGE", nivel: "ATENCAO", mensagem: "teste", chaveAberta: `${B}:RISCO_DEMURRAGE:ATENCAO` } });
+
+  await executarRastreamento(at(90 * MIN));
+  assert.equal((await pedidos(A)).length, 0, "A: ainda dentro da tolerância");
+  const b1 = await pedidos(B);
+  assert.equal(b1.length, 1);
+  assert.equal(b1[0].motivo, "Risco de demurrage");
+  assert.equal((await pedidos(C)).length, 0, "C: carregamento sem risco não pede");
+  const d1 = await pedidos(D);
+  assert.equal(d1.length, 1);
+  assert.match(d1[0].motivo, /^Parado há 5h/);
+  assert.equal((await pedidos(E)).length, 0, "E: em movimento, com posição recente");
+  const f1 = await pedidos(F);
+  assert.equal(f1.length, 1);
+  assert.match(f1[0].motivo, /Sem posição há 14h30/);
+  assert.ok((await prisma.solicitacaoPosicao.findFirst({ where: { containerId: F } })).motivo.startsWith("Sem posição"));
+
+  await executarRastreamento(at(2 * H + 10 * MIN));
+  const a1 = await pedidos(A);
+  assert.equal(a1.length, 1);
+  assert.match(a1[0].motivo, /^Previsão estourada: chegada ao carregamento planejada para/);
+  assert.equal((await pedidos(B)).length, 1, "B: 40 min depois, ainda não repete (60 min)");
+  await executarRastreamento(at(2 * H + 40 * MIN));
+  assert.equal((await pedidos(B)).length, 2, "B: repete depois de 60 min enquanto houver risco");
+  assert.equal((await pedidos(F)).length, 1, "F: 'sem posição' só repete a cada 12 h");
+
+  // Resumo da aba: modo e motivos atuais.
+  const rD = (await agentes.OPERADOR.get(`/api/containers/${D}/rastreamento`)).body;
+  assert.equal(rD.modo, "CRITICO");
+  assert.ok(rD.motivos.some((m) => m.startsWith("Parado há")));
+  const rC = (await agentes.OPERADOR.get(`/api/containers/${C}/rastreamento`)).body;
+  assert.deepEqual(rC.motivos, []);
+  assert.equal(rC.proximoPedidoEm, null, "carregamento sem risco: nenhum pedido previsto");
+  const rE = (await agentes.OPERADOR.get(`/api/containers/${E}/rastreamento`)).body;
+  assert.ok(new Date(rE.proximoPedidoEm) > T, "em trânsito sem motivo: próxima checagem 'sem posição'");
+
+  // Botão "Solicitar posição".
+  assert.equal((await agentes.VISUALIZACAO.post(`/api/containers/${C}/solicitar-posicao`)).status, 403);
+  const manual = await agentes.OPERADOR.post(`/api/containers/${C}/solicitar-posicao`);
+  assert.equal(manual.status, 201, JSON.stringify(manual.body));
+  assert.equal(manual.body.para, "Motorista Crítico");
+  assert.equal((await pedidos(C))[0].motivo, "Pedido manual por OPERADOR");
+  const repetido = await agentes.OPERADOR.post(`/api/containers/${C}/solicitar-posicao`);
+  assert.equal(repetido.status, 429, "no máximo 1 a cada 5 min");
+  assert.match(repetido.body.erro, /há menos de 5 min/);
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${C}`)).body;
+  assert.ok(log.some((l) => l.descricao.includes("posição solicitada manualmente a critico@teste.local")));
+  const semResp = await agentes.ADMIN.post("/api/containers").send({ numero: "CRTU7999990", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${semResp.body.id}/solicitar-posicao`)).status, 409, "sem responsável");
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 0 });
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${D}/solicitar-posicao`)).status, 409, "SMS desligado");
+
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+  for (const id of [A, B, C, D, E, F, semResp.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de trechos críticos" });
+});
+
+test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor da transportadora e retenção", async () => {
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const { executarRastreamento, purgarDadosAntigos } = await import("./lib/rastreamento.js");
+  const XFF = { "X-Forwarded-For": "198.51.100.20" };
+  const codigoDe = (tel) => /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
+  const pedir = (ag, celular) => ag.post("/api/motorista/codigo").set(XFF).send({ celular });
+  const verificar = (ag, celular, codigo) => ag.post("/api/motorista/verificar").set(XFF).send({ celular, codigo });
+  const liberarNovoPedido = (celular) => prisma.codigoAcessoMotorista.updateMany({ where: { celular }, data: { criadoEm: new Date(Date.now() - 2 * 60e3) } });
+
+  // Transportadoras (cadastro).
+  const alfa = await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "Transp Alfa", cnpj: "12.345.678/0001-90" });
+  assert.equal(alfa.status, 201, JSON.stringify(alfa.body));
+  const beta = (await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "Transp Beta" })).body;
+  assert.equal((await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "X", cnpj: "123" })).status, 400);
+
+  // ---- Código por SMS ----
+  const m1 = request.agent(app);
+  assert.equal((await pedir(m1, "123")).status, 400);
+  const TEL = "+5511955550001";
+  const p1 = await pedir(m1, "(11) 95555-0001");
+  assert.equal(p1.status, 200, JSON.stringify(p1.body));
+  assert.equal(p1.body.simulado, true);
+  const cod1 = codigoDe(TEL);
+  assert.match(cod1, /^\d{6}$/);
+  const salvo = await prisma.codigoAcessoMotorista.findFirst({ where: { celular: TEL }, orderBy: { id: "desc" } });
+  assert.notEqual(salvo.codigoHash, cod1, "só o hash fica no banco");
+  assert.equal(Math.round((salvo.expiraEm - salvo.criadoEm) / 60e3), 15, "vale 15 min");
+  assert.equal((await pedir(m1, TEL)).status, 429, "1 pedido por minuto");
+  // Novo pedido encerra o anterior.
+  await liberarNovoPedido(TEL);
+  assert.equal((await pedir(m1, TEL)).status, 200);
+  const cod2 = codigoDe(TEL);
+  if (cod1 !== cod2) assert.equal((await verificar(m1, TEL, cod1)).status, 400, "código antigo não vale mais");
+  // Expirado.
+  await prisma.codigoAcessoMotorista.updateMany({ where: { celular: TEL, encerradoEm: null }, data: { expiraEm: new Date(Date.now() - 1000) } });
+  assert.match((await verificar(m1, TEL, cod2)).body.erro, /expirado/);
+  // Tentativas: 5 erradas encerram o código.
+  const TEL2 = "+5511955550002";
+  const m2 = request.agent(app);
+  await pedir(m2, TEL2);
+  const certo2 = codigoDe(TEL2);
+  const errado = certo2 === "000000" ? "111111" : "000000";
+  for (let i = 1; i <= 4; i++) assert.match((await verificar(m2, TEL2, errado)).body.erro, new RegExp(`Restam ${5 - i}`));
+  assert.match((await verificar(m2, TEL2, errado)).body.erro, /Limite de tentativas/);
+  assert.equal((await verificar(m2, TEL2, certo2)).status, 400, "depois do limite nem o certo vale");
+
+  // ---- Primeiro acesso: código certo → cadastro ----
+  await liberarNovoPedido(TEL);
+  await pedir(m1, TEL);
+  const v = await verificar(m1, TEL, codigoDe(TEL));
+  assert.equal(v.status, 200);
+  assert.equal(v.body.precisaCadastro, true);
+  assert.ok(v.body.transportadoras.some((t) => t.nome === "Transp Alfa"));
+  assert.equal((await verificar(m1, TEL, codigoDe(TEL))).status, 400, "código de uso único");
+  const cad = (extra) => m1.post("/api/motorista/cadastro").set(XFF).send({ comprovante: v.body.comprovante, nome: "João da Silva", transportadoraId: alfa.body.id, placa: "abc1d23", aceite: true, ...extra });
+  assert.equal((await cad({ aceite: false })).status, 400, "precisa aceitar o termo");
+  assert.equal((await cad({ cpf: "111.111.111-11" })).status, 400, "CPF inválido");
+  assert.equal((await m1.post("/api/motorista/cadastro").set(XFF).send({ comprovante: "forjado", nome: "X Y Z", transportadoraId: alfa.body.id, aceite: true })).status, 401);
+  const feito = await cad({});
+  assert.equal(feito.status, 201, JSON.stringify(feito.body));
+  assert.equal(feito.body.motorista.placa, "ABC1D23");
+  const cookie = feito.headers["set-cookie"].find((x) => x.startsWith("cc_motorista="));
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /Path=\/api\/motorista/);
+  const token = cookie.split(";")[0].split("=")[1];
+  assert.equal(await prisma.sessaoMotorista.count({ where: { tokenHash: token } }), 0, "só o hash da sessão fica no banco");
+  const motorista = await prisma.motorista.findUnique({ where: { celular: TEL } });
+  assert.ok(motorista.consentimentoEm);
+  assert.equal((await m1.get("/api/motorista/eu")).body.motorista.nome, "João da Silva");
+  assert.equal((await m1.get("/api/containers")).status, 401, "motorista não é usuário: resto do sistema fechado");
+  assert.equal((await request(app).get("/api/motorista/eu")).status, 401, "sem cookie, sem acesso");
+
+  // ---- QR pelo motorista (papel de Transportador) + rastreamento ----
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1, rastreioPersonalizado: 1 });
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const base = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), produtoId: await ativo("produtos") };
+  const c = await agentes.ADMIN.post("/api/containers").send({ numero: "MOTU8000008", confirmarDigito: true, tipo: "REEFER_40", ...base });
+  assert.equal(c.status, 201);
+  const [e] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  assert.equal((await m1.get(`/api/motorista/qr/${e.token}`)).body.modoTransportador, true);
+  assert.equal((await m1.post(`/api/motorista/qr/${e.token}/portaria`).send({ numero: "MOTU8000008", movimento: "ENTRADA", temperatura: -18 })).status, 403);
+  const col = await m1.post(`/api/motorista/qr/${e.token}/coleta`).send({ numero: "MOTU8000008", portoRetiradaId: ids.santos, temperatura: -18, latitude: -23.95, longitude: -46.33 });
+  assert.equal(col.status, 201, JSON.stringify(col.body));
+  let db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.equal(db.status, "COLETADO");
+  assert.equal(db.rastreioMotoristaId, motorista.id);
+  assert.equal(db.rastreioResponsavelId, null);
+  assert.ok(caixaDeSaidaSms.some((s) => s.para === TEL && s.texto.includes("MOTU8000008") && s.texto.includes("vinculado")));
+  const ev = (await agentes.ADMIN.get(`/api/containers/${c.body.id}`)).body.eventos.find((x) => x.statusPara === "COLETADO");
+  assert.equal(ev.usuarioEmail, "João da Silva (motorista · Transp Alfa)");
+  const r = (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body;
+  assert.equal(r.responsavel.tipo, "MOTORISTA");
+  assert.equal(r.responsavel.transportadora, "Transp Alfa");
+  assert.equal(r.posicoes[0].usuario, "João da Silva");
+  // Pedido de posição para o motorista e resposta pelo link.
+  await executarRastreamento(new Date(Date.now() + 31 * 60e3));
+  const linkMot = /\/p\/([A-Za-z0-9_-]+)$/.exec(caixaDeSaidaSms.filter((s) => s.para === TEL).at(-1).texto)?.[1];
+  assert.ok(linkMot, "pedido de posição chegou ao motorista");
+  assert.equal((await request(app).get(`/api/posicao/${linkMot}`)).body.valido, true);
+  // Operador registra pelo QR: responsável passa a ser o usuário e o link do motorista cai.
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e.token}/leituras`).send({ temperatura: -18 })).status, 201);
+  db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.equal(db.rastreioMotoristaId, null);
+  assert.ok(db.rastreioResponsavelId);
+  assert.equal((await request(app).get(`/api/posicao/${linkMot}`)).body.valido, false);
+  // Motorista registra de novo: volta para ele.
+  assert.equal((await m1.post(`/api/motorista/qr/${e.token}/leituras`).send({ temperatura: -18.2 })).status, 201);
+  db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.deepEqual([db.rastreioMotoristaId, db.rastreioResponsavelId], [motorista.id, null]);
+
+  // ---- Gestor da transportadora ----
+  assert.equal((await agentes.ADMIN.post("/api/usuarios").send({ email: "gestor@teste.local", nome: "Gestor Alfa", perfil: "GESTOR_TRANSPORTADORA", senha: "senha-teste-123" })).status, 400, "gestor precisa de transportadora");
+  const g = await agentes.ADMIN.post("/api/usuarios").send({ email: "gestor@teste.local", nome: "Gestor Alfa", perfil: "GESTOR_TRANSPORTADORA", senha: "senha-teste-123", transportadoraId: alfa.body.id });
+  assert.equal(g.status, 201, JSON.stringify(g.body));
+  const gestor = await logar("gestor@teste.local");
+  assert.equal((await gestor.get("/api/containers")).status, 403, "gestor só vê motoristas");
+  assert.equal((await gestor.get("/api/usuarios")).status, 403);
+  // Motorista da outra transportadora (pré-cadastro pela administração).
+  const mb = await agentes.SUPERVISOR.post("/api/motoristas").send({ nome: "Maria Beta", celular: "11955550009", transportadoraId: beta.id });
+  assert.equal(mb.status, 201, JSON.stringify(mb.body));
+  assert.equal(mb.body.consentimentoEm, null, "pré-cadastro: termo aceito só no 1º acesso");
+  assert.equal((await agentes.SUPERVISOR.post("/api/motoristas").send({ nome: "Outro Nome", celular: "11955550009", transportadoraId: beta.id })).status, 409);
+  const lista = (await gestor.get("/api/motoristas")).body;
+  assert.deepEqual(lista.map((x) => x.nome), ["João da Silva"], "gestor vê só os da própria transportadora");
+  assert.equal(lista[0].sessoesAtivas, 1);
+  assert.equal((await gestor.patch(`/api/motoristas/${mb.body.id}`).send({ bloqueado: true })).status, 404, "não mexe em motorista de outra");
+  assert.equal((await agentes.VISUALIZACAO.get("/api/motoristas")).status, 403);
+  assert.ok((await agentes.SUPERVISOR.get("/api/motoristas")).body.length >= 2, "administração vê todos");
+  // Pré-cadastro pelo gestor: transportadora é sempre a dele.
+  const pre = await gestor.post("/api/motoristas").send({ nome: "Pedro Pré", celular: "11955550010", transportadoraId: beta.id, placa: "XYZ9A88" });
+  assert.equal(pre.status, 201);
+  assert.equal(pre.body.transportadora.nome, "Transp Alfa");
+  // Pré-cadastrado entra: confirma o celular, vê os dados preenchidos e aceita o termo (mesmo registro).
+  const m3 = request.agent(app);
+  await pedir(m3, "11955550010");
+  const v3 = await verificar(m3, "11955550010", codigoDe("+5511955550010"));
+  assert.equal(v3.body.precisaCadastro, true);
+  assert.equal(v3.body.preenchido.nome, "Pedro Pré");
+  const c3 = await m3.post("/api/motorista/cadastro").set(XFF).send({ comprovante: v3.body.comprovante, nome: "Pedro Pré", transportadoraId: alfa.body.id, placa: "XYZ9A88", aceite: true });
+  assert.equal(c3.status, 201);
+  assert.equal(c3.body.motorista.id, pre.body.id);
+
+  // Bloqueio: derruba o acesso na hora; não consegue nem pedir código.
+  const bl = await gestor.patch(`/api/motoristas/${motorista.id}`).send({ bloqueado: true });
+  assert.equal(bl.status, 200);
+  assert.equal(bl.body.bloqueado, true);
+  const eu = await m1.get("/api/motorista/eu");
+  assert.equal(eu.status, 403);
+  assert.equal(eu.body.codigo, "MOTORISTA_BLOQUEADO");
+  await liberarNovoPedido(TEL);
+  assert.equal((await pedir(m1, TEL)).status, 403);
+  const logB = (await agentes.ADMIN.get(`/api/logs?entidade=Motorista&entidadeId=${motorista.id}`)).body;
+  assert.ok(logB.some((l) => l.acao === "BLOQUEAR" && l.usuarioEmail === "gestor@teste.local"));
+  // SMS para motorista bloqueado não sai (registra a falha).
+  await prisma.container.update({ where: { id: c.body.id }, data: { rastreioUltimoEnvioEm: new Date(Date.now() - 60 * 60e3) } });
+  await executarRastreamento();
+  const ultimo = await prisma.mensagemSms.findFirst({ where: { containerId: c.body.id }, orderBy: { id: "desc" } });
+  assert.deepEqual([ultimo.status, ultimo.erro], ["FALHA", "Motorista bloqueado pela transportadora."]);
+  // Desbloquear: volta a poder entrar (já cadastrado: entra direto).
+  await gestor.patch(`/api/motoristas/${motorista.id}`).send({ bloqueado: false });
+  await liberarNovoPedido(TEL);
+  assert.equal((await pedir(m1, TEL)).status, 200);
+  assert.equal((await verificar(m1, TEL, codigoDe(TEL))).body.motorista.nome, "João da Silva");
+  assert.equal((await m1.get("/api/motorista/eu")).status, 200);
+  // Encerrar acessos (celular perdido).
+  assert.ok((await gestor.post(`/api/motoristas/${motorista.id}/encerrar-sessoes`)).body.encerradas >= 1);
+  assert.equal((await m1.get("/api/motorista/eu")).status, 401);
+
+  // ---- Planilha de motoristas (gestor) ----
+  const ExcelJS = (await import("exceljs")).default;
+  const binario = (res, cb) => { const partes = []; res.on("data", (x) => partes.push(x)); res.on("end", () => cb(null, Buffer.concat(partes))); };
+  const modelo = await gestor.get("/api/motoristas/modelo").buffer(true).parse(binario);
+  assert.equal(modelo.status, 200);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(modelo.body);
+  const ws = wb.getWorksheet("Motoristas");
+  assert.deepEqual(ws.getRow(1).values.slice(1), ["Nome *", "Celular *", "Placa", "CPF"], "gestor: sem coluna de transportadora");
+  ws.addRow(["Ana Planilha", "11955550011", "QWE1234", "529.982.247-25"]);
+  ws.addRow(["Celular Ruim", "123"]);
+  ws.addRow(["Repetido Aqui", "11955550010"]);
+  const arq = Buffer.from(await wb.xlsx.writeBuffer());
+  const prev = await gestor.post("/api/motoristas/importar").set("Content-Type", "application/octet-stream").send(arq);
+  assert.equal(prev.status, 200, JSON.stringify(prev.body));
+  assert.deepEqual([prev.body.validos, prev.body.comErro], [1, 2]);
+  assert.equal(await prisma.motorista.count({ where: { celular: "+5511955550011" } }), 0, "prévia não grava");
+  const conf = await gestor.post("/api/motoristas/importar?confirmar=1").set("Content-Type", "application/octet-stream").send(arq);
+  assert.equal(conf.body.importados, 1);
+  const ana = await prisma.motorista.findUnique({ where: { celular: "+5511955550011" }, include: { transportadora: true } });
+  assert.deepEqual([ana.transportadora.nome, ana.cpf, ana.consentimentoEm], ["Transp Alfa", "52998224725", null]);
+
+  // ---- Retenção (LGPD): posição com mais de 90 dias é apagada; recente fica ----
+  const velha = await prisma.posicaoContainer.create({ data: { containerId: c.body.id, latitude: -23, longitude: -46, origem: "QR", etapa: "COLETADO", registradaEm: new Date(Date.now() - 91 * 24 * 3600e3) } });
+  const recentes = await prisma.posicaoContainer.count({ where: { containerId: c.body.id, id: { not: velha.id } } });
+  await purgarDadosAntigos();
+  assert.equal(await prisma.posicaoContainer.count({ where: { id: velha.id } }), 0);
+  assert.equal(await prisma.posicaoContainer.count({ where: { containerId: c.body.id } }), recentes);
+
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste de motoristas" });
 });

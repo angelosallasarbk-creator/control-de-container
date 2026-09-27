@@ -36,6 +36,11 @@ configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async 
   if ("toleranciaPlanejadoMinutos" in b) rota.toleranciaPlanejadoMinutos = inteiro(b.toleranciaPlanejadoMinutos, "Tolerância do planejado (min)", { obrigatorio: true, min: 0, max: 10080 });
   if ("atrasoColetaCriticoHoras" in b) rota.atrasoColetaCriticoHoras = decimal(b.atrasoColetaCriticoHoras, "Atraso na coleta vira crítico após (h)", { obrigatorio: true, min: 0, max: 720 });
   if ("rastreioSmsAtivo" in b) rota.rastreioSmsAtivo = b.rastreioSmsAtivo === true || b.rastreioSmsAtivo === 1 || b.rastreioSmsAtivo === "1" ? 1 : 0;
+  if ("rastreioPersonalizado" in b) rota.rastreioPersonalizado = b.rastreioPersonalizado === true || b.rastreioPersonalizado === 1 || b.rastreioPersonalizado === "1" ? 1 : 0;
+  if ("rastreioCriticoIntervaloMin" in b) rota.rastreioCriticoIntervaloMin = inteiro(b.rastreioCriticoIntervaloMin, "Repetir o pedido em trecho crítico a cada (min)", { obrigatorio: true, min: 15, max: 1440 });
+  if ("rastreioParadoHoras" in b) rota.rastreioParadoHoras = decimal(b.rastreioParadoHoras, "Parado há mais de (h)", { obrigatorio: true, min: 0.5, max: 72 });
+  if ("rastreioSemPosicaoHoras" in b) rota.rastreioSemPosicaoHoras = decimal(b.rastreioSemPosicaoHoras, "Sem posição há mais de (h)", { obrigatorio: true, min: 1, max: 168 });
+  if ("retencaoPosicoesDias" in b) rota.retencaoPosicoesDias = inteiro(b.retencaoPosicoesDias, "Guardar posições por (dias)", { obrigatorio: true, min: 30, max: 3650 });
   if ("rastreioIntervaloMin" in b) rota.rastreioIntervaloMin = inteiro(b.rastreioIntervaloMin, "Intervalo dos pedidos de posição (min)", { obrigatorio: true, min: 10, max: 1440 });
   if ("rastreioIntervaloCarregamentoMin" in b) rota.rastreioIntervaloCarregamentoMin = inteiro(b.rastreioIntervaloCarregamentoMin, "Intervalo no ponto de carregamento (min)", { obrigatorio: true, min: 10, max: 1440 });
   if ("urlPublica" in b) {

@@ -42,6 +42,21 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos da Home.
 
+## Motoristas e transportadoras (v1.1)
+
+Motorista **não é usuário do sistema** — com milhares de motoristas, criar e manter um login para cada um não é viável.
+
+- **Identidade = celular verificado.** Ao ler o QR sem estar logado, o motorista informa o celular e recebe um **código de 6 dígitos por SMS** (vale **15 min**; pedir outro encerra o anterior; até 5 tentativas; 1 pedido/min e 5/h por celular, limite por aparelho e teto global de 500 códigos/hora — `MOTORISTA_MAX_CODIGOS_HORA`, ajustável no Render). No banco fica só o HMAC do código.
+- **Primeiro acesso:** nome, transportadora (lista), placa, CPF opcional (validado) e **aceite do termo de uso dos dados (LGPD)**. Cadastro livre — a transportadora bloqueia quem não for dela.
+- **Sessão no celular por 60 dias** (cookie httpOnly `cc_motorista`, só para `/api/motorista`; só o hash do token no banco). Nas próximas leituras o QR abre direto.
+- **O que ele faz:** as mesmas telas do QR do perfil Transportador (coleta com local de retirada, cadastro do container se não existir, vínculo, temperatura) — rotas `/api/motorista/qr/*`, as mesmas do QR da equipe. Nos registros aparece como "Nome (motorista · Transportadora)". Portaria e o resto do sistema ficam fechados.
+- **Rastreamento:** a cadeia vira QR → Container → **Motorista** → celular verificado (ou usuário da equipe, se for ele quem registrou). A regra de troca continua: quem registrar pelo QR por último recebe os SMS.
+- **Transportadoras:** Cadastros → Transportadoras (nome, CNPJ opcional).
+- **Gestor da transportadora** (perfil novo, ligado a uma transportadora): vê só a tela **Motoristas** com os motoristas dela — pré-cadastrar (tela ou planilha "Baixar modelo"/"Upload"), **bloquear/desbloquear** (derruba o acesso na hora e para os SMS), **encerrar acessos** (celular perdido) e ver os aparelhos com acesso. Quem tem "Editar cadastros" vê todos, com filtro por transportadora.
+- **Pré-cadastrado** (pelo gestor): no 1º acesso confirma o celular pelo código, confere os dados e aceita o termo.
+- **Retenção (LGPD):** posições GPS mais antigas que **90 dias** (Configurações → Rastreamento) são apagadas automaticamente 1x por dia; códigos de acesso com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias também.
+- O login da equipe continua no mesmo QR ("Sou da equipe"); os usuários do perfil Transportador continuam funcionando.
+
 ## Etiquetas QR (leitura pelo celular)
 
 Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container** e vale para **uma viagem**.
@@ -88,7 +103,14 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
   - **Cadeia:** Etiqueta QR → Container → Usuário responsável → Celular. O celular é o do cadastro do usuário (Usuários → campo "Celular (SMS)"), gravado em formato internacional (+55…) e lido no momento de cada envio.
   - **Quem vira responsável:** quem **registra algo pelo QR** (vínculo, temperatura, coleta do transportador, entrada/saída da portaria), em qualquer perfil. Só abrir a página do QR para consultar não muda nada.
   - **Troca de responsável:** quando outra pessoa registra pelo QR, o rastreamento passa para ela na hora e ela recebe um SMS de aviso. O anterior **para de receber** e os links que ele já tinha **deixam de valer**. A troca fica no log de auditoria (ação RASTREIO).
-  - **Pedidos de posição:** enquanto o container está ativo, o responsável recebe um SMS com um link a cada **30 min**; no ponto de carregamento (da chegada até a saída), a cada **4 h**. Os dois intervalos são configuráveis. Uma posição enviada pela leitura do QR também conta, e o próximo pedido passa a contar dali. Com o container entregue ou cancelado, os pedidos param.
+  - **Pedidos de posição — padrão "só em trechos críticos"** (v1.1, para reduzir custo e volume de SMS): o sistema pede a posição quando
+    - a **previsão estoura**: em trânsito, passou do horário planejado da próxima etapa (plano congelado da aba Etapas) além da tolerância de Configurações → Geral;
+    - há **risco de prazo**: alerta aberto de risco de demurrage, risco de deadline, free time (demurrage) ou deadline;
+    - o container está **parado**: em trânsito, as 2 últimas posições estão a até 500 m uma da outra com mais de **3 h** entre elas;
+    - está **sem posição**: em trânsito, nenhuma posição há mais de **12 h** (checagem esparsa, repete a cada 12 h).
+    Enquanto houver motivo (exceto "sem posição"), repete a cada **60 min**. No ponto de carregamento (container parado lá é o esperado) só vale o risco de prazo. Os tempos são configuráveis; cada SMS guarda o **motivo**.
+  - **Intervalo personalizado** (opcional, Configurações → Rastreamento): a cada **30 min**; no ponto de carregamento, a cada **4 h** (configuráveis). Uma posição enviada pela leitura do QR também conta, e o próximo pedido passa a contar dali. Com o container entregue ou cancelado, os pedidos param.
+  - **"Solicitar posição"** (aba Rastreamento da ficha, quem opera containers): manda o pedido na hora ao responsável — no máximo 1 pedido de posição a cada 5 min por container (contando os automáticos); fica no log.
   - **Link do SMS** (`/p/código`): abre sem login, mostra o container e tem o botão **"Enviar minha posição"**, que usa o GPS do celular em alta precisão. O link é de uso único, vale 12 h e só é aceito do responsável atual. No banco fica só o hash do código, e há limite de tentativas por IP.
   - **Aba "Rastreamento" da ficha:** mostra o responsável (celular mascarado), o próximo pedido, as posições com link para o mapa e cada SMS com a situação (enviado, simulado, falhou, sem celular).
   - **Envio:** feito pelo Brevo (mesma `BREVO_API_KEY`; remetente `SMS_REMETENTE`, até 11 letras). Precisa de **créditos de SMS** na conta Brevo. Os textos vão sem acento para caber em 1 SMS (160 caracteres). Sem a chave, o SMS não sai: é só simulado e aparece no console. Em caso de falha, tenta de novo em 5 min.
@@ -231,6 +253,19 @@ São 33 testes: regras de prazo/temperatura (puras) e API completa contra o banc
    - Variáveis: `DATABASE_URL`, `JWT_SECRET` (valor aleatório próprio), `NODE_ENV=production`
 3. Primeiro admin: preencha `ADMIN_INICIAL_EMAIL`, `ADMIN_INICIAL_NOME` e `ADMIN_INICIAL_SENHA` no Render. Na subida, se o banco não tiver nenhum usuário, o admin é criado (ver log "Admin inicial criado"). Depois do primeiro login, troque a senha em *Usuários* e **remova as três variáveis**. Alternativa com shell: `npm run criar-admin -- email@empresa.com "Nome" "senha-forte"`.
 4. **Não rode `npm run seed` em produção.**
+
+## Versões e rollback
+
+- **Produção = branch `main`** (o Render publica a cada push nela). Cada versão publicada ganha uma **tag** (`v1.0.0`, `v1.1.0`…); o histórico está no `CHANGELOG.md`.
+- **Versão nova = branch própria** (ex.: `versao-1.1`). Pode ser enviada ao GitHub sem afetar a produção; só vai ao ar quando for juntada na `main` (com aprovação), e aí recebe a tag.
+- **Qual versão está no ar:** rodapé do menu lateral ou `GET /api/saude` (campo `versao`).
+- **Migrações de banco só com acréscimos** (colunas/tabelas novas, nada apagado ou renomeado): assim a versão anterior continua funcionando com o banco já migrado, e voltar o código não exige mexer no banco.
+
+**Rollback (voltar para a versão anterior):**
+1. **Mais rápido:** no Render → serviço → *Events/Deploys* → no deploy da versão anterior, **Rollback**. Volta o código em segundos, sem build. Atenção: o próximo push na `main` publica de novo o que estiver lá — faça o passo 2 em seguida.
+2. **Definitivo (Git):** criar na `main` um commit que desfaz a versão (`git revert` do merge, ex.: `git revert -m 1 <merge>`) e dar push. Não usar `git push --force`.
+3. **Banco:** normalmente nada a fazer (migração só com acréscimos). **Voltando da 1.1 para a 1.0:** antes, rode `scripts/rollback-1.0-antes.sql` no banco (a 1.0 não conhece o perfil Gestor da transportadora: os gestores viram Visualização e ficam desativados, mantendo o vínculo com a transportadora). Ao republicar a 1.1, rode `scripts/rollback-1.0-desfazer.sql`. Testado: a 1.0 funciona sobre o banco da 1.1 com esse passo. Links de posição enviados a motoristas deixam de valer na 1.0. Antes de publicar qualquer migração que altere/remova dados, fazer **backup** do banco (pg_dump) e planejar o retorno.
+4. Conferir `/api/saude` → `versao` e testar o login.
 
 ## Operação e solução de problemas
 

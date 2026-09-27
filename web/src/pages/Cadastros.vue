@@ -65,6 +65,19 @@ const CONFIG = {
       { chave: "alertaDemurrageDias", rotulo: "Avisar quando faltarem (dias)", tipo: "number", obrigatorio: true, min: 0, padrao: 2 },
     ],
   },
+  transportadoras: {
+    titulo: "Transportadoras",
+    ajuda: "Os motoristas escolhem a transportadora no primeiro acesso pelo QR (celular + código SMS). Cada transportadora pode ter um usuário Gestor, que vê e bloqueia só os motoristas dela (tela Motoristas).",
+    rotuloUso: "Motoristas",
+    colunas: [
+      { rotulo: "Transportadora", valor: (r) => r.nome },
+      { rotulo: "CNPJ", valor: (r) => (r.cnpj ? r.cnpj.replace(/^(d{2})(d{3})(d{3})(d{4})(d{2})$/, "$1.$2.$3/$4-$5") : "—") },
+    ],
+    campos: [
+      { chave: "nome", rotulo: "Nome da transportadora", tipo: "text", obrigatorio: true },
+      { chave: "cnpj", rotulo: "CNPJ (opcional)", tipo: "text" },
+    ],
+  },
   produtos: {
     titulo: "Produtos (faixa de temperatura)",
     ajuda: "Faixa aceitável para containers reefer. Fora da faixa gera alerta de Atenção na hora e Crítico após a tolerância.",

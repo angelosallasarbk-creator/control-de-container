@@ -27,10 +27,21 @@ export const CONFIG_PADRAO = {
   // online: https://seu-sistema.onrender.com.
   urlPublica: "",
   // Rastreamento por SMS (1 = ligado): quem registra algo pelo QR vira o responsável e recebe
-  // SMS pedindo a posição GPS do container a cada X minutos (no ponto de carregamento, a cada Y).
+  // SMS com link para enviar a posição GPS do container.
   rastreioSmsAtivo: 0,
+  // Padrão (0): pede posição só em trechos críticos — previsão estourada, risco de prazo, parado
+  // ou sem posição há muito tempo. 1 = intervalo personalizado fixo (X min; no ponto de
+  // carregamento, Y min).
+  rastreioPersonalizado: 0,
   rastreioIntervaloMin: 30,
   rastreioIntervaloCarregamentoMin: 240,
+  // Trechos críticos: repete o pedido a cada X min enquanto houver motivo; "parado" = 2 últimas
+  // posições no mesmo lugar há mais de X h; "sem posição" = em trânsito sem posição há mais de X h.
+  rastreioCriticoIntervaloMin: 60,
+  rastreioParadoHoras: 3,
+  rastreioSemPosicaoHoras: 12,
+  // LGPD: posições GPS mais antigas que isto são apagadas automaticamente (1x por dia).
+  retencaoPosicoesDias: 90,
 };
 
 export async function lerConfiguracao() {
