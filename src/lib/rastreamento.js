@@ -1,5 +1,6 @@
 // Rastreamento por SMS.
-// Cadeia: Etiqueta QR → Container → Usuário responsável (Container.rastreioResponsavelId) → Celular.
+// Cadeia: Etiqueta QR → Container → responsável → Celular. O responsável é um usuário da equipe
+// (Container.rastreioResponsavelId) OU um motorista (Container.rastreioMotoristaId, celular verificado).
 // - Quem REGISTRA algo pelo QR (vínculo, temperatura, coleta, entrada/saída) vira o responsável;
 //   o anterior deixa de receber SMS na hora e os links que ele recebeu param de valer.
 // - O celular é lido do cadastro do usuário no momento de cada envio (trocar o número vale já).
@@ -19,6 +20,7 @@ import { lerConfiguracao } from "./configuracao.js";
 import { enviarSms } from "./sms.js";
 import { enderecoPublicoFixo } from "./enderecoPublico.js";
 import { STATUS_ENCERRADOS } from "./prazos.js";
+import { identidadeMotorista } from "./acessoMotorista.js";
 
 // Etapas "no ponto de carregamento" (container parado lá): intervalo próprio no modo personalizado.
 export const ETAPAS_CARREGAMENTO = ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"];
@@ -41,80 +43,101 @@ async function registrarSms(dados) {
   await prisma.mensagemSms.create({ data: { ...dados, erro: dados.erro ? String(dados.erro).slice(0, 500) : null } });
 }
 
+// ---------- Destinatário: usuário da equipe OU motorista ----------
+// { tipo, id, nome, identidade (para o log), celular, ativo, motivoInativo }
+
+export async function buscarDestinatario({ usuarioId = null, motoristaId = null }) {
+  if (motoristaId) {
+    const m = await prisma.motorista.findUnique({ where: { id: motoristaId }, include: { transportadora: true } });
+    return m && {
+      tipo: "MOTORISTA", id: m.id, nome: m.nome, identidade: identidadeMotorista(m), celular: m.celular,
+      ativo: !m.bloqueado && m.transportadora.ativo, motivoInativo: "Motorista bloqueado pela transportadora.", transportadora: m.transportadora.nome,
+    };
+  }
+  if (!usuarioId) return null;
+  const u = await prisma.usuario.findUnique({ where: { id: usuarioId }, select: { id: true, email: true, nome: true, celular: true, ativo: true } });
+  return u && { tipo: "USUARIO", id: u.id, nome: u.nome, identidade: u.email, celular: u.celular, ativo: u.ativo, motivoInativo: "Conta do usuário desativada." };
+}
+const chaveDestino = (d) => (d.tipo === "MOTORISTA" ? { motoristaId: d.id } : { usuarioId: d.id });
+const destinoDoContainer = (c) =>
+  c.rastreioMotoristaId ? { motoristaId: c.rastreioMotoristaId } : c.rastreioResponsavelId ? { usuarioId: c.rastreioResponsavelId } : null;
+
 /**
- * Envia um SMS ao usuário e registra o resultado (ENVIADA | SIMULADA | FALHA | SEM_CELULAR).
+ * Envia um SMS ao destinatário e registra o resultado (ENVIADA | SIMULADA | FALHA | SEM_CELULAR).
  * Nunca lança: devolve o status para quem chamou decidir (ex.: tentar de novo mais cedo).
  */
-async function enviarAoUsuario({ usuario, containerId, tipo, texto, motivo = null }) {
-  const base = { containerId, usuarioId: usuario.id, tipo, texto, motivo };
-  if (!usuario.ativo) {
-    await registrarSms({ ...base, status: "FALHA", erro: "Conta do usuário desativada." });
+async function enviarAoDestino({ dest, containerId, tipo, texto, motivo = null }) {
+  const base = { containerId, ...chaveDestino(dest), tipo, texto, motivo };
+  if (!dest.ativo) {
+    await registrarSms({ ...base, status: "FALHA", erro: dest.motivoInativo });
     return "FALHA";
   }
-  if (!usuario.celular) {
+  if (!dest.celular) {
     await registrarSms({ ...base, status: "SEM_CELULAR", erro: "Usuário sem celular cadastrado (Configurações → Usuários)." });
     return "SEM_CELULAR";
   }
   try {
-    const r = await enviarSms({ para: usuario.celular, texto });
+    const r = await enviarSms({ para: dest.celular, texto });
     const status = r.simulado ? "SIMULADA" : "ENVIADA";
-    await registrarSms({ ...base, telefone: usuario.celular, status });
+    await registrarSms({ ...base, telefone: dest.celular, status });
     return status;
   } catch (err) {
     console.error(`Rastreamento: falha ao enviar SMS (${tipo}) do container ${containerId}:`, err.message);
-    await registrarSms({ ...base, telefone: usuario.celular, status: "FALHA", erro: err.message });
+    await registrarSms({ ...base, telefone: dest.celular, status: "FALHA", erro: err.message });
     return "FALHA";
   }
 }
+
+const textoVinculo = (numero) => `CCS: o QR do container ${numero} foi vinculado a voce. Voce recebera SMS pedindo a posicao do container quando necessario.`;
 
 /**
  * Registrou algo pelo QR: grava a posição (se o celular mandou) e passa o rastreamento para
  * este usuário. Se o responsável mudou, avisa o novo por SMS (com o rastreamento ligado).
  * Nunca lança — o registro pelo QR já foi gravado e não pode falhar por causa disto.
  */
-export async function assumirRastreio({ containerId, usuarioId, posicao = {}, agora = new Date() }) {
+export async function assumirRastreio({ containerId, usuarioId = null, motoristaId = null, posicao = {}, agora = new Date() }) {
   try {
     const c = await prisma.container.findUnique({
       where: { id: containerId },
-      select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioResponsavel: { select: { email: true } } },
+      select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true },
     });
     if (!c) return { trocou: false };
     const temPosicao = posicao.latitude !== undefined && posicao.latitude !== null;
     if (temPosicao) {
       await prisma.posicaoContainer.create({
         data: {
-          containerId: c.id, usuarioId, latitude: posicao.latitude, longitude: posicao.longitude,
+          containerId: c.id, usuarioId, motoristaId, latitude: posicao.latitude, longitude: posicao.longitude,
           precisaoM: posicao.precisaoM ?? null, origem: "QR", etapa: c.status, registradaEm: agora,
         },
       });
     }
     if (STATUS_ENCERRADOS.includes(c.status)) {
       // Encerrado: ninguém mais recebe pedidos.
-      if (c.rastreioResponsavelId) await prisma.container.update({ where: { id: c.id }, data: { rastreioResponsavelId: null } });
+      if (c.rastreioResponsavelId || c.rastreioMotoristaId) {
+        await prisma.container.update({ where: { id: c.id }, data: { rastreioResponsavelId: null, rastreioMotoristaId: null } });
+      }
       return { trocou: false };
     }
-    if (c.rastreioResponsavelId === usuarioId) {
+    const mesmo = motoristaId ? c.rastreioMotoristaId === motoristaId : c.rastreioResponsavelId === usuarioId && !c.rastreioMotoristaId;
+    if (mesmo) {
       // Mesmo responsável: posição acabou de chegar pelo QR, então o próximo pedido conta daqui.
       if (temPosicao) await prisma.container.update({ where: { id: c.id }, data: { rastreioUltimoEnvioEm: agora } });
       return { trocou: false };
     }
 
-    const usuario = await prisma.usuario.findUnique({ where: { id: usuarioId }, select: { id: true, email: true, nome: true, celular: true, ativo: true } });
+    const [dest, anterior] = await Promise.all([buscarDestinatario({ usuarioId, motoristaId }), buscarDestinatario(destinoDoContainer(c) ?? {})]);
     await prisma.container.update({
       where: { id: c.id },
-      data: { rastreioResponsavelId: usuarioId, rastreioDesde: agora, rastreioUltimoEnvioEm: agora },
+      data: { rastreioResponsavelId: usuarioId, rastreioMotoristaId: motoristaId, rastreioDesde: agora, rastreioUltimoEnvioEm: agora },
     });
     await registrarLog({
-      usuarioEmail: usuario.email, acao: "RASTREIO", entidade: "Container", entidadeId: c.id,
-      descricao: `Container ${c.numero}: rastreamento por SMS passou para ${usuario.email}` +
-        (c.rastreioResponsavel ? ` (antes: ${c.rastreioResponsavel.email}, que deixa de receber)` : ""),
+      usuarioEmail: dest.identidade, acao: "RASTREIO", entidade: "Container", entidadeId: c.id,
+      descricao: `Container ${c.numero}: rastreamento por SMS passou para ${dest.identidade}` +
+        (anterior ? ` (antes: ${anterior.identidade}, que deixa de receber)` : ""),
     });
     const config = await lerConfiguracao();
     if (config.rastreioSmsAtivo) {
-      await enviarAoUsuario({
-        usuario, containerId: c.id, tipo: "VINCULO",
-        texto: `CCS: o QR do container ${c.numero} foi vinculado a voce. Voce recebera SMS pedindo a posicao do container ate a entrega.`,
-      });
+      await enviarAoDestino({ dest, containerId: c.id, tipo: "VINCULO", texto: textoVinculo(c.numero) });
     }
     return { trocou: true };
   } catch (err) {
@@ -132,16 +155,13 @@ export async function avisarCelularAtualizado(usuarioId) {
   try {
     const config = await lerConfiguracao();
     if (!config.rastreioSmsAtivo) return 0;
-    const [usuario, containers] = await Promise.all([
-      prisma.usuario.findUnique({ where: { id: usuarioId }, select: { id: true, email: true, celular: true, ativo: true } }),
-      prisma.container.findMany({ where: { rastreioResponsavelId: usuarioId, status: { notIn: STATUS_ENCERRADOS } }, select: { id: true, numero: true } }),
+    const [dest, containers] = await Promise.all([
+      buscarDestinatario({ usuarioId }),
+      prisma.container.findMany({ where: { rastreioResponsavelId: usuarioId, rastreioMotoristaId: null, status: { notIn: STATUS_ENCERRADOS } }, select: { id: true, numero: true } }),
     ]);
-    if (!usuario?.celular || !usuario.ativo) return 0;
+    if (!dest?.celular || !dest.ativo) return 0;
     for (const c of containers) {
-      await enviarAoUsuario({
-        usuario, containerId: c.id, tipo: "VINCULO",
-        texto: `CCS: o QR do container ${c.numero} foi vinculado a voce. Voce recebera SMS pedindo a posicao do container ate a entrega.`,
-      });
+      await enviarAoDestino({ dest, containerId: c.id, tipo: "VINCULO", texto: textoVinculo(c.numero) });
     }
     return containers.length;
   } catch (err) {
@@ -244,20 +264,20 @@ async function contextoDosPedidos(ids) {
 }
 
 // Cria o link, manda o SMS e registra. Link desfeito se o SMS não saiu. Devolve o status.
-async function enviarPedidoPosicao({ c, usuario, base, motivo, agora }) {
+async function enviarPedidoPosicao({ c, dest, base, motivo, agora }) {
   if (!base) {
     await registrarSms({
-      containerId: c.id, usuarioId: usuario.id, tipo: "POSICAO", status: "FALHA", texto: "(não enviado)", motivo,
+      containerId: c.id, ...chaveDestino(dest), tipo: "POSICAO", status: "FALHA", texto: "(não enviado)", motivo,
       erro: "Endereço do sistema não configurado (Configurações → Endereço do sistema, ou APP_URL).",
     });
     return "FALHA";
   }
   const codigo = crypto.randomBytes(16).toString("base64url");
   const pedido = await prisma.solicitacaoPosicao.create({
-    data: { containerId: c.id, usuarioId: usuario.id, tokenHash: hashDoCodigo(codigo), criadaEm: agora, motivo, expiraEm: new Date(agora.getTime() + VALIDADE_LINK_HORAS * 60 * MIN) },
+    data: { containerId: c.id, ...chaveDestino(dest), tokenHash: hashDoCodigo(codigo), criadaEm: agora, motivo, expiraEm: new Date(agora.getTime() + VALIDADE_LINK_HORAS * 60 * MIN) },
   });
-  const status = await enviarAoUsuario({
-    usuario, containerId: c.id, tipo: "POSICAO", motivo,
+  const status = await enviarAoDestino({
+    dest, containerId: c.id, tipo: "POSICAO", motivo,
     texto: `CCS: envie a posicao atual do container ${c.numero}: ${base}/p/${codigo}`,
   });
   // SMS não saiu: o link não chegou a ninguém.
@@ -265,7 +285,6 @@ async function enviarPedidoPosicao({ c, usuario, base, motivo, agora }) {
   return status;
 }
 
-const SELECT_RESPONSAVEL = { id: true, email: true, nome: true, celular: true, ativo: true };
 
 /** Uma rodada do agendador: manda o pedido de posição de cada container que tem motivo vencido. */
 export async function executarRastreamento(agora = new Date()) {
@@ -278,11 +297,11 @@ export async function executarRastreamento(agora = new Date()) {
   const limite = (min) => new Date(agora.getTime() - min * MIN);
   const candidatos = await prisma.container.findMany({
     where: {
-      rastreioResponsavelId: { not: null },
+      OR: [{ rastreioResponsavelId: { not: null } }, { rastreioMotoristaId: { not: null } }],
       status: { notIn: STATUS_ENCERRADOS },
-      OR: [{ rastreioUltimoEnvioEm: null }, { rastreioUltimoEnvioEm: { lte: limite(menorIntervalo) } }],
+      AND: [{ OR: [{ rastreioUltimoEnvioEm: null }, { rastreioUltimoEnvioEm: { lte: limite(menorIntervalo) } }] }],
     },
-    select: { id: true, numero: true, status: true, planejamento: true, rastreioResponsavelId: true, rastreioUltimoEnvioEm: true, rastreioDesde: true },
+    select: { id: true, numero: true, status: true, planejamento: true, rastreioResponsavelId: true, rastreioMotoristaId: true, rastreioUltimoEnvioEm: true, rastreioDesde: true },
     orderBy: { id: "asc" },
     take: 500,
   });
@@ -296,12 +315,12 @@ export async function executarRastreamento(agora = new Date()) {
     // Reserva idempotente: só quem trocar o "último envio" antigo pelo de agora manda o SMS
     // (duas rodadas/instâncias ao mesmo tempo não duplicam; troca de responsável no meio cancela).
     const reserva = await prisma.container.updateMany({
-      where: { id: c.id, rastreioResponsavelId: c.rastreioResponsavelId, rastreioUltimoEnvioEm: c.rastreioUltimoEnvioEm, status: c.status },
+      where: { id: c.id, rastreioResponsavelId: c.rastreioResponsavelId, rastreioMotoristaId: c.rastreioMotoristaId, rastreioUltimoEnvioEm: c.rastreioUltimoEnvioEm, status: c.status },
       data: { rastreioUltimoEnvioEm: agora },
     });
     if (reserva.count !== 1) continue;
-    const usuario = await prisma.usuario.findUnique({ where: { id: c.rastreioResponsavelId }, select: SELECT_RESPONSAVEL });
-    const status = await enviarPedidoPosicao({ c, usuario, base, motivo: devidos.map((m) => m.texto).join(" · "), agora });
+    const dest = await buscarDestinatario(destinoDoContainer(c));
+    const status = await enviarPedidoPosicao({ c, dest, base, motivo: devidos.map((m) => m.texto).join(" · "), agora });
     if (status === "FALHA") {
       // Tenta de novo em alguns minutos: volta o "último envio" para o intervalo vencer mais cedo.
       const volta = Math.min(...devidos.map((m) => m.intervaloMin)) - NOVA_TENTATIVA_MIN;
@@ -324,11 +343,11 @@ export async function solicitarPosicaoManual({ containerId, solicitante, agora =
   if (!config.rastreioSmsAtivo) throw erroHttp(409, "O envio de SMS de rastreamento está desligado (Configurações → Rastreamento).");
   const c = await prisma.container.findUnique({
     where: { id: containerId },
-    select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioUltimoEnvioEm: true },
+    select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, rastreioUltimoEnvioEm: true },
   });
   if (!c) throw erroHttp(404, "Container não encontrado.");
   if (STATUS_ENCERRADOS.includes(c.status)) throw erroHttp(409, `O container ${c.numero} já foi encerrado.`);
-  if (!c.rastreioResponsavelId) throw erroHttp(409, "Ninguém registrou este container pelo QR ainda — não há para quem pedir a posição.");
+  if (!destinoDoContainer(c)) throw erroHttp(409, "Ninguém registrou este container pelo QR ainda — não há para quem pedir a posição.");
   const ultimo = await prisma.mensagemSms.findFirst({
     where: { containerId: c.id, tipo: "POSICAO", status: { in: ["ENVIADA", "SIMULADA"] } }, orderBy: { criadaEm: "desc" }, select: { criadaEm: true },
   });
@@ -336,19 +355,19 @@ export async function solicitarPosicaoManual({ containerId, solicitante, agora =
     const falta = Math.ceil((INTERVALO_MANUAL_MIN * MIN - (agora - ultimo.criadaEm)) / MIN);
     throw erroHttp(429, `Um pedido de posição foi enviado há menos de ${INTERVALO_MANUAL_MIN} min. Tente de novo em ${falta} min.`);
   }
-  const usuario = await prisma.usuario.findUnique({ where: { id: c.rastreioResponsavelId }, select: SELECT_RESPONSAVEL });
-  const status = await enviarPedidoPosicao({ c, usuario, base: await enderecoPublicoFixo(), motivo: `Pedido manual por ${solicitante.nome ?? solicitante.email}`, agora });
+  const dest = await buscarDestinatario(destinoDoContainer(c));
+  const status = await enviarPedidoPosicao({ c, dest, base: await enderecoPublicoFixo(), motivo: `Pedido manual por ${solicitante.nome ?? solicitante.email}`, agora });
   // Pedido enviado: o próximo automático conta a partir daqui (não manda outro logo em seguida).
   if (status === "ENVIADA" || status === "SIMULADA") {
-    await prisma.container.updateMany({ where: { id: c.id, rastreioResponsavelId: c.rastreioResponsavelId }, data: { rastreioUltimoEnvioEm: agora } });
+    await prisma.container.updateMany({ where: { id: c.id, rastreioResponsavelId: c.rastreioResponsavelId, rastreioMotoristaId: c.rastreioMotoristaId }, data: { rastreioUltimoEnvioEm: agora } });
   }
   await registrarLog({
     usuarioEmail: solicitante.email, acao: "RASTREIO", entidade: "Container", entidadeId: c.id,
-    descricao: `Container ${c.numero}: posição solicitada manualmente a ${usuario.email} (${status === "ENVIADA" ? "SMS enviado" : status === "SIMULADA" ? "SMS simulado" : status === "SEM_CELULAR" ? "responsável sem celular" : "falha no envio"})`,
+    descricao: `Container ${c.numero}: posição solicitada manualmente a ${dest.identidade} (${status === "ENVIADA" ? "SMS enviado" : status === "SIMULADA" ? "SMS simulado" : status === "SEM_CELULAR" ? "responsável sem celular" : "falha no envio"})`,
   });
-  if (status === "SEM_CELULAR") throw erroHttp(409, `O responsável (${usuario.nome}) não tem celular cadastrado. Cadastre em Configurações → Usuários.`);
-  if (status === "FALHA") throw erroHttp(502, "O SMS não pôde ser enviado agora. Veja o motivo na lista de SMS da aba Rastreamento.");
-  return { status, para: usuario.nome };
+  if (status === "SEM_CELULAR") throw erroHttp(409, `O responsável (${dest.nome}) não tem celular cadastrado. Cadastre em Configurações → Usuários.`);
+  if (status === "FALHA") throw erroHttp(dest.ativo ? 502 : 409, dest.ativo ? "O SMS não pôde ser enviado agora. Veja o motivo na lista de SMS da aba Rastreamento." : `Não enviado: ${dest.motivoInativo}`);
+  return { status, para: dest.nome };
 }
 
 // ---------- Link do SMS (página pública /p/:codigo) ----------
@@ -357,13 +376,21 @@ async function pedidoDoCodigo(codigo, agora) {
   if (!codigo || !/^[A-Za-z0-9_-]{16,64}$/.test(String(codigo))) return { erro: "Link inválido." };
   const p = await prisma.solicitacaoPosicao.findUnique({
     where: { tokenHash: hashDoCodigo(codigo) },
-    include: { container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true } }, usuario: { select: { id: true, ativo: true } } },
+    include: {
+      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true } },
+      usuario: { select: { id: true, ativo: true } },
+      motorista: { select: { id: true, bloqueado: true, transportadora: { select: { ativo: true } } } },
+    },
   });
   if (!p) return { erro: "Link inválido." };
   if (p.respondidaEm) return { erro: "A posição deste link já foi enviada. Obrigado!", respondida: true };
   if (p.expiraEm < agora) return { erro: "Este link expirou. Aguarde o próximo SMS." };
   if (STATUS_ENCERRADOS.includes(p.container.status)) return { erro: `O container ${p.container.numero} já foi encerrado; não é preciso enviar a posição.` };
-  if (p.container.rastreioResponsavelId !== p.usuarioId || !p.usuario.ativo) {
+  // O link só vale para quem ainda é o responsável (usuário ativo ou motorista não bloqueado).
+  const aindaResponsavel = p.motoristaId
+    ? p.container.rastreioMotoristaId === p.motoristaId && !p.motorista.bloqueado && p.motorista.transportadora.ativo
+    : p.container.rastreioResponsavelId === p.usuarioId && !p.container.rastreioMotoristaId && p.usuario?.ativo;
+  if (!aindaResponsavel) {
     return { erro: `O rastreamento do container ${p.container.numero} passou para outra pessoa; este link não vale mais.` };
   }
   return { pedido: p };
@@ -384,7 +411,7 @@ export async function registrarPosicaoDoLink({ codigo, latitude, longitude, prec
     if (r.count !== 1) return { ok: false, mensagem: "A posição deste link já foi enviada. Obrigado!" };
     await tx.posicaoContainer.create({
       data: {
-        containerId: pedido.containerId, usuarioId: pedido.usuarioId, latitude, longitude, precisaoM: precisaoM ?? null,
+        containerId: pedido.containerId, usuarioId: pedido.usuarioId, motoristaId: pedido.motoristaId, latitude, longitude, precisaoM: precisaoM ?? null,
         origem: "LINK_SMS", etapa: pedido.container.status, registradaEm: agora,
       },
     });
@@ -401,6 +428,7 @@ export async function resumoRastreamento(containerId) {
       select: {
         status: true, planejamento: true, rastreioDesde: true, rastreioUltimoEnvioEm: true,
         rastreioResponsavel: { select: { nome: true, email: true, celular: true, ativo: true } },
+        rastreioMotorista: { select: { nome: true, celular: true, placa: true, bloqueado: true, transportadora: { select: { nome: true, ativo: true } } } },
       },
     }),
     lerConfiguracao(),
@@ -409,28 +437,31 @@ export async function resumoRastreamento(containerId) {
   const [posicoes, mensagens, alertas] = await Promise.all([
     prisma.posicaoContainer.findMany({
       where: { containerId }, orderBy: { registradaEm: "desc" }, take: 50,
-      select: { id: true, latitude: true, longitude: true, precisaoM: true, origem: true, etapa: true, registradaEm: true, usuario: { select: { nome: true } } },
+      select: { id: true, latitude: true, longitude: true, precisaoM: true, origem: true, etapa: true, registradaEm: true, usuario: { select: { nome: true } }, motorista: { select: { nome: true } } },
     }),
     prisma.mensagemSms.findMany({
       where: { containerId }, orderBy: { criadaEm: "desc" }, take: 50,
-      select: { id: true, tipo: true, status: true, erro: true, motivo: true, telefone: true, criadaEm: true, usuario: { select: { nome: true } } },
+      select: { id: true, tipo: true, status: true, erro: true, motivo: true, telefone: true, criadaEm: true, usuario: { select: { nome: true } }, motorista: { select: { nome: true } } },
     }),
     prisma.alerta.findMany({ where: { containerId, chaveAberta: { not: null } }, select: { tipo: true } }),
   ]);
-  const ativo = Boolean(config.rastreioSmsAtivo) && Boolean(c.rastreioResponsavel) && !STATUS_ENCERRADOS.includes(c.status);
+  const ativo = Boolean(config.rastreioSmsAtivo) && Boolean(c.rastreioResponsavel || c.rastreioMotorista) && !STATUS_ENCERRADOS.includes(c.status);
   // Motivos para pedir a posição agora (trechos críticos) ou o intervalo fixo (personalizado).
   const motivos = ativo
     ? motivosDoPedido(c, { posicoes: posicoes.slice(0, 2).map((p) => ({ latitude: Number(p.latitude), longitude: Number(p.longitude), registradaEm: p.registradaEm })), alertas: alertas.map((a) => a.tipo), config })
     : [];
   const intervaloMin = motivos.length ? Math.min(...motivos.map((m) => m.intervaloMin)) : null;
-  const r = c.rastreioResponsavel;
+  const u = c.rastreioResponsavel;
+  const m = c.rastreioMotorista;
   return {
     smsAtivo: Boolean(config.rastreioSmsAtivo),
     modo: config.rastreioPersonalizado ? "PERSONALIZADO" : "CRITICO",
     ativo,
     motivos: motivos.map((m) => m.texto),
     intervaloMin,
-    responsavel: r && { nome: r.nome, email: r.email, celular: mascararCelular(r.celular), temCelular: Boolean(r.celular), ativo: r.ativo },
+    responsavel: m
+      ? { tipo: "MOTORISTA", nome: m.nome, transportadora: m.transportadora.nome, placa: m.placa, celular: mascararCelular(m.celular), temCelular: true, ativo: !m.bloqueado && m.transportadora.ativo }
+      : u && { tipo: "USUARIO", nome: u.nome, email: u.email, celular: mascararCelular(u.celular), temCelular: Boolean(u.celular), ativo: u.ativo },
     desde: c.rastreioDesde,
     // Com motivo: último SMS + intervalo. Sem motivo, em trânsito: a checagem "sem posição" (última
     // posição + X h). Sem motivo no carregamento: nenhum pedido previsto até aparecer um.
@@ -439,9 +470,30 @@ export async function resumoRastreamento(containerId) {
       : EM_TRANSITO.includes(c.status) && (posicoes[0]?.registradaEm ?? c.rastreioDesde)
         ? new Date(new Date(posicoes[0]?.registradaEm ?? c.rastreioDesde).getTime() + config.rastreioSemPosicaoHoras * 60 * MIN)
         : null,
-    posicoes: posicoes.map((p) => ({ ...p, latitude: Number(p.latitude), longitude: Number(p.longitude), usuario: p.usuario?.nome ?? null })),
-    mensagens: mensagens.map((m) => ({ ...m, telefone: mascararCelular(m.telefone), usuario: m.usuario?.nome ?? null })),
+    posicoes: posicoes.map((p) => ({ ...p, latitude: Number(p.latitude), longitude: Number(p.longitude), usuario: p.motorista?.nome ?? p.usuario?.nome ?? null, motorista: undefined })),
+    mensagens: mensagens.map((m) => ({ ...m, telefone: mascararCelular(m.telefone), usuario: m.motorista?.nome ?? m.usuario?.nome ?? null, motorista: undefined })),
   };
+}
+
+// ---------- Retenção (LGPD) ----------
+
+/**
+ * Limpeza diária: posições GPS mais antigas que retencaoPosicoesDias (padrão 90), códigos de
+ * acesso de motorista com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias.
+ * Só apaga pelo critério de data, nada mais (posições recentes e sessões válidas ficam).
+ */
+export async function purgarDadosAntigos(agora = new Date()) {
+  const config = await lerConfiguracao();
+  const dias = (n) => new Date(agora.getTime() - n * 24 * 60 * MIN);
+  const [posicoes, codigos, sessoes] = await Promise.all([
+    prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } }),
+    prisma.codigoAcessoMotorista.deleteMany({ where: { criadoEm: { lt: dias(1) } } }),
+    prisma.sessaoMotorista.deleteMany({ where: { OR: [{ expiraEm: { lt: dias(30) } }, { revogadaEm: { lt: dias(30) } }] } }),
+  ]);
+  if (posicoes.count || codigos.count || sessoes.count) {
+    console.log(`Retenção: ${posicoes.count} posição(ões) com mais de ${config.retencaoPosicoesDias} dias, ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
+  }
+  return { posicoes: posicoes.count, codigos: codigos.count, sessoes: sessoes.count };
 }
 
 // ---------- Agendador ----------

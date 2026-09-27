@@ -42,6 +42,21 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos da Home.
 
+## Motoristas e transportadoras (v1.1)
+
+Motorista **não é usuário do sistema** — com milhares de motoristas, criar e manter um login para cada um não é viável.
+
+- **Identidade = celular verificado.** Ao ler o QR sem estar logado, o motorista informa o celular e recebe um **código de 6 dígitos por SMS** (vale **15 min**; pedir outro encerra o anterior; até 5 tentativas; 1 pedido/min e 5/h por celular, limite por aparelho e teto global de 300 códigos/hora — `MOTORISTA_MAX_CODIGOS_HORA`). No banco fica só o HMAC do código.
+- **Primeiro acesso:** nome, transportadora (lista), placa, CPF opcional (validado) e **aceite do termo de uso dos dados (LGPD)**. Cadastro livre — a transportadora bloqueia quem não for dela.
+- **Sessão no celular por 60 dias** (cookie httpOnly `cc_motorista`, só para `/api/motorista`; só o hash do token no banco). Nas próximas leituras o QR abre direto.
+- **O que ele faz:** as mesmas telas do QR do perfil Transportador (coleta com local de retirada, cadastro do container se não existir, vínculo, temperatura) — rotas `/api/motorista/qr/*`, as mesmas do QR da equipe. Nos registros aparece como "Nome (motorista · Transportadora)". Portaria e o resto do sistema ficam fechados.
+- **Rastreamento:** a cadeia vira QR → Container → **Motorista** → celular verificado (ou usuário da equipe, se for ele quem registrou). A regra de troca continua: quem registrar pelo QR por último recebe os SMS.
+- **Transportadoras:** Cadastros → Transportadoras (nome, CNPJ opcional).
+- **Gestor da transportadora** (perfil novo, ligado a uma transportadora): vê só a tela **Motoristas** com os motoristas dela — pré-cadastrar (tela ou planilha "Baixar modelo"/"Upload"), **bloquear/desbloquear** (derruba o acesso na hora e para os SMS), **encerrar acessos** (celular perdido) e ver os aparelhos com acesso. Quem tem "Editar cadastros" vê todos, com filtro por transportadora.
+- **Pré-cadastrado** (pelo gestor): no 1º acesso confirma o celular pelo código, confere os dados e aceita o termo.
+- **Retenção (LGPD):** posições GPS mais antigas que **90 dias** (Configurações → Rastreamento) são apagadas automaticamente 1x por dia; códigos de acesso com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias também.
+- O login da equipe continua no mesmo QR ("Sou da equipe"); os usuários do perfil Transportador continuam funcionando.
+
 ## Etiquetas QR (leitura pelo celular)
 
 Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container** e vale para **uma viagem**.
@@ -249,7 +264,7 @@ São 33 testes: regras de prazo/temperatura (puras) e API completa contra o banc
 **Rollback (voltar para a versão anterior):**
 1. **Mais rápido:** no Render → serviço → *Events/Deploys* → no deploy da versão anterior, **Rollback**. Volta o código em segundos, sem build. Atenção: o próximo push na `main` publica de novo o que estiver lá — faça o passo 2 em seguida.
 2. **Definitivo (Git):** criar na `main` um commit que desfaz a versão (`git revert` do merge, ex.: `git revert -m 1 <merge>`) e dar push. Não usar `git push --force`.
-3. **Banco:** normalmente nada a fazer (migração só com acréscimos). Antes de publicar qualquer migração que altere/remova dados, fazer **backup** do banco (pg_dump) e planejar o retorno.
+3. **Banco:** normalmente nada a fazer (migração só com acréscimos). **Voltando da 1.1 para a 1.0:** antes, rode `scripts/rollback-1.0-antes.sql` no banco (a 1.0 não conhece o perfil Gestor da transportadora: os gestores viram Visualização e ficam desativados, mantendo o vínculo com a transportadora). Ao republicar a 1.1, rode `scripts/rollback-1.0-desfazer.sql`. Testado: a 1.0 funciona sobre o banco da 1.1 com esse passo. Links de posição enviados a motoristas deixam de valer na 1.0. Antes de publicar qualquer migração que altere/remova dados, fazer **backup** do banco (pg_dump) e planejar o retorno.
 4. Conferir `/api/saude` → `versao` e testar o login.
 
 ## Operação e solução de problemas

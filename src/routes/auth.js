@@ -90,6 +90,6 @@ authRouter.post("/logout", (_req, res) => {
 
 // A tela consulta periodicamente: permissões/perfil alterados pelo admin aparecem sem relogar.
 authRouter.get("/me", requireAuth, carregarUsuarioAtual, (req, res) => {
-  const { email, nome, perfil } = req.usuario;
-  res.json({ email, nome, perfil, permissoes: req.permissoes });
+  const { email, nome, perfil, transportadoraId } = req.usuario;
+  res.json({ email, nome, perfil, permissoes: req.permissoes, transportadoraId: transportadoraId ?? null });
 });

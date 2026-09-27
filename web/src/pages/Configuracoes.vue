@@ -262,6 +262,14 @@ onMounted(async () => {
         <span class="dica">Em trânsito: checagem esparsa (repete a cada este tempo sem resposta).</span>
       </div>
     </div>
+    <h3 class="subtitulo">Dados pessoais (LGPD)</h3>
+    <div class="grade-form">
+      <div class="campo">
+        <label>Guardar as posições GPS por (dias)</label>
+        <input v-model.number="cfg.retencaoPosicoesDias" type="number" min="30" max="3650" step="1" required :disabled="!podeEditar" />
+        <span class="dica">Posições mais antigas são apagadas automaticamente uma vez por dia.</span>
+      </div>
+    </div>
     <p class="mudo pequeno">O link do SMS usa o endereço do sistema da aba <a href="#" @click.prevent="irPara('etiquetas')">Etiquetas QR</a>.</p>
     <div v-if="podeEditar" class="linha" style="margin-top: 12px"><button type="submit" class="primario">Salvar</button><span v-if="salvo === 'rastreamento'" class="txt-OK pequeno">✓ Salvo.</span></div>
   </form>

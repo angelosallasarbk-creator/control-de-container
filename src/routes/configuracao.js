@@ -40,6 +40,7 @@ configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async 
   if ("rastreioCriticoIntervaloMin" in b) rota.rastreioCriticoIntervaloMin = inteiro(b.rastreioCriticoIntervaloMin, "Repetir o pedido em trecho crítico a cada (min)", { obrigatorio: true, min: 15, max: 1440 });
   if ("rastreioParadoHoras" in b) rota.rastreioParadoHoras = decimal(b.rastreioParadoHoras, "Parado há mais de (h)", { obrigatorio: true, min: 0.5, max: 72 });
   if ("rastreioSemPosicaoHoras" in b) rota.rastreioSemPosicaoHoras = decimal(b.rastreioSemPosicaoHoras, "Sem posição há mais de (h)", { obrigatorio: true, min: 1, max: 168 });
+  if ("retencaoPosicoesDias" in b) rota.retencaoPosicoesDias = inteiro(b.retencaoPosicoesDias, "Guardar posições por (dias)", { obrigatorio: true, min: 30, max: 3650 });
   if ("rastreioIntervaloMin" in b) rota.rastreioIntervaloMin = inteiro(b.rastreioIntervaloMin, "Intervalo dos pedidos de posição (min)", { obrigatorio: true, min: 10, max: 1440 });
   if ("rastreioIntervaloCarregamentoMin" in b) rota.rastreioIntervaloCarregamentoMin = inteiro(b.rastreioIntervaloCarregamentoMin, "Intervalo no ponto de carregamento (min)", { obrigatorio: true, min: 10, max: 1440 });
   if ("urlPublica" in b) {

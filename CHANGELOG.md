@@ -14,10 +14,14 @@ Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno e
   container). Cada pedido guarda o motivo (coluna nova na lista de SMS). Migração só com acréscimos
   (`20260928090000_motivo_pedido_posicao`). Versão visível no rodapé e em `/api/saude`.
 
-Planejado:
-- **Fase 2 — Transportadoras e motoristas sem usuário:** motorista identificado pelo celular com
-  código SMS (15 min), sessão lembrada no celular, gestor da transportadora bloqueia motoristas,
-  retenção de posições (LGPD).
+- **Fase 2 — Transportadoras e motoristas sem usuário (pronta):** cadastro de Transportadoras;
+  motorista entra pelo QR com o celular + código SMS de 6 dígitos (15 min, pedido novo encerra o
+  anterior, 5 tentativas, limites por celular/aparelho/global), primeiro acesso com termo LGPD,
+  sessão de 60 dias no celular; registra pelo QR como Transportador; rastreamento aponta para o
+  motorista; perfil **Gestor da transportadora** com a tela Motoristas (pré-cadastro, planilha,
+  bloquear/desbloquear, encerrar acessos); retenção automática de posições (90 dias). Migração
+  `20260928120000_motoristas_transportadoras` (só acréscimos; `SolicitacaoPosicao.usuarioId` passa
+  a aceitar vazio).
 
 ## 1.0.0 — 27/09/2026 (tag `v1.0.0`, commit c28ace5)
 

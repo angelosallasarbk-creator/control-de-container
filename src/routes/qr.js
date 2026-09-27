@@ -1,4 +1,5 @@
-// API da tela de celular aberta pelo QR da etiqueta (/q/:token). Exige login.
+// API da tela de celular aberta pelo QR da etiqueta (/q/:token). Exige login da equipe (/api/qr) ou
+// sessão de motorista (/api/motorista/qr — mesmas rotas, o motorista no papel de Transportador).
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
@@ -16,6 +17,9 @@ import { assumirRastreio } from "../lib/rastreamento.js";
 export const qrRouter = Router();
 
 const TOKEN = /^[A-Za-z0-9_-]{22}$/;
+
+// Quem registrou pelo QR: usuário da equipe ou motorista (acesso pelo celular, /api/motorista/qr).
+const quemRegistrou = (req) => (req.usuario.motoristaId ? { motoristaId: req.usuario.motoristaId } : { usuarioId: req.usuario.id });
 
 async function buscarEtiqueta(token) {
   if (!TOKEN.test(token)) throw erroHttp(404, "Etiqueta não reconhecida. Confira se o QR é do Controle de Container.");
@@ -137,7 +141,7 @@ qrRouter.post("/:token/vincular", requirePermissao("qr.registrar"), asyncHandler
   });
   if (reefer) await sincronizarAlertas(container.id);
   // Quem registra pelo QR passa a receber os SMS de rastreamento deste container.
-  await assumirRastreio({ containerId: container.id, usuarioId: req.usuario.id, posicao: local });
+  await assumirRastreio({ containerId: container.id, ...quemRegistrou(req), posicao: local });
   res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: reefer ? avaliar(container, temperatura) : null });
 }));
 
@@ -157,7 +161,7 @@ qrRouter.post("/:token/leituras", requirePermissao("qr.registrar"), asyncHandler
     extras: { etiquetaId: e.id, ...local },
   });
   await sincronizarAlertas(e.container.id);
-  await assumirRastreio({ containerId: e.container.id, usuarioId: req.usuario.id, posicao: local });
+  await assumirRastreio({ containerId: e.container.id, ...quemRegistrou(req), posicao: local });
   res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: avaliar(e.container, temperatura) });
 }));
 
@@ -274,7 +278,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
 
   await prepararRota(final.id);
   await sincronizarAlertas(final.id);
-  await assumirRastreio({ containerId: final.id, usuarioId: req.usuario.id, posicao });
+  await assumirRastreio({ containerId: final.id, ...quemRegistrou(req), posicao });
   res.status(201).json({
     ...(await resumo(await buscarEtiqueta(req.params.token), req)),
     resultado: reefer ? avaliar(final, temperatura) : null,
@@ -378,7 +382,7 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
   });
 
   await sincronizarAlertas(final.id);
-  await assumirRastreio({ containerId: final.id, usuarioId: req.usuario.id, posicao });
+  await assumirRastreio({ containerId: final.id, ...quemRegistrou(req), posicao });
   res.status(201).json({
     ...(await resumo(await buscarEtiqueta(req.params.token), req)),
     resultado: reefer ? avaliar(final, temperatura) : null,

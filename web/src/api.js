@@ -19,6 +19,36 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+// Rotas do QR: as mesmas para a equipe (/qr) e para o motorista (/motorista/qr, sessão própria).
+const rotasQr = (prefixo) => ({
+  qr: (token) => request(`${prefixo}/${token}`),
+  qrVincular: (token, dados) => request(`${prefixo}/${token}/vincular`, { method: "POST", body: dados }),
+  qrLeitura: (token, dados) => request(`${prefixo}/${token}/leituras`, { method: "POST", body: dados }),
+  // Transportador/motorista: coleta pelo QR (Tipo > Local de retirada; cadastra o container se preciso).
+  qrOpcoesColeta: () => request(`${prefixo}/opcoes/coleta`),
+  qrColeta: (token, dados) => request(`${prefixo}/${token}/coleta`, { method: "POST", body: dados }),
+  // Portaria: entrada/saída no ponto de carregamento.
+  qrPortaria: (token, dados) => request(`${prefixo}/${token}/portaria`, { method: "POST", body: dados }),
+});
+export const qrMotorista = rotasQr("/motorista/qr");
+
+async function baixarArquivo(caminho, nome) {
+  const res = await fetch(`${BASE}${caminho}`, { credentials: "include" });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).erro || `Erro ${res.status}`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement("a"), { href: url, download: nome });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+async function enviarArquivo(caminho, arquivo) {
+  const res = await fetch(`${BASE}${caminho}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/octet-stream" }, body: arquivo });
+  const corpo = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(corpo.erro || (res.status === 413 ? "Arquivo grande demais (máximo 5 MB)." : `Erro ${res.status}`));
+  return corpo;
+}
+
 const qs = (params = {}) => {
   const limpo = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined));
   const s = new URLSearchParams(limpo).toString();
@@ -90,15 +120,24 @@ export const api = {
     return res.text();
   },
 
-  qr: (token) => request(`/qr/${token}`),
+  ...rotasQr("/qr"),
   qrPorCodigo: (codigo) => request(`/qr/codigo/${encodeURIComponent(codigo.trim())}`),
-  qrVincular: (token, dados) => request(`/qr/${token}/vincular`, { method: "POST", body: dados }),
-  qrLeitura: (token, dados) => request(`/qr/${token}/leituras`, { method: "POST", body: dados }),
-  // Transportador: coleta pelo QR (Tipo > Local de retirada; cadastra o container se preciso).
-  qrOpcoesColeta: () => request("/qr/opcoes/coleta"),
-  qrColeta: (token, dados) => request(`/qr/${token}/coleta`, { method: "POST", body: dados }),
-  // Portaria: entrada/saída no ponto de carregamento.
-  qrPortaria: (token, dados) => request(`/qr/${token}/portaria`, { method: "POST", body: dados }),
+
+  // Motorista (sem usuário): entrar pelo celular com código SMS.
+  motoristaPedirCodigo: (celular) => request("/motorista/codigo", { method: "POST", body: { celular } }),
+  motoristaVerificar: (celular, codigo) => request("/motorista/verificar", { method: "POST", body: { celular, codigo } }),
+  motoristaCadastro: (dados) => request("/motorista/cadastro", { method: "POST", body: dados }),
+  motoristaEu: () => request("/motorista/eu"),
+  motoristaAtualizar: (dados) => request("/motorista/eu", { method: "PATCH", body: dados }),
+  motoristaSair: () => request("/motorista/sair", { method: "POST" }),
+  // Gestão dos motoristas (gestor da transportadora / administração).
+  motoristas: (params) => request(`/motoristas${qs(params)}`),
+  criarMotorista: (dados) => request("/motoristas", { method: "POST", body: dados }),
+  atualizarMotorista: (id, dados) => request(`/motoristas/${id}`, { method: "PATCH", body: dados }),
+  sessoesMotorista: (id) => request(`/motoristas/${id}/sessoes`),
+  encerrarSessoesMotorista: (id) => request(`/motoristas/${id}/encerrar-sessoes`, { method: "POST" }),
+  baixarModeloMotoristas: () => baixarArquivo("/motoristas/modelo", "modelo-motoristas.xlsx"),
+  importarMotoristas: (arquivo, confirmar = false) => enviarArquivo(`/motoristas/importar${confirmar ? "?confirmar=1" : ""}`, arquivo),
 
   locais: (params) => request(`/locais${qs(params)}`),
   criarLocal: (dados) => request("/locais", { method: "POST", body: dados }),

@@ -791,9 +791,10 @@ function reconhecido() {
                 <div class="mudo pequeno">Responsável (quem registrou pelo QR por último)</div>
                 <div v-if="rastreio.responsavel" class="negrito">
                   {{ rastreio.responsavel.nome }}
+                  <span v-if="rastreio.responsavel.tipo === 'MOTORISTA'" class="chip azul" :title="rastreio.responsavel.placa ? 'Placa ' + rastreio.responsavel.placa : ''">motorista · {{ rastreio.responsavel.transportadora }}</span>
                   <span v-if="rastreio.responsavel.celular" class="mudo mono" style="white-space: nowrap">· {{ rastreio.responsavel.celular }}</span>
                   <span v-else class="chip amarelo" title="Cadastre o celular em Configurações → Usuários">sem celular</span>
-                  <span v-if="!rastreio.responsavel.ativo" class="chip vermelho">usuário desativado</span>
+                  <span v-if="!rastreio.responsavel.ativo" class="chip vermelho">{{ rastreio.responsavel.tipo === "MOTORISTA" ? "motorista bloqueado" : "usuário desativado" }}</span>
                 </div>
                 <div v-else class="mudo">Ninguém ainda — o primeiro registro pelo QR define o responsável.</div>
               </div>

@@ -2,7 +2,7 @@ import "dotenv/config";
 import { criarApp } from "./app.js";
 import { purgarLogsExpirados } from "./lib/auditoria.js";
 import { iniciarVerificador } from "./lib/verificador.js";
-import { iniciarRastreamento } from "./lib/rastreamento.js";
+import { iniciarRastreamento, purgarDadosAntigos } from "./lib/rastreamento.js";
 import { criarAdminInicialSeNecessario } from "./lib/adminInicial.js";
 
 await criarAdminInicialSeNecessario().catch((err) => console.error("Falha ao criar admin inicial:", err));
@@ -18,7 +18,10 @@ iniciarVerificador();
 // Pedidos de posição por SMS (só age com o rastreamento ligado em Configurações).
 iniciarRastreamento();
 
-purgarLogsExpirados().catch((err) => console.error("Falha na purga inicial de logs:", err));
-setInterval(() => {
-  purgarLogsExpirados().catch((err) => console.error("Falha na purga periódica de logs:", err));
-}, 24 * 60 * 60 * 1000);
+// Retenção: logs (365 dias) e dados do rastreamento/motoristas (posições 90 dias — LGPD).
+const purgar = () => {
+  purgarLogsExpirados().catch((err) => console.error("Falha na purga de logs:", err));
+  purgarDadosAntigos().catch((err) => console.error("Falha na purga do rastreamento:", err));
+};
+purgar();
+setInterval(purgar, 24 * 60 * 60 * 1000);

@@ -14,9 +14,11 @@ const routes = [
   { path: "/redefinir-senha/:codigo", name: "redefinir-senha", component: () => import("./pages/RedefinirSenha.vue"), props: true, meta: { titulo: "Criar nova senha", layout: "simples", publica: true } },
   // Link do SMS de rastreamento: envia a posição GPS sem login (o código do link autentica).
   { path: "/p/:codigo", name: "enviar-posicao", component: () => import("./pages/EnviarPosicao.vue"), props: true, meta: { titulo: "Enviar posição", layout: "simples", publica: true } },
-  { path: "/q/:token", name: "leitura-qr", component: () => import("./pages/LeituraQR.vue"), props: true, meta: { titulo: "Registrar leitura", layout: "simples" } },
+  // QR da etiqueta: equipe (login) ou motorista (celular + código SMS, sem usuário) — PaginaQR decide.
+  { path: "/q/:token", name: "leitura-qr", component: () => import("./pages/PaginaQR.vue"), props: true, meta: { titulo: "Registrar leitura", layout: "simples", publica: true } },
   { path: "/locais", name: "locais", component: () => import("./pages/Locais.vue"), meta: { titulo: "Locais" } },
   { path: "/cadastros/:recurso", name: "cadastros", component: () => import("./pages/Cadastros.vue"), props: true, meta: { titulo: "Cadastros" } },
+  { path: "/motoristas", name: "motoristas", component: () => import("./pages/Motoristas.vue"), meta: { titulo: "Motoristas" } },
   { path: "/usuarios", name: "usuarios", component: () => import("./pages/Usuarios.vue"), meta: { titulo: "Usuários", acao: "administrar" } },
   { path: "/integracao", name: "integracao", component: () => import("./pages/Integracao.vue"), meta: { titulo: "Integração", acao: "administrar" } },
   { path: "/configuracoes", name: "configuracoes", component: () => import("./pages/Configuracoes.vue"), meta: { titulo: "Configurações", acao: "cadastros" } },

@@ -1,14 +1,26 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { api } from "../api.js";
+import { api, qrMotorista } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal } from "../formato.js";
 import { conferirNumero } from "../iso6346.js";
 
 // Página aberta pela câmera do celular ao ler a etiqueta. Exige login (o App mostra o login
 // antes e volta para cá). 1ª leitura: número + temperatura + data/hora; depois, só temperatura.
-const props = defineProps({ token: { type: String, required: true } });
+// motorista: acesso pelo celular (sem usuário) — mesmas telas, rotas /api/motorista/qr.
+const props = defineProps({ token: { type: String, required: true }, motorista: { type: Object, default: null } });
+const emit = defineEmits(["sair", "sessao-encerrada"]);
 const auth = useAuthStore();
+const q = props.motorista ? qrMotorista : api;
+const nomeQuem = computed(() => props.motorista ? `${props.motorista.nome} · ${props.motorista.transportadora?.nome ?? ""}` : auth.usuario?.nome);
+// Sessão do motorista caiu (bloqueado/encerrada): volta para a tela de acesso.
+function tratarErroMotorista(e) {
+  if (props.motorista && (e.status === 401 || e.status === 403) && e.codigo && /MOTORISTA/.test(e.codigo)) {
+    emit("sessao-encerrada", e.message);
+    return true;
+  }
+  return false;
+}
 
 const info = ref(null);
 const erroFatal = ref(null);
@@ -31,12 +43,13 @@ const enviarLocalizacao = ref(podeLocalizar);
 async function carregar() {
   try {
     // Transportador: busca as opções da coleta junto (a tela já abre com Tipo/Local prontos).
-    const transportador = auth.usuario?.perfil === "TRANSPORTADOR";
-    const [r, op] = await Promise.all([api.qr(props.token), transportador && !opcoes.value ? api.qrOpcoesColeta() : null]);
+    const transportador = Boolean(props.motorista) || auth.usuario?.perfil === "TRANSPORTADOR";
+    const [r, op] = await Promise.all([q.qr(props.token), transportador && !opcoes.value ? q.qrOpcoesColeta() : null]);
     if (op) opcoes.value = op;
     info.value = r;
     erroFatal.value = null;
   } catch (e) {
+    if (tratarErroMotorista(e)) return;
     erroFatal.value = e.message;
   }
 }
@@ -103,13 +116,14 @@ async function salvar(substituir = false) {
       ...(await obterLocalizacao()),
     };
     const r = estado.value === "LIVRE"
-      ? await api.qrVincular(props.token, { ...dados, numero: f.numero, substituir })
-      : await api.qrLeitura(props.token, dados);
+      ? await q.qrVincular(props.token, { ...dados, numero: f.numero, substituir })
+      : await q.qrLeitura(props.token, dados);
     info.value = r;
     sucesso.value = { temperatura: dados.temperatura, resultado: r.resultado, numero: r.container?.numero };
     f.temperatura = "";
     f.numero = "";
   } catch (e) {
+    if (tratarErroMotorista(e)) return;
     if (e.codigo === "ETIQUETA_EXISTENTE") confirmarSubstituicao.value = e.dados.etiquetaAnterior;
     else erro.value = e.message;
   } finally {
@@ -138,7 +152,7 @@ async function coletar({ substituir = false, confirmarDigito = false } = {}) {
         : undefined,
       ...(await obterLocalizacao()),
     };
-    const r = await api.qrColeta(props.token, dados);
+    const r = await q.qrColeta(props.token, dados);
     info.value = r;
     sucesso.value = {
       coleta: r.coleta, cadastrado: r.cadastrado, retirada: r.container?.retirada,
@@ -148,6 +162,7 @@ async function coletar({ substituir = false, confirmarDigito = false } = {}) {
     f.numero = "";
     precisaCadastro.value = false;
   } catch (e) {
+    if (tratarErroMotorista(e)) return;
     if (e.codigo === "ETIQUETA_EXISTENTE") confirmarSubstituicao.value = e.dados.etiquetaAnterior;
     else if (e.codigo === "CONTAINER_NAO_CADASTRADO") {
       precisaCadastro.value = true;
@@ -203,7 +218,7 @@ async function registrarPortaria(substituir = false) {
       substituir,
       ...(await obterLocalizacao()),
     };
-    const r = await api.qrPortaria(props.token, dados);
+    const r = await q.qrPortaria(props.token, dados);
     info.value = r;
     sucesso.value = {
       movimento: r.movimento, etapa: r.etapa, completadas: r.completadas,
@@ -212,6 +227,7 @@ async function registrarPortaria(substituir = false) {
     f.temperatura = "";
     f.numero = "";
   } catch (e) {
+    if (tratarErroMotorista(e)) return;
     if (e.codigo === "ETIQUETA_EXISTENTE") confirmarSubstituicao.value = e.dados.etiquetaAnterior;
     else erro.value = e.message;
   } finally {
@@ -232,8 +248,9 @@ function novaLeitura() {
     <header class="movel-topo">
       <svg width="24" height="24" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="2" fill="#4a8fdc" /><path d="M8 11v10M13 11v10M18 11v10M23 11v10" stroke="#fff" stroke-width="2" /></svg>
       <span class="espaco">Controle de Container</span>
-      <span class="pequeno">{{ auth.usuario?.nome }}</span>
-      <button v-if="info?.modoTransportador" type="button" class="pequeno sair" @click="auth.logout()">Sair</button>
+      <span class="pequeno">{{ nomeQuem }}</span>
+      <button v-if="motorista" type="button" class="pequeno sair" @click="emit('sair')">Sair</button>
+      <button v-else-if="info?.modoTransportador" type="button" class="pequeno sair" @click="auth.logout()">Sair</button>
       <router-link v-if="info?.modoPortaria" to="/" class="btn pequeno sair">Home</router-link>
     </header>
 

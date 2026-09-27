@@ -40,6 +40,8 @@ export const CONFIG_PADRAO = {
   rastreioCriticoIntervaloMin: 60,
   rastreioParadoHoras: 3,
   rastreioSemPosicaoHoras: 12,
+  // LGPD: posições GPS mais antigas que isto são apagadas automaticamente (1x por dia).
+  retencaoPosicoesDias: 90,
 };
 
 export async function lerConfiguracao() {
