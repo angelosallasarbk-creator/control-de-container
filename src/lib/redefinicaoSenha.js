@@ -67,12 +67,25 @@ export async function solicitarRedefinicao({ email, baseUrl, solicitante, agora 
   });
   const link = `${String(baseUrl).replace(/\/+$/, "")}/redefinir-senha/${codigo}`;
   const { assunto, texto, html } = montarEmail(usuario, link);
-  await enviarEmail({ para: usuario.email, nome: usuario.nome, assunto, texto, html });
+  const quem = solicitante && solicitante !== usuario.email ? " pelo administrador" : "";
+  let envio;
+  try {
+    envio = await enviarEmail({ para: usuario.email, nome: usuario.nome, assunto, texto, html });
+  } catch (err) {
+    // E-mail não saiu: desfaz o link (ninguém o recebeu) para poder pedir de novo na hora, e
+    // registra o motivo no log de auditoria (visível em Configurações → Log).
+    await prisma.usuario.update({ where: { id: usuario.id }, data: { resetTokenHash: null, resetExpiraEm: null, resetSolicitadoEm: null } });
+    await registrarLog({
+      usuarioEmail: solicitante ?? usuario.email, acao: "RESET_SENHA_FALHA_ENVIO", entidade: "Usuario", entidadeId: usuario.id,
+      descricao: `Falha ao enviar o link de redefinição de senha para ${usuario.email}${quem}: ${String(err.message).slice(0, 300)}`,
+    });
+    throw err;
+  }
   await registrarLog({
     usuarioEmail: solicitante ?? usuario.email, acao: "RESET_SENHA_SOLICITADO", entidade: "Usuario", entidadeId: usuario.id,
-    descricao: solicitante && solicitante !== usuario.email
-      ? `Link de redefinição de senha enviado para ${usuario.email} pelo administrador`
-      : `Link de redefinição de senha enviado para ${usuario.email}`,
+    descricao: envio?.simulado
+      ? `Link de redefinição de senha gerado para ${usuario.email}${quem} (envio simulado — chave do Brevo não configurada, o e-mail não saiu)`
+      : `Link de redefinição de senha enviado para ${usuario.email}${quem}`,
   });
   return true;
 }

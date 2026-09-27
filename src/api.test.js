@@ -1084,3 +1084,40 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
   await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
   assert.equal(caixaDeSaida.length, n, "conta desativada não recebe link");
 });
+
+test("reset de senha: log diz quando o envio é simulado e registra falha do Brevo (e libera novo pedido)", async () => {
+  const { prisma: db } = await import("./lib/prisma.js");
+  await agentes.ADMIN.post("/api/usuarios").send({ email: "falha-envio@teste.local", nome: "Falha Envio", perfil: "OPERADOR", senha: "senha-teste-123" });
+
+  // IP próprio para este cenário: o limite de 5 pedidos/15 min por IP já foi usado nos testes anteriores.
+  const IP = "203.0.113.77";
+  // Sem chave: log deixa claro que foi simulado.
+  const r1 = await request(app).post("/api/auth/esqueci-senha").set("X-Forwarded-For", IP).send({ email: "falha-envio@teste.local" });
+  assert.equal(r1.status, 200, JSON.stringify(r1.body));
+  let log = (await agentes.ADMIN.get("/api/logs?entidade=Usuario")).body;
+  assert.ok(log.some((l) => l.acao === "RESET_SENHA_SOLICITADO" && /falha-envio@teste\.local.*envio simulado/.test(l.descricao)), "log indica envio simulado");
+
+  // Com chave, Brevo recusa (IP não autorizado): resposta genérica ao público, falha no log, link desfeito.
+  const fetchOriginal = globalThis.fetch;
+  process.env.BREVO_API_KEY = "chave-falsa-de-teste";
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: "We have detected you are using an unrecognised IP address", code: "unauthorized" }), { status: 401 });
+  try {
+    await db.usuario.update({ where: { email: "falha-envio@teste.local" }, data: { resetSolicitadoEm: null } });
+    const publico = await request(app).post("/api/auth/esqueci-senha").set("X-Forwarded-For", IP).send({ email: "falha-envio@teste.local" });
+    assert.equal(publico.status, 200, "tela de login continua com a resposta genérica");
+    assert.match(publico.body.mensagem, /Se o e-mail estiver cadastrado/);
+    log = (await agentes.ADMIN.get("/api/logs?entidade=Usuario")).body;
+    const falha = log.find((l) => l.acao === "RESET_SENHA_FALHA_ENVIO");
+    assert.ok(falha && /Brevo respondeu 401/.test(falha.descricao) && /unrecognised IP/.test(falha.descricao), "motivo da falha no log");
+    assert.ok(!falha.descricao.includes("chave-falsa-de-teste"), "log não expõe a chave");
+    const u = await db.usuario.findUnique({ where: { email: "falha-envio@teste.local" } });
+    assert.equal(u.resetTokenHash, null, "link desfeito");
+    assert.equal(u.resetSolicitadoEm, null, "pode pedir de novo na hora");
+    const pelaAdmin = await agentes.ADMIN.post(`/api/usuarios/${u.id}/enviar-redefinicao`);
+    assert.equal(pelaAdmin.status, 502);
+    assert.match(pelaAdmin.body.erro, /unrecognised IP/);
+  } finally {
+    globalThis.fetch = fetchOriginal;
+    delete process.env.BREVO_API_KEY;
+  }
+});
