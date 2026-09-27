@@ -9,7 +9,7 @@ import { registrarLeitura, sincronizarAlertas } from "../lib/leituras.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
 import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { decimal, dataHora, inteiro, id as validarId } from "../lib/validacao.js";
-import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, FLUXO, validarNovoContainer, gravarNovoContainer, validarMomento, prepararRota } from "./containers.js";
+import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, FLUXO, validarNovoContainer, gravarNovoContainer, validarMomento, prepararRota, validarLocais } from "./containers.js";
 import { estadoDaEtiqueta } from "./etiquetas.js";
 import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { assumirRastreio } from "../lib/rastreamento.js";
@@ -43,6 +43,8 @@ async function resumo(e, req) {
       tempMax: c.tempMax === null ? null : Number(c.tempMax),
       coletadoEm: c.coletadoEm, entreguePortoEm: c.entreguePortoEm, canceladoEm: c.canceladoEm,
       retirada: c.portoRetirada?.nome ?? null,
+      // Trajeto programado: a tela da coleta já abre com ele preenchido (quem lê só confere).
+      trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId },
       ultimasLeituras: ultimas.map((l) => ({ ...l, temperatura: Number(l.temperatura) })),
     },
     podeRegistrar: tem(req, "qr.registrar"),
@@ -172,14 +174,28 @@ qrRouter.post("/:token/leituras", requirePermissao("qr.registrar"), asyncHandler
 
 // Opções do formulário do celular (só o necessário, sem expor o resto do sistema).
 qrRouter.get("/opcoes/coleta", requirePermissao("qr.registrar"), asyncHandler(async (_req, res) => {
-  const [tipos, locais, grupos, armadores, produtos] = await Promise.all([
+  const [tipos, locais, locaisCarregamento, grupos, armadores, produtos] = await Promise.all([
     prisma.tipoLocal.findMany({ where: { ativo: true, funcao: "RETIRADA_ENTREGA" }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
     prisma.local.findMany({ where: { ativo: true, tipo: { funcao: "RETIRADA_ENTREGA" } }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cidade: true, uf: true, tipoId: true } }),
+    prisma.local.findMany({ where: { ativo: true, tipo: { funcao: "CARREGAMENTO" } }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cidade: true, uf: true } }),
     prisma.grupoOperacao.findMany({ where: { ativo: true }, orderBy: [{ cliente: "asc" }, { fabrica: "asc" }], select: { id: true, cliente: true, fabrica: true } }),
     prisma.armador.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
     prisma.produto.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
   ]);
-  res.json({ tipos, locais, grupos, armadores, produtos, tiposContainer: TIPOS_CONTAINER });
+  res.json({ tipos, locais, locaisCarregamento, grupos, armadores, produtos, tiposContainer: TIPOS_CONTAINER });
+}));
+
+// Etiqueta nova: ao digitar o número, a tela busca a programação do container (se já cadastrado)
+// para preencher retirada, carregamento e entrega. Só containers ativos.
+qrRouter.get("/opcoes/container/:numero", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
+  const { numero, formatoValido } = validarNumeroContainer(req.params.numero);
+  if (!formatoValido) throw erroHttp(400, "Número do container inválido.");
+  const c = await prisma.container.findFirst({
+    where: { numero, status: { notIn: STATUS_ENCERRADOS } },
+    select: { numero: true, tipo: true, status: true, portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true },
+  });
+  if (!c) return res.json({ cadastrado: false, numero });
+  res.json({ cadastrado: true, ...c, trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId } });
 }));
 
 async function localDeRetirada(valor) {
@@ -200,6 +216,8 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
   if (estado === "ENCERRADA") throw erroHttp(409, `O container ${e.container.numero} já foi encerrado; esta etiqueta não recebe mais registros.`);
 
   const retirada = await localDeRetirada(b.portoRetiradaId);
+  // Carregamento e entrega: vêm preenchidos com a programação; quem lê confirma ou corrige.
+  const trajeto = await validarLocais(Object.fromEntries(["localCarregamentoId", "portoEntregaId"].filter((k) => b[k] !== undefined && b[k] !== "").map((k) => [k, b[k]])));
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta") ?? new Date();
   const lidaEm = new Date();
   const posicao = lerLocalizacao(b);
@@ -218,7 +236,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
         throw erroHttp(404, `O container ${numero} ainda não está cadastrado. Preencha os dados abaixo para cadastrá-lo.`, { codigo: "CONTAINER_NAO_CADASTRADO", numero });
       }
       novo = await validarNovoContainer(
-        { ...b.novo, numero: b.numero, confirmarDigito: b.confirmarDigito, portoRetiradaId: retirada.id, coletadoEm },
+        { ...b.novo, numero: b.numero, confirmarDigito: b.confirmarDigito, portoRetiradaId: retirada.id, ...trajeto, coletadoEm },
         email
       );
     }
@@ -243,7 +261,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
       c = await gravarNovoContainer(tx, novo, email, `Container ${numero} cadastrado pelo transportador na coleta em ${descricaoRetirada}`);
     } else if (!jaColetado) {
       // Condição no WHERE: se outra pessoa registrou a coleta no meio tempo, não grava de novo.
-      const r = await tx.container.updateMany({ where: { id: c.id, status: "PROGRAMADO" }, data: { status: "COLETADO", coletadoEm, portoRetiradaId: retirada.id } });
+      const r = await tx.container.updateMany({ where: { id: c.id, status: "PROGRAMADO" }, data: { status: "COLETADO", coletadoEm, portoRetiradaId: retirada.id, ...trajeto } });
       if (r.count !== 1) throw erroHttp(409, "A coleta deste container acabou de ser registrada por outra pessoa. Leia o QR de novo.");
       await tx.eventoContainer.create({
         data: { containerId: c.id, statusDe: "PROGRAMADO", statusPara: "COLETADO", ocorridoEm: coletadoEm, usuarioEmail: email, observacao: `Coleta pelo QR em ${descricaoRetirada}` },
@@ -251,9 +269,11 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
       await registrarLog({
         usuarioEmail: email, acao: "AVANCAR", entidade: "Container", entidadeId: c.id,
         descricao: `Container ${numero}: coleta registrada pelo transportador em ${descricaoRetirada}` +
-          (c.portoRetiradaId && c.portoRetiradaId !== retirada.id ? " (substituiu o local de retirada previsto)" : ""),
+          (c.portoRetiradaId && c.portoRetiradaId !== retirada.id ? " (substituiu o local de retirada previsto)" : "") +
+          (trajeto.localCarregamentoId !== undefined && trajeto.localCarregamentoId !== c.localCarregamentoId ? " (local de carregamento alterado na leitura)" : "") +
+          (trajeto.portoEntregaId !== undefined && trajeto.portoEntregaId !== c.portoEntregaId ? " (local de entrega alterado na leitura)" : ""),
       }, tx);
-      c = { ...c, status: "COLETADO", coletadoEm, portoRetiradaId: retirada.id };
+      c = { ...c, status: "COLETADO", coletadoEm, portoRetiradaId: retirada.id, ...trajeto };
     }
     if (e.status === "LIVRE") {
       const atual = await tx.etiquetaQR.findUnique({ where: { id: e.id } });

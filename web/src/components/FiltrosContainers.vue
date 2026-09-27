@@ -5,21 +5,8 @@ import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../api.js";
 import { filtroContainers, chaveRegiao } from "../filtroContainers.js";
 import FiltroMultiplo from "./FiltroMultiplo.vue";
-import Icone from "./Icone.vue";
-import { useAuthStore } from "../stores/auth.js";
 
-const auth = useAuthStore();
-const baixando = ref(false);
-async function baixarModelo() {
-  baixando.value = true;
-  try {
-    await api.baixarModeloContainers();
-  } catch (e) {
-    alert(e.message);
-  } finally {
-    baixando.value = false;
-  }
-}
+// (O "Baixar modelo" da planilha fica dentro da janela de Upload.)
 const regioes = ref([]);
 const grupos = ref([]);
 onMounted(async () => {
@@ -51,9 +38,6 @@ watch(opcoesGrupo, (opcoes) => {
     <label class="sem-qr" :class="{ marcado: filtroContainers.semQr }" title="Mostrar só os containers que ainda não têm etiqueta QR vinculada">
       <input v-model="filtroContainers.semQr" type="checkbox" /> Sem QR code
     </label>
-    <button v-if="auth.pode('containers.operar')" type="button" class="pequeno baixar-modelo" :disabled="baixando" title="Planilha Excel para cadastrar vários containers pelo Upload" @click="baixarModelo">
-      <Icone nome="download" :tamanho="15" /> {{ baixando ? "Gerando…" : "Baixar modelo" }}
-    </button>
   </div>
 </template>
 

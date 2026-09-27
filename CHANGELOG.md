@@ -4,6 +4,23 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 1.1.1 — 27/09/2026 (tag `v1.1.1`)
+
+Ajustes visuais:
+- Marca "C.C.S" passa a ser **"CCS"** em todas as telas (login, redefinir senha, enviar posição,
+  acesso do motorista), no e-mail de redefinição de senha, no nome do remetente e no Excel.
+- Removida a faixa vermelha de alertas críticos do topo: o **sino** (com o número) e o bipe bastam.
+- Removido o botão "Baixar modelo" do cabeçalho de Containers (redundante: fica dentro do Upload).
+
+Cadastro por planilha e coleta pelo QR:
+- Planilha: **Produto, Local de retirada, Local de carregamento, Local de entrega e Coleta
+  programada passam a ser obrigatórios** (linha em branco é recusada com o nome do campo).
+- Upload: continua uma requisição por etapa; no servidor a confirmação grava **em lote** (uma
+  transação, inserção única dos containers, etapas e logs), lê cada cadastro uma vez e calcula as
+  distâncias do lote de uma vez.
+- QR da coleta: retirada, carregamento e entrega vêm **preenchidos com a programação** do
+  container; quem lê confere e altera só o que estiver diferente (alteração registrada no log).
+
 ## 1.1.0 — 27/09/2026 (tag `v1.1.0`)
 
 - **Fase 1 — Pedidos de posição por trechos críticos (pronta):** o padrão passa a pedir posição só

@@ -24,17 +24,17 @@ const hashDoCodigo = (codigo) => crypto.createHash("sha256").update(String(codig
 const escapar = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 function montarEmail(usuario, link) {
-  const assunto = "Redefinição de senha – C.C.S";
+  const assunto = "Redefinição de senha – CCS";
   const texto =
     `Olá, ${usuario.nome}.\n\n` +
-    `Recebemos um pedido para redefinir a senha da sua conta no C.C.S – Container Control Solutions.\n` +
+    `Recebemos um pedido para redefinir a senha da sua conta no CCS – Container Control Solutions.\n` +
     `Para criar uma nova senha, abra o link abaixo (válido por ${VALIDADE_LINK_MIN} minutos e de uso único):\n\n${link}\n\n` +
     `Se não foi você, ignore este e-mail: sua senha atual continua valendo.\n`;
   const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f3f5f8;font-family:Segoe UI,Arial,sans-serif;color:#1b2430">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fff;border-radius:12px;padding:28px">
       <tr><td style="text-align:center">
-        <div style="font-size:26px;font-weight:800;letter-spacing:.06em">C.C.S</div>
+        <div style="font-size:26px;font-weight:800;letter-spacing:.06em">CCS</div>
         <div style="font-size:12px;color:#5b6776">Container Control Solutions</div>
       </td></tr>
       <tr><td style="padding-top:22px;font-size:15px;line-height:1.5">

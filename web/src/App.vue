@@ -5,7 +5,7 @@ import { useAuthStore } from "./stores/auth.js";
 // Versão do package.json (injetada pelo Vite no build) — rodapé do menu.
 const VERSAO = __VERSAO__;
 import { api } from "./api.js";
-import { ROTULO_ALERTA, ROTULO_PERFIL } from "./formato.js";
+import { ROTULO_PERFIL } from "./formato.js";
 import Login from "./pages/Login.vue";
 import Icone from "./components/Icone.vue";
 import { visaoContainers, definirVisaoContainers } from "./visaoContainers.js";
@@ -228,7 +228,6 @@ function alternarSecao(nome) {
   }
 }
 
-const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 </script>
 
 <template>
@@ -311,17 +310,8 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
     </aside>
 
     <div class="conteudo">
-      <!-- Faixa de críticos + título ficam fixos no topo; só o conteúdo da página rola. -->
+      <!-- Título fica fixo no topo; só o conteúdo da página rola. Alertas: pelo sino (com o número). -->
       <div class="cabecalho-fixo">
-      <div v-if="criticos.length" class="faixa-critica">
-        <span>
-          <strong class="so-desktop">{{ criticos.length }} alerta(s) crítico(s) sem reconhecimento</strong>
-          <strong class="so-celular">⚠ {{ criticos.length }} alerta(s) crítico(s)</strong>
-          <span class="faixa-detalhe"> —
-            {{ criticos.slice(0, 3).map((a) => `${a.container.numero} (${ROTULO_ALERTA[a.tipo]})`).join(", ") }}{{ criticos.length > 3 ? "…" : "" }}</span>
-        </span>
-        <router-link v-if="!ehPortaria" to="/alertas" class="btn pequeno">Ver alertas</router-link>
-      </div>
       <header class="topo">
         <div class="linha">
           <button

@@ -21,7 +21,7 @@ services:
       - key: EMAIL_REMETENTE
         value: aslog.ccs@gmail.com
       - key: EMAIL_REMETENTE_NOME
-        value: C.C.S – Container Control Solutions
+        value: CCS – Container Control Solutions
       # SMS de rastreamento (mesma BREVO_API_KEY; créditos de SMS no Brevo).
       - key: SMS_REMETENTE
         value: CCS

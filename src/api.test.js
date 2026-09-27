@@ -1153,17 +1153,22 @@ test("planilha de containers: modelo com listas, prévia sem gravar, confirma s�
   const col = (titulo) => cab.findIndex((t) => t.replace(" *", "") === titulo) + 1;
   const linha = (n, v) => { for (const [t, x] of Object.entries(v)) ws.getRow(n).getCell(col(t)).value = x; };
   const ok1 = num("PLNU100001"), ok2 = num("PLNU100002"), ativo = num("PLNU100003");
-  const base = { Tipo: "40' Dry", "Ponto de Carregamento": "planilha sa / fabrica upload", Armador: "Armador Planilha" };
+  // Obrigatórios: número, tipo, ponto, armador, produto, retirada, carregamento, entrega e coleta programada.
+  const base = {
+    Tipo: "40' Dry", "Ponto de Carregamento": "planilha sa / fabrica upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
+    "Local de retirada": "Porto de Santos", "Local de carregamento": "Armazém Cubatão", "Local de entrega": "Porto de Santos", "Coleta programada": "07/10/2026 10:00",
+  };
   linha(2, { "Número do container": ok1, ...base, "Local de retirada": "Porto de Santos", "Local de carregamento": "Armazém Cubatão", "Coleta programada": "05/10/2026 08:30", Booking: "BK-PL-1" });
   linha(3, { "Número do container": ok2, ...base, Tipo: "20' Reefer", Produto: "Resfriado Planilha", "Coleta programada": new Date(Date.UTC(2026, 9, 6, 14, 0)) });
   linha(4, { "Número do container": ok1, ...base }); // repetido na planilha
-  linha(5, { "Número do container": num("PLNU100004"), ...base, Tipo: "40' Reefer" }); // reefer sem produto
+  linha(5, { "Número do container": num("PLNU100004"), ...base, Tipo: "40' Reefer", Produto: null }); // sem produto
   linha(6, { "Número do container": "PLNU1000050", ...base }); // dígito errado
   linha(7, { "Número do container": "PLNU1000060", ...base, "Dígito conferido": "sim" }); // dígito errado, confirmado
   linha(8, { "Número do container": num("PLNU100007"), ...base, Armador: "Armador Inexistente" });
   linha(9, { "Número do container": num("PLNU100008"), ...base, "Local de retirada": "Armazém Cubatão" }); // local da função errada
   linha(10, { "Número do container": ativo, ...base });
   linha(12, { "Número do container": num("PLNU100009"), ...base, "Coleta programada": "31/13/2026" }); // (linha 11 vazia é ignorada)
+  linha(13, { "Número do container": num("PLNU100010"), ...base, "Local de entrega": null, "Coleta programada": null }); // obrigatórios em branco
   const arquivo = Buffer.from(await wb.xlsx.writeBuffer());
   // Número já ativo no sistema.
   const cad = { grupoId: g.body.id, armadorId: (await agentes.ADMIN.get("/api/armadores")).body.find((a) => a.nome === "Armador Planilha").id };
@@ -1177,19 +1182,20 @@ test("planilha de containers: modelo com listas, prévia sem gravar, confirma s�
   const previa = await enviar(agentes.OPERADOR);
   assert.equal(previa.status, 200, JSON.stringify(previa.body));
   assert.equal(await prisma.container.count(), antes, "prévia não grava");
-  assert.equal(previa.body.total, 10);
+  assert.equal(previa.body.total, 11);
   const erroDa = (n) => previa.body.linhas.find((l) => l.linha === n).erro;
   assert.equal(erroDa(2), null);
   assert.equal(erroDa(3), null);
   assert.equal(erroDa(7), null, "dígito errado aceito com SIM");
   assert.match(erroDa(4), /repetido na planilha \(também na linha 2\)/);
-  assert.match(erroDa(5), /reefer precisa de um produto/);
+  assert.equal(erroDa(5), "Obrigatório(s) em branco: Produto.");
+  assert.equal(erroDa(13), "Obrigatório(s) em branco: Local de entrega, Coleta programada.");
   assert.match(erroDa(6), /Dígito conferido/);
   assert.match(erroDa(8), /Armador: "Armador Inexistente" não encontrado/);
   assert.match(erroDa(9), /não é um local de retirada/);
   assert.match(erroDa(10), /Já está ativo/);
   assert.match(erroDa(12), /Coleta programada: data inválida/);
-  assert.deepEqual([previa.body.validos, previa.body.comErro], [3, 7]);
+  assert.deepEqual([previa.body.validos, previa.body.comErro], [3, 8]);
 
   const conf = await enviar(agentes.OPERADOR, true);
   assert.equal(conf.status, 200);
@@ -1201,11 +1207,14 @@ test("planilha de containers: modelo com listas, prévia sem gravar, confirma s�
   assert.equal(c1.booking, "BK-PL-1");
   assert.equal(c1.coletaProgramadaEm.toISOString(), "2026-10-05T11:30:00.000Z", "texto dd/mm/aaaa hh:mm = horário de Brasília");
   assert.equal(c1.criadoPor, "operador@teste.local");
+  // Gravação em lote mantém o mesmo registro do cadastro um a um: etapa inicial e log por container.
+  assert.equal(await prisma.eventoContainer.count({ where: { containerId: c1.id, statusPara: "PROGRAMADO" } }), 1);
+  assert.equal(await prisma.logAuditoria.count({ where: { entidade: "Container", entidadeId: String(c1.id), acao: "CRIAR" } }), 1);
   const c2 = await prisma.container.findFirst({ where: { numero: ok2 } });
   assert.equal(c2.coletaProgramadaEm.toISOString(), "2026-10-06T17:00:00.000Z", "data do Excel = horário de Brasília");
   assert.equal(Number(c2.tempMax), 4, "faixa copiada do produto");
   const log = (await agentes.ADMIN.get("/api/logs?entidade=Container")).body;
-  assert.ok(log.some((l) => l.acao === "IMPORTAR" && l.descricao.includes("3 container(s) cadastrado(s), 7 linha(s) recusada(s)")));
+  assert.ok(log.some((l) => l.acao === "IMPORTAR" && l.descricao.includes("3 container(s) cadastrado(s), 8 linha(s) recusada(s)")));
   // Reenviar o mesmo arquivo: nada duplica.
   const de_novo = await enviar(agentes.OPERADOR, true);
   assert.equal(de_novo.body.importados, 0);
@@ -1661,4 +1670,40 @@ test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor 
 
   await agentes.ADMIN.put("/api/configuracao").send(cfg);
   await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste de motoristas" });
+});
+
+test("QR da coleta: trajeto programado vem preenchido; quem lê confirma ou corrige carregamento e entrega", async () => {
+  const tr = await logar("transportador@teste.local");
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const c = await agentes.ADMIN.post("/api/containers").send({
+    numero: "TRJU5500551", confirmarDigito: true, tipo: "DRY_40", ...cad,
+    portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos,
+  });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+
+  // Opções da coleta trazem também os locais de carregamento.
+  const op = (await tr.get("/api/qr/opcoes/coleta")).body;
+  assert.ok(op.locaisCarregamento.some((l) => l.id === ids.cubatao));
+  assert.ok(!op.locaisCarregamento.some((l) => l.id === ids.santos), "porto não é local de carregamento");
+
+  // Etiqueta nova: ao digitar o número, a tela busca a programação.
+  const prog = (await tr.get("/api/qr/opcoes/container/trju 550055 1")).body;
+  assert.equal(prog.cadastrado, true);
+  assert.deepEqual(prog.trajeto, { portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos });
+  assert.equal((await tr.get("/api/qr/opcoes/container/ZZZU0000000")).body.cadastrado, false);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/qr/opcoes/container/TRJU5500551")).status, 403);
+
+  // Coleta confirmando a retirada e corrigindo a entrega (Santos → Terminal Ferroviário).
+  const [e] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  assert.equal((await tr.post(`/api/qr/${e.token}/coleta`).send({ numero: "TRJU5500551", portoRetiradaId: ids.santos, localCarregamentoId: ids.santos })).status, 400, "carregamento precisa ser fábrica/armazém");
+  const col = await tr.post(`/api/qr/${e.token}/coleta`).send({ numero: "TRJU5500551", portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.ferro });
+  assert.equal(col.status, 201, JSON.stringify(col.body));
+  assert.deepEqual(col.body.container.trajeto, { portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.ferro }, "leitura do QR devolve o trajeto (tela preenchida)");
+  const db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.deepEqual([db.status, db.portoEntregaId, db.localCarregamentoId], ["COLETADO", ids.ferro, ids.cubatao]);
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${c.body.id}`)).body;
+  assert.ok(log.some((l) => l.descricao.includes("local de entrega alterado na leitura")));
+  assert.ok(!log.some((l) => l.descricao.includes("local de carregamento alterado")), "carregamento só confirmado");
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste do trajeto" });
 });
