@@ -446,6 +446,7 @@ model SolicitacaoPosicao {
   criadaEm     DateTime  @default(now())
   expiraEm     DateTime
   respondidaEm DateTime?
+  motivo       String? // por que foi pedido (trecho crítico, intervalo, manual…)
 
   @@index([containerId])
 }
@@ -462,6 +463,7 @@ model MensagemSms {
   status      String // ENVIADA | SIMULADA | FALHA | SEM_CELULAR
   texto       String
   erro        String?
+  motivo      String? // pedidos de posição: por que foi pedido
   criadaEm    DateTime   @default(now())
 
   @@index([containerId, criadaEm])

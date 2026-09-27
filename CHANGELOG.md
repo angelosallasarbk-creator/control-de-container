@@ -6,10 +6,15 @@ Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno e
 
 ## 1.1.0 — em desenvolvimento (branch `versao-1.1`)
 
+- **Fase 1 — Pedidos de posição por trechos críticos (pronta):** o padrão passa a pedir posição só
+  quando a previsão estoura, há risco de prazo (alertas abertos), o container está parado (2 últimas
+  posições a até 500 m, 3 h entre elas) ou sem posição há 12 h; repete a cada 60 min enquanto houver
+  motivo; no ponto de carregamento só o risco de prazo. "Intervalo personalizado" opcional (regra
+  antiga de 30 min / 4 h). Botão "Solicitar posição" na aba Rastreamento (1 a cada 5 min por
+  container). Cada pedido guarda o motivo (coluna nova na lista de SMS). Migração só com acréscimos
+  (`20260928090000_motivo_pedido_posicao`). Versão visível no rodapé e em `/api/saude`.
+
 Planejado:
-- **Fase 1 — Pedidos de posição por trechos críticos:** padrão passa a pedir posição só quando a
-  previsão estoura, há risco de prazo, o container está parado ou sem posição há muito tempo;
-  "Intervalo personalizado" opcional (regra antiga de 30 min / 4 h); botão "Solicitar posição".
 - **Fase 2 — Transportadoras e motoristas sem usuário:** motorista identificado pelo celular com
   código SMS (15 min), sessão lembrada no celular, gestor da transportadora bloqueia motoristas,
   retenção de posições (LGPD).

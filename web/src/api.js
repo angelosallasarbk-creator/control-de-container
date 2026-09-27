@@ -47,6 +47,7 @@ export const api = {
   cancelar: (id, motivo) => request(`/containers/${id}/cancelar`, { method: "POST", body: { motivo } }),
   registrarLeitura: (id, dados) => request(`/containers/${id}/leituras`, { method: "POST", body: dados }),
   rastreamento: (id) => request(`/containers/${id}/rastreamento`),
+  solicitarPosicao: (id) => request(`/containers/${id}/solicitar-posicao`, { method: "POST" }),
   // Cadastro em lote: modelo .xlsx (download) e upload (prévia; confirmar = grava as válidas).
   baixarModeloContainers: async () => {
     const res = await fetch(`${BASE}/containers/modelo`, { credentials: "include" });

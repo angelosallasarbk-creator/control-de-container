@@ -188,6 +188,22 @@ const STATUS_SMS = { ENVIADA: { texto: "Enviado", cor: "verde" }, SIMULADA: { te
 const TIPO_SMS = { VINCULO: "Aviso de vínculo", POSICAO: "Pedido de posição" };
 const ORIGEM_POSICAO = { LINK_SMS: "Link do SMS", QR: "Leitura do QR" };
 const linkMapa = (p) => `https://www.openstreetmap.org/?mlat=${p.latitude}&mlon=${p.longitude}#map=17/${p.latitude}/${p.longitude}`;
+const solicitando = ref(false);
+const avisoRastreio = ref(null);
+async function solicitarPosicao() {
+  solicitando.value = true;
+  erroRastreio.value = null;
+  try {
+    const r = await api.solicitarPosicao(props.id);
+    avisoRastreio.value = r.mensagem;
+    setTimeout(() => (avisoRastreio.value = null), 6000);
+    await carregarRastreio();
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    solicitando.value = false;
+  }
+}
 async function carregarRastreio() {
   if (aba.value !== "rastreamento" || !props.id) return;
   try {
@@ -757,8 +773,15 @@ function reconhecido() {
         <div v-if="aba === 'rastreamento'" class="card">
           <div class="linha-entre" style="flex-wrap: wrap; gap: 8px">
             <h2 style="margin: 0">Rastreamento por SMS</h2>
-            <button type="button" class="pequeno" @click="carregarRastreio">Atualizar</button>
+            <span class="linha" style="gap: 8px">
+              <button
+                v-if="auth.pode('containers.operar') && rastreio?.smsAtivo && rastreio?.responsavel && !encerrado"
+                type="button" class="primario pequeno" :disabled="solicitando" title="Envia agora um SMS ao responsável pedindo a posição" @click="solicitarPosicao"
+              ><Icone nome="local" :tamanho="15" /> {{ solicitando ? "Enviando…" : "Solicitar posição" }}</button>
+              <button type="button" class="pequeno" @click="carregarRastreio">Atualizar</button>
+            </span>
           </div>
+          <div v-if="avisoRastreio" class="sucesso pequeno" role="status" style="margin-top: 10px">{{ avisoRastreio }}</div>
           <div v-if="erroRastreio" class="erro" style="margin-top: 10px">{{ erroRastreio }}</div>
           <div v-else-if="!rastreio" class="vazio">Carregando…</div>
           <template v-else>
@@ -775,10 +798,24 @@ function reconhecido() {
                 <div v-else class="mudo">Ninguém ainda — o primeiro registro pelo QR define o responsável.</div>
               </div>
               <div v-if="rastreio.desde"><div class="mudo pequeno">Responsável desde</div><div>{{ fmtDataHora(rastreio.desde) }}</div></div>
+              <div v-if="rastreio.smsAtivo">
+                <div class="mudo pequeno">Quando pede a posição</div>
+                <div>{{ rastreio.modo === "PERSONALIZADO" ? "Intervalo personalizado" : "Só em trechos críticos" }}</div>
+              </div>
               <div v-if="rastreio.ativo">
                 <div class="mudo pequeno">Próximo pedido de posição</div>
-                <div>{{ fmtDataHora(rastreio.proximoPedidoEm) }} <span class="mudo pequeno">(a cada {{ rastreio.intervaloMin >= 60 ? fmtHoras(rastreio.intervaloMin / 60) : rastreio.intervaloMin + " min" }})</span></div>
+                <div v-if="rastreio.proximoPedidoEm">
+                  {{ fmtDataHora(rastreio.proximoPedidoEm) }}
+                  <span v-if="rastreio.intervaloMin" class="mudo pequeno">(a cada {{ rastreio.intervaloMin >= 60 ? fmtHoras(rastreio.intervaloMin / 60) : rastreio.intervaloMin + " min" }})</span>
+                  <span v-else class="mudo pequeno">(checagem se continuar sem posição)</span>
+                </div>
+                <div v-else class="mudo">Nenhum — sem trecho crítico agora</div>
               </div>
+            </div>
+            <div v-if="rastreio.ativo && rastreio.modo === 'CRITICO'" class="motivos-agora">
+              <span class="mudo pequeno">Trecho crítico agora:</span>
+              <template v-if="rastreio.motivos.length"><span v-for="m in rastreio.motivos" :key="m" class="chip amarelo">{{ m }}</span></template>
+              <span v-else class="chip verde">Nenhum</span>
             </div>
 
             <h3 style="margin-top: 18px">Posições ({{ rastreio.posicoes.length }})</h3>
@@ -804,11 +841,12 @@ function reconhecido() {
             <h3 style="margin-top: 18px">SMS ({{ rastreio.mensagens.length }})</h3>
             <div class="tabela-wrap">
               <table v-if="rastreio.mensagens.length" class="pequeno">
-                <thead><tr><th>Quando</th><th>Tipo</th><th>Para</th><th>Situação</th></tr></thead>
+                <thead><tr><th>Quando</th><th>Tipo</th><th>Motivo</th><th>Para</th><th>Situação</th></tr></thead>
                 <tbody>
                   <tr v-for="m in rastreio.mensagens" :key="m.id">
                     <td>{{ fmtDataHora(m.criadaEm) }}</td>
                     <td>{{ TIPO_SMS[m.tipo] ?? m.tipo }}</td>
+                    <td class="mudo">{{ m.motivo ?? "—" }}</td>
                     <td>{{ m.usuario ?? "—" }} <span v-if="m.telefone" class="mudo mono" style="white-space: nowrap">{{ m.telefone }}</span></td>
                     <td>
                       <span class="chip" :class="STATUS_SMS[m.status]?.cor">{{ STATUS_SMS[m.status]?.texto ?? m.status }}</span>
@@ -955,6 +993,7 @@ function reconhecido() {
 </template>
 
 <style scoped>
+.motivos-agora { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
 .grade-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 20px; }
 .mestre-detalhe { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
 .detalhe { display: flex; flex-direction: column; gap: 14px; min-width: 0; }

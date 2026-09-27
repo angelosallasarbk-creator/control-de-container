@@ -1238,7 +1238,7 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   assert.equal(cfg.rastreioIntervaloMin, 30);
   assert.equal(cfg.rastreioIntervaloCarregamentoMin, 240);
   assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioIntervaloMin: 2 })).status, 400);
-  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: true })).body.rastreioSmsAtivo, 1);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: true, rastreioPersonalizado: 1 })).body.rastreioSmsAtivo, 1);
 
   const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
   const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), produtoId: await ativo("produtos") };
@@ -1355,4 +1355,108 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   assert.ok(!caixaDeSaidaSms.slice(total).some((s) => s.texto.includes("RSTU5000005")));
   assert.equal((await request(app).get(`/api/posicao/${codigo1}`)).body.valido, false);
   await agentes.ADMIN.put("/api/configuracao").send(cfg);
+});
+
+test("rastreamento em trechos críticos: previsão estourada, risco de prazo, parado, sem posição e pedido manual", async () => {
+  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const MIN = 60e3, H = 60 * MIN;
+  const T = new Date();
+  const at = (ms) => new Date(T.getTime() + ms);
+
+  const u = await agentes.ADMIN.post("/api/usuarios").send({ email: "critico@teste.local", nome: "Motorista Crítico", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11 97777-0000" });
+  assert.equal(u.status, 201);
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  assert.equal(cfg.rastreioPersonalizado, 0, "padrão = trechos críticos");
+  assert.deepEqual([cfg.rastreioCriticoIntervaloMin, cfg.rastreioParadoHoras, cfg.rastreioSemPosicaoHoras], [60, 3, 12]);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioCriticoIntervaloMin: 5 })).status, 400);
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1, toleranciaPlanejadoMinutos: 60 });
+
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  let n = 0;
+  async function container(status, extra = {}) {
+    n++;
+    const numero = `CRTU${String(700000 + n).padStart(6, "0")}0`;
+    const r = await agentes.ADMIN.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await prisma.container.update({
+      where: { id: r.body.id },
+      data: { status, rastreioResponsavelId: u.body.id, rastreioDesde: at(-1 * H), rastreioUltimoEnvioEm: at(-1 * H), ...extra },
+    });
+    return r.body.id;
+  }
+  const posicao = (containerId, lat, lon, quando) =>
+    prisma.posicaoContainer.create({ data: { containerId, usuarioId: u.body.id, latitude: lat, longitude: lon, origem: "QR", etapa: "COLETADO", registradaEm: quando } });
+  const pedidos = (id) => prisma.mensagemSms.findMany({ where: { containerId: id, tipo: "POSICAO" }, orderBy: { id: "asc" } });
+
+  // A) Previsão estourada: chegada planejada T+1h, tolerância 60 min → só depois de T+2h.
+  const A = await container("COLETADO", { coletadoEm: at(-2 * H), rastreioUltimoEnvioEm: T, planejamento: { NA_FABRICA: at(1 * H).toISOString() } });
+  await posicao(A, -23.5, -46.6, T);
+  // B) Risco de prazo no ponto de carregamento (alerta aberto).
+  const B = await container("NA_FABRICA", { chegadaFabricaEm: at(-3 * H) });
+  // C) No carregamento, sem alerta e sem posição há muito tempo: parado lá é o esperado → nada.
+  const C = await container("NA_FABRICA", { chegadaFabricaEm: at(-3 * H), rastreioDesde: at(-20 * H), rastreioUltimoEnvioEm: at(-20 * H) });
+  // D) Parado: 2 posições a ~100 m uma da outra com 4 h entre elas. E) Andando: 5 km → nada.
+  const D = await container("COLETADO", { coletadoEm: at(-5 * H), rastreioUltimoEnvioEm: at(-2 * H) });
+  await posicao(D, -23.5, -46.6, at(-4 * H));
+  await posicao(D, -23.5009, -46.6, at(-10 * MIN));
+  const E = await container("COLETADO", { coletadoEm: at(-5 * H), rastreioUltimoEnvioEm: at(-2 * H) });
+  await posicao(E, -23.5, -46.6, at(-4 * H));
+  await posicao(E, -23.545, -46.6, at(-10 * MIN));
+  // F) Em trânsito sem nenhuma posição há 13 h.
+  const F = await container("SAIU_FABRICA", { saidaFabricaEm: at(-14 * H), rastreioDesde: at(-13 * H), rastreioUltimoEnvioEm: at(-13 * H) });
+  await prisma.alerta.create({ data: { containerId: B, tipo: "RISCO_DEMURRAGE", nivel: "ATENCAO", mensagem: "teste", chaveAberta: `${B}:RISCO_DEMURRAGE:ATENCAO` } });
+
+  await executarRastreamento(at(90 * MIN));
+  assert.equal((await pedidos(A)).length, 0, "A: ainda dentro da tolerância");
+  const b1 = await pedidos(B);
+  assert.equal(b1.length, 1);
+  assert.equal(b1[0].motivo, "Risco de demurrage");
+  assert.equal((await pedidos(C)).length, 0, "C: carregamento sem risco não pede");
+  const d1 = await pedidos(D);
+  assert.equal(d1.length, 1);
+  assert.match(d1[0].motivo, /^Parado há 5h/);
+  assert.equal((await pedidos(E)).length, 0, "E: em movimento, com posição recente");
+  const f1 = await pedidos(F);
+  assert.equal(f1.length, 1);
+  assert.match(f1[0].motivo, /Sem posição há 14h30/);
+  assert.ok((await prisma.solicitacaoPosicao.findFirst({ where: { containerId: F } })).motivo.startsWith("Sem posição"));
+
+  await executarRastreamento(at(2 * H + 10 * MIN));
+  const a1 = await pedidos(A);
+  assert.equal(a1.length, 1);
+  assert.match(a1[0].motivo, /^Previsão estourada: chegada ao carregamento planejada para/);
+  assert.equal((await pedidos(B)).length, 1, "B: 40 min depois, ainda não repete (60 min)");
+  await executarRastreamento(at(2 * H + 40 * MIN));
+  assert.equal((await pedidos(B)).length, 2, "B: repete depois de 60 min enquanto houver risco");
+  assert.equal((await pedidos(F)).length, 1, "F: 'sem posição' só repete a cada 12 h");
+
+  // Resumo da aba: modo e motivos atuais.
+  const rD = (await agentes.OPERADOR.get(`/api/containers/${D}/rastreamento`)).body;
+  assert.equal(rD.modo, "CRITICO");
+  assert.ok(rD.motivos.some((m) => m.startsWith("Parado há")));
+  const rC = (await agentes.OPERADOR.get(`/api/containers/${C}/rastreamento`)).body;
+  assert.deepEqual(rC.motivos, []);
+  assert.equal(rC.proximoPedidoEm, null, "carregamento sem risco: nenhum pedido previsto");
+  const rE = (await agentes.OPERADOR.get(`/api/containers/${E}/rastreamento`)).body;
+  assert.ok(new Date(rE.proximoPedidoEm) > T, "em trânsito sem motivo: próxima checagem 'sem posição'");
+
+  // Botão "Solicitar posição".
+  assert.equal((await agentes.VISUALIZACAO.post(`/api/containers/${C}/solicitar-posicao`)).status, 403);
+  const manual = await agentes.OPERADOR.post(`/api/containers/${C}/solicitar-posicao`);
+  assert.equal(manual.status, 201, JSON.stringify(manual.body));
+  assert.equal(manual.body.para, "Motorista Crítico");
+  assert.equal((await pedidos(C))[0].motivo, "Pedido manual por OPERADOR");
+  const repetido = await agentes.OPERADOR.post(`/api/containers/${C}/solicitar-posicao`);
+  assert.equal(repetido.status, 429, "no máximo 1 a cada 5 min");
+  assert.match(repetido.body.erro, /há menos de 5 min/);
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${C}`)).body;
+  assert.ok(log.some((l) => l.descricao.includes("posição solicitada manualmente a critico@teste.local")));
+  const semResp = await agentes.ADMIN.post("/api/containers").send({ numero: "CRTU7999990", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${semResp.body.id}/solicitar-posicao`)).status, 409, "sem responsável");
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 0 });
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${D}/solicitar-posicao`)).status, 409, "SMS desligado");
+
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+  for (const id of [A, B, C, D, E, F, semResp.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de trechos críticos" });
 });
