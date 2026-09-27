@@ -201,6 +201,11 @@ watch([aba, () => props.id], () => {
   rastreio.value = null;
   carregarRastreio();
 }, { immediate: true });
+// Com a aba aberta, atualiza sozinha a cada minuto (SMS e posições chegam a qualquer hora).
+const timerRastreio = setInterval(() => {
+  if (document.visibilityState === "visible") carregarRastreio();
+}, 60 * 1000);
+onBeforeUnmount(() => clearInterval(timerRastreio));
 
 // ----- Etapas: Planejado (plano congelado) × ETA (previsão atualizada) × Realizado -----
 // Tolerância (Configurações → Geral): realizado até X min depois do planejado ainda conta como "no prazo".

@@ -119,6 +119,33 @@ export async function assumirRastreio({ containerId, usuarioId, posicao = {}, ag
   }
 }
 
+/**
+ * Celular cadastrado/trocado depois de o usuário já ser o responsável (ex.: leu o QR sem celular,
+ * o aviso ficou "Sem celular"): manda o aviso de vínculo agora para cada container ativo dele, sem
+ * esperar o próximo pedido de posição. Nunca lança (a alteração do usuário já foi gravada).
+ */
+export async function avisarCelularAtualizado(usuarioId) {
+  try {
+    const config = await lerConfiguracao();
+    if (!config.rastreioSmsAtivo) return 0;
+    const [usuario, containers] = await Promise.all([
+      prisma.usuario.findUnique({ where: { id: usuarioId }, select: { id: true, email: true, celular: true, ativo: true } }),
+      prisma.container.findMany({ where: { rastreioResponsavelId: usuarioId, status: { notIn: STATUS_ENCERRADOS } }, select: { id: true, numero: true } }),
+    ]);
+    if (!usuario?.celular || !usuario.ativo) return 0;
+    for (const c of containers) {
+      await enviarAoUsuario({
+        usuario, containerId: c.id, tipo: "VINCULO",
+        texto: `CCS: o QR do container ${c.numero} foi vinculado a voce. Voce recebera SMS pedindo a posicao do container ate a entrega.`,
+      });
+    }
+    return containers.length;
+  } catch (err) {
+    console.error(`Rastreamento: falha ao avisar o celular novo do usuário ${usuarioId}:`, err);
+    return 0;
+  }
+}
+
 /** Uma rodada do agendador: manda o pedido de posição de cada container cujo intervalo venceu. */
 export async function executarRastreamento(agora = new Date()) {
   const config = await lerConfiguracao();

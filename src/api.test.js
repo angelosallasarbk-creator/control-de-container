@@ -1324,6 +1324,14 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   assert.equal(await prisma.solicitacaoPosicao.count({ where: { containerId: c.body.id } }), links);
   assert.ok(await prisma.mensagemSms.findFirst({ where: { containerId: c.body.id, status: "SEM_CELULAR" } }));
 
+  // 6b) Celular cadastrado depois (responsável ficou "Sem celular"): aviso de vínculo sai na hora.
+  await agentes.ADMIN.patch(`/api/usuarios/${u2.body.id}`).send({ celular: "21 99876-1111" });
+  assert.ok(smsPara("+5521998761111").some((s) => s.texto.includes("RSTU5000005") && s.texto.includes("vinculado")), "vínculo reenviado ao novo celular");
+  const semAviso = smsPara("+5521998761111").length;
+  await agentes.ADMIN.patch(`/api/usuarios/${u2.body.id}`).send({ nome: "Motorista Dois" });
+  assert.equal(smsPara("+5521998761111").length, semAviso, "salvar sem mudar o celular não reenvia");
+  await agentes.ADMIN.patch(`/api/usuarios/${u2.body.id}`).send({ celular: "" });
+
   // 7) Aba Rastreamento da ficha: celular mascarado, posições (QR + link) e SMS.
   const r = (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body;
   assert.equal(r.responsavel.nome, "Motorista Dois");

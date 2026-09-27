@@ -10,6 +10,7 @@ import { validarSenha, solicitarRedefinicao } from "../lib/redefinicaoSenha.js";
 import { enderecoPublico } from "../lib/enderecoPublico.js";
 import { envioConfigurado } from "../lib/email.js";
 import { normalizarCelular } from "../lib/sms.js";
+import { avisarCelularAtualizado } from "../lib/rastreamento.js";
 import { texto, id as validarId, umDe } from "../lib/validacao.js";
 
 export const usuariosRouter = Router();
@@ -147,6 +148,8 @@ usuariosRouter.patch("/:id", asyncHandler(async (req, res) => {
     dadosDepois: { ...antes, ...semSenha },
   });
   const { sessoesValidasApos: _sv, ...resposta } = depois;
+  // Celular novo/trocado de quem já é responsável por container: aviso de vínculo sai já.
+  if (dados.celular && dados.celular !== antes.celular) await avisarCelularAtualizado(usuarioId);
   res.json(comPermissoes(resposta));
 }));
 
