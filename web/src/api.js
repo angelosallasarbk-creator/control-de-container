@@ -46,6 +46,10 @@ export const api = {
   desfazer: (id) => request(`/containers/${id}/desfazer`, { method: "POST" }),
   cancelar: (id, motivo) => request(`/containers/${id}/cancelar`, { method: "POST", body: { motivo } }),
   registrarLeitura: (id, dados) => request(`/containers/${id}/leituras`, { method: "POST", body: dados }),
+  rastreamento: (id) => request(`/containers/${id}/rastreamento`),
+  // Link do SMS de rastreamento (público, sem login).
+  conferirPedidoPosicao: (codigo) => request(`/posicao/${encodeURIComponent(codigo)}`),
+  enviarPosicao: (codigo, dados) => request(`/posicao/${encodeURIComponent(codigo)}`, { method: "POST", body: dados }),
 
   custos: (params) => request(`/custos${qs(params)}`),
 

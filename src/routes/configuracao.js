@@ -35,6 +35,9 @@ configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async 
   if ("riscoFolgaHoras" in b) rota.riscoFolgaHoras = decimal(b.riscoFolgaHoras, "Folga mínima para alertar risco (h)", { obrigatorio: true, min: 0, max: 720 });
   if ("toleranciaPlanejadoMinutos" in b) rota.toleranciaPlanejadoMinutos = inteiro(b.toleranciaPlanejadoMinutos, "Tolerância do planejado (min)", { obrigatorio: true, min: 0, max: 10080 });
   if ("atrasoColetaCriticoHoras" in b) rota.atrasoColetaCriticoHoras = decimal(b.atrasoColetaCriticoHoras, "Atraso na coleta vira crítico após (h)", { obrigatorio: true, min: 0, max: 720 });
+  if ("rastreioSmsAtivo" in b) rota.rastreioSmsAtivo = b.rastreioSmsAtivo === true || b.rastreioSmsAtivo === 1 || b.rastreioSmsAtivo === "1" ? 1 : 0;
+  if ("rastreioIntervaloMin" in b) rota.rastreioIntervaloMin = inteiro(b.rastreioIntervaloMin, "Intervalo dos pedidos de posição (min)", { obrigatorio: true, min: 10, max: 1440 });
+  if ("rastreioIntervaloCarregamentoMin" in b) rota.rastreioIntervaloCarregamentoMin = inteiro(b.rastreioIntervaloCarregamentoMin, "Intervalo no ponto de carregamento (min)", { obrigatorio: true, min: 10, max: 1440 });
   if ("urlPublica" in b) {
     const url = String(b.urlPublica ?? "").trim().replace(/\/+$/, "");
     if (url && !/^https?:\/\/[^\s/]+(:\d+)?$/i.test(url)) {

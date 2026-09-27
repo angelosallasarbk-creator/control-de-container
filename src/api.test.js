@@ -1121,3 +1121,130 @@ test("reset de senha: log diz quando o envio é simulado e registra falha do Bre
     delete process.env.BREVO_API_KEY;
   }
 });
+
+test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de responsável, intervalos, link de posição", async () => {
+  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const MIN = 60e3;
+  const smsPara = (tel) => caixaDeSaidaSms.filter((s) => s.para === tel);
+  const codigoDoSms = (s) => /\/p\/([A-Za-z0-9_-]+)$/.exec(s.texto)?.[1];
+
+  // Celular no cadastro do usuário: validado e gravado em +55…
+  const u1 = await agentes.ADMIN.post("/api/usuarios").send({ email: "rastreio1@teste.local", nome: "Motorista Um", perfil: "OPERADOR", senha: "senha-teste-123", celular: "(11) 98765-4321" });
+  assert.equal(u1.status, 201, JSON.stringify(u1.body));
+  assert.equal(u1.body.celular, "+5511987654321");
+  assert.equal((await agentes.ADMIN.post("/api/usuarios").send({ email: "rastreiox@teste.local", nome: "X", perfil: "OPERADOR", senha: "senha-teste-123", celular: "123" })).status, 400);
+  const u2 = await agentes.ADMIN.post("/api/usuarios").send({ email: "rastreio2@teste.local", nome: "Motorista Dois", perfil: "OPERADOR", senha: "senha-teste-123" });
+  assert.equal(u2.body.celular, null);
+  assert.equal((await agentes.ADMIN.patch(`/api/usuarios/${u2.body.id}`).send({ celular: "21 99876-5432" })).body.celular, "+5521998765432");
+  const m1 = await logar("rastreio1@teste.local");
+  const m2 = await logar("rastreio2@teste.local");
+
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  assert.equal(cfg.rastreioSmsAtivo, 0, "desligado por padrão");
+  assert.equal(cfg.rastreioIntervaloMin, 30);
+  assert.equal(cfg.rastreioIntervaloCarregamentoMin, 240);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioIntervaloMin: 2 })).status, 400);
+  assert.equal((await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: true })).body.rastreioSmsAtivo, 1);
+
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), produtoId: await ativo("produtos") };
+  const c = await agentes.ADMIN.post("/api/containers").send({ numero: "RSTU5000005", confirmarDigito: true, tipo: "REEFER_40", ...cad, coletadoEm: new Date(Date.now() - 3600e3) });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const [e] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+
+  // 1) Motorista Um lê o QR (vínculo): vira o responsável, recebe o SMS de vínculo, posição gravada.
+  assert.equal((await m1.post(`/api/qr/${e.token}/vincular`).send({ numero: "RSTU5000005", temperatura: -18, latitude: -23.9, longitude: -46.3, precisaoM: 8 })).status, 201);
+  let db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.equal(db.rastreioResponsavelId, u1.body.id);
+  assert.ok(smsPara("+5511987654321").some((s) => s.texto.includes("RSTU5000005") && s.texto.includes("vinculado")));
+  const t0 = db.rastreioUltimoEnvioEm.getTime();
+
+  // 2) Agendador: antes do intervalo nada; depois de 30 min um pedido — e só um, mesmo rodando 2x.
+  const antes = smsPara("+5511987654321").length;
+  await executarRastreamento(new Date(t0 + 10 * MIN));
+  assert.equal(smsPara("+5511987654321").length, antes);
+  await executarRastreamento(new Date(t0 + 31 * MIN));
+  await executarRastreamento(new Date(t0 + 31 * MIN));
+  const pedidos1 = smsPara("+5511987654321").slice(antes);
+  assert.equal(pedidos1.length, 1, "sem duplicidade");
+  assert.ok(pedidos1[0].texto.length <= 160, "cabe em 1 SMS");
+  const codigo1 = codigoDoSms(pedidos1[0]);
+  assert.ok(codigo1);
+  assert.equal(await prisma.solicitacaoPosicao.count({ where: { tokenHash: codigo1 } }), 0, "código não fica no banco, só o hash");
+
+  // 3) Link do SMS (sem login): mostra o container, grava a posição uma vez só.
+  const conf = await request(app).get(`/api/posicao/${codigo1}`);
+  assert.equal(conf.body.valido, true);
+  assert.equal(conf.body.numero, "RSTU5000005");
+  assert.equal((await request(app).post(`/api/posicao/${codigo1}`).send({ latitude: 95, longitude: 0 })).status, 400);
+  assert.equal((await request(app).post(`/api/posicao/${codigo1}`).send({ latitude: -22.5, longitude: -47.1, precisaoM: 5.4 })).status, 201);
+  assert.equal((await request(app).post(`/api/posicao/${codigo1}`).send({ latitude: -22.5, longitude: -47.1 })).status, 409, "uso único");
+  assert.equal((await request(app).get("/api/posicao/codigo-que-nao-existe-123")).body.valido, false);
+
+  // Mais um pedido para o Motorista Um (fica pendente).
+  await executarRastreamento(new Date(t0 + 62 * MIN));
+  const codigoAntigo = codigoDoSms(smsPara("+5511987654321").at(-1));
+  assert.equal((await request(app).get(`/api/posicao/${codigoAntigo}`)).body.valido, true);
+
+  // 4) Motorista Dois registra temperatura pelo QR: assume; o Um para de receber e o link dele cai.
+  assert.equal((await m2.post(`/api/qr/${e.token}/leituras`).send({ temperatura: -18 })).status, 201);
+  db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.equal(db.rastreioResponsavelId, u2.body.id);
+  assert.ok(smsPara("+5521998765432").some((s) => s.texto.includes("vinculado")));
+  const velho = (await request(app).get(`/api/posicao/${codigoAntigo}`)).body;
+  assert.equal(velho.valido, false);
+  assert.match(velho.mensagem, /outra pessoa/);
+  assert.equal((await request(app).post(`/api/posicao/${codigoAntigo}`).send({ latitude: -22, longitude: -47 })).status, 409);
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${c.body.id}`)).body;
+  assert.ok(log.some((l) => l.acao === "RASTREIO" && l.descricao.includes("rastreio2@teste.local") && l.descricao.includes("antes: rastreio1@teste.local")));
+  // Mesmo responsável lendo de novo: não repete o SMS de vínculo.
+  const vinculos2 = smsPara("+5521998765432").length;
+  await m2.post(`/api/qr/${e.token}/leituras`).send({ temperatura: -18.1 });
+  assert.equal(smsPara("+5521998765432").length, vinculos2);
+
+  const t1 = db.rastreioUltimoEnvioEm.getTime();
+  const doUm = smsPara("+5511987654321").length;
+  await executarRastreamento(new Date(t1 + 31 * MIN));
+  assert.equal(smsPara("+5511987654321").length, doUm, "antigo não recebe mais");
+  assert.equal(smsPara("+5521998765432").length, vinculos2 + 1, "novo recebe");
+
+  // 5) No ponto de carregamento: intervalo de 4 h.
+  await prisma.container.update({ where: { id: c.body.id }, data: { status: "NA_FABRICA", chegadaFabricaEm: new Date() } });
+  const t2 = t1 + 31 * MIN;
+  await executarRastreamento(new Date(t2 + 60 * MIN));
+  assert.equal(smsPara("+5521998765432").length, vinculos2 + 1, "1 h depois ainda não");
+  await executarRastreamento(new Date(t2 + 241 * MIN));
+  assert.equal(smsPara("+5521998765432").length, vinculos2 + 2, "4 h depois pede");
+
+  // 6) Sem celular: registra SEM_CELULAR e não cria link.
+  await agentes.ADMIN.patch(`/api/usuarios/${u2.body.id}`).send({ celular: "" });
+  const links = await prisma.solicitacaoPosicao.count({ where: { containerId: c.body.id } });
+  await executarRastreamento(new Date(t2 + 482 * MIN));
+  assert.equal(await prisma.solicitacaoPosicao.count({ where: { containerId: c.body.id } }), links);
+  assert.ok(await prisma.mensagemSms.findFirst({ where: { containerId: c.body.id, status: "SEM_CELULAR" } }));
+
+  // 7) Aba Rastreamento da ficha: celular mascarado, posições (QR + link) e SMS.
+  const r = (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body;
+  assert.equal(r.responsavel.nome, "Motorista Dois");
+  assert.equal(r.responsavel.temCelular, false);
+  assert.equal(r.intervaloMin, 240);
+  assert.deepEqual(r.posicoes.map((p) => p.origem).sort(), ["LINK_SMS", "QR"]);
+  const doLink = r.posicoes.find((p) => p.origem === "LINK_SMS");
+  assert.equal(doLink.latitude, -22.5);
+  assert.equal(doLink.precisaoM, 5);
+  assert.ok(r.mensagens.some((m) => m.telefone === "+55 11 9****-4321"));
+  assert.ok(!JSON.stringify(r).includes("98765-4321") && !JSON.stringify(r).includes("5511987654321"), "celular completo não vaza");
+
+  // 8) Rastreamento desligado: nada sai; container encerrado: nada sai.
+  await agentes.ADMIN.patch(`/api/usuarios/${u2.body.id}`).send({ celular: "21998765432" });
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 0 });
+  const total = caixaDeSaidaSms.length;
+  assert.equal((await executarRastreamento(new Date(t2 + 2000 * MIN))).enviados, 0);
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1 });
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste de rastreamento" });
+  await executarRastreamento(new Date(t2 + 3000 * MIN));
+  assert.ok(!caixaDeSaidaSms.slice(total).some((s) => s.texto.includes("RSTU5000005")));
+  assert.equal((await request(app).get(`/api/posicao/${codigo1}`)).body.valido, false);
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+});

@@ -2,6 +2,7 @@ import "dotenv/config";
 import { criarApp } from "./app.js";
 import { purgarLogsExpirados } from "./lib/auditoria.js";
 import { iniciarVerificador } from "./lib/verificador.js";
+import { iniciarRastreamento } from "./lib/rastreamento.js";
 import { criarAdminInicialSeNecessario } from "./lib/adminInicial.js";
 
 await criarAdminInicialSeNecessario().catch((err) => console.error("Falha ao criar admin inicial:", err));
@@ -14,6 +15,8 @@ app.listen(port, () => {
 
 // Recalcula prazos e abre/encerra alertas periodicamente (ver VERIFICADOR_INTERVALO_MINUTOS).
 iniciarVerificador();
+// Pedidos de posição por SMS (só age com o rastreamento ligado em Configurações).
+iniciarRastreamento();
 
 purgarLogsExpirados().catch((err) => console.error("Falha na purga inicial de logs:", err));
 setInterval(() => {

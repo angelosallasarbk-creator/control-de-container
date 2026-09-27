@@ -158,6 +158,7 @@ const abas = computed(() => [
   { chave: "etapas", nome: "Etapas" },
   { chave: "trajeto", nome: "Trajeto" },
   ...(c.value?.reefer ? [{ chave: "temperatura", nome: "Temperatura" }] : []),
+  { chave: "rastreamento", nome: "Rastreamento" },
   { chave: "historico", nome: "Histórico" },
 ]);
 const abaEscolhida = ref((() => {
@@ -176,6 +177,27 @@ function irPara(chave) {
     // sem armazenamento: só não lembra a aba
   }
 }
+
+// ----- Rastreamento por SMS (carrega só quando a aba é aberta) -----
+const rastreio = ref(null);
+const erroRastreio = ref(null);
+const STATUS_SMS = { ENVIADA: { texto: "Enviado", cor: "verde" }, SIMULADA: { texto: "Simulado", cor: "" }, FALHA: { texto: "Falhou", cor: "vermelho" }, SEM_CELULAR: { texto: "Sem celular", cor: "amarelo" } };
+const TIPO_SMS = { VINCULO: "Aviso de vínculo", POSICAO: "Pedido de posição" };
+const ORIGEM_POSICAO = { LINK_SMS: "Link do SMS", QR: "Leitura do QR" };
+const linkMapa = (p) => `https://www.openstreetmap.org/?mlat=${p.latitude}&mlon=${p.longitude}#map=17/${p.latitude}/${p.longitude}`;
+async function carregarRastreio() {
+  if (aba.value !== "rastreamento" || !props.id) return;
+  try {
+    rastreio.value = await api.rastreamento(props.id);
+    erroRastreio.value = null;
+  } catch (e) {
+    erroRastreio.value = e.message;
+  }
+}
+watch([aba, () => props.id], () => {
+  rastreio.value = null;
+  carregarRastreio();
+}, { immediate: true });
 
 // ----- Etapas: Planejado (plano congelado) × ETA (previsão atualizada) × Realizado -----
 // Tolerância (Configurações → Geral): realizado até X min depois do planejado ainda conta como "no prazo".
@@ -723,6 +745,75 @@ function reconhecido() {
           </details>
         </div>
 
+        <!-- Rastreamento por SMS -->
+        <div v-if="aba === 'rastreamento'" class="card">
+          <div class="linha-entre" style="flex-wrap: wrap; gap: 8px">
+            <h2 style="margin: 0">Rastreamento por SMS</h2>
+            <button type="button" class="pequeno" @click="carregarRastreio">Atualizar</button>
+          </div>
+          <div v-if="erroRastreio" class="erro" style="margin-top: 10px">{{ erroRastreio }}</div>
+          <div v-else-if="!rastreio" class="vazio">Carregando…</div>
+          <template v-else>
+            <div v-if="!rastreio.smsAtivo" class="aviso pequeno" style="margin-top: 10px">O envio de SMS está desligado (Configurações → Rastreamento).</div>
+            <div class="grade-info" style="margin-top: 12px">
+              <div>
+                <div class="mudo pequeno">Responsável (quem registrou pelo QR por último)</div>
+                <div v-if="rastreio.responsavel" class="negrito">
+                  {{ rastreio.responsavel.nome }}
+                  <span v-if="rastreio.responsavel.celular" class="mudo mono" style="white-space: nowrap">· {{ rastreio.responsavel.celular }}</span>
+                  <span v-else class="chip amarelo" title="Cadastre o celular em Configurações → Usuários">sem celular</span>
+                  <span v-if="!rastreio.responsavel.ativo" class="chip vermelho">usuário desativado</span>
+                </div>
+                <div v-else class="mudo">Ninguém ainda — o primeiro registro pelo QR define o responsável.</div>
+              </div>
+              <div v-if="rastreio.desde"><div class="mudo pequeno">Responsável desde</div><div>{{ fmtDataHora(rastreio.desde) }}</div></div>
+              <div v-if="rastreio.ativo">
+                <div class="mudo pequeno">Próximo pedido de posição</div>
+                <div>{{ fmtDataHora(rastreio.proximoPedidoEm) }} <span class="mudo pequeno">(a cada {{ rastreio.intervaloMin >= 60 ? fmtHoras(rastreio.intervaloMin / 60) : rastreio.intervaloMin + " min" }})</span></div>
+              </div>
+            </div>
+
+            <h3 style="margin-top: 18px">Posições ({{ rastreio.posicoes.length }})</h3>
+            <div class="tabela-wrap">
+              <table v-if="rastreio.posicoes.length" class="pequeno">
+                <thead><tr><th>Quando</th><th>Etapa</th><th>Origem</th><th>Quem</th><th>Posição</th></tr></thead>
+                <tbody>
+                  <tr v-for="p in rastreio.posicoes" :key="p.id">
+                    <td>{{ fmtDataHora(p.registradaEm) }}</td>
+                    <td>{{ rotuloEtapa(c, p.etapa) }}</td>
+                    <td>{{ ORIGEM_POSICAO[p.origem] ?? p.origem }}</td>
+                    <td>{{ p.usuario ?? "—" }}</td>
+                    <td>
+                      <a :href="linkMapa(p)" target="_blank" rel="noopener">📍 {{ p.latitude.toFixed(5) }}, {{ p.longitude.toFixed(5) }}</a>
+                      <span v-if="p.precisaoM !== null" class="mudo"> · ±{{ p.precisaoM }} m</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else class="mudo">Nenhuma posição recebida ainda.</div>
+            </div>
+
+            <h3 style="margin-top: 18px">SMS ({{ rastreio.mensagens.length }})</h3>
+            <div class="tabela-wrap">
+              <table v-if="rastreio.mensagens.length" class="pequeno">
+                <thead><tr><th>Quando</th><th>Tipo</th><th>Para</th><th>Situação</th></tr></thead>
+                <tbody>
+                  <tr v-for="m in rastreio.mensagens" :key="m.id">
+                    <td>{{ fmtDataHora(m.criadaEm) }}</td>
+                    <td>{{ TIPO_SMS[m.tipo] ?? m.tipo }}</td>
+                    <td>{{ m.usuario ?? "—" }} <span v-if="m.telefone" class="mudo mono" style="white-space: nowrap">{{ m.telefone }}</span></td>
+                    <td>
+                      <span class="chip" :class="STATUS_SMS[m.status]?.cor">{{ STATUS_SMS[m.status]?.texto ?? m.status }}</span>
+                      <div v-if="m.erro" class="mudo">{{ m.erro }}</div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else class="mudo">Nenhum SMS enviado para este container.</div>
+            </div>
+          </template>
+        </div>
+
         <!-- Histórico -->
         <div v-if="aba === 'historico'" class="card">
           <h2>Histórico de etapas</h2>
@@ -855,6 +946,7 @@ function reconhecido() {
 </template>
 
 <style scoped>
+.grade-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 20px; }
 .mestre-detalhe { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
 .detalhe { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .so-estreito { display: none; }

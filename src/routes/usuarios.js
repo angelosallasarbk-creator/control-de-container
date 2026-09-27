@@ -9,13 +9,23 @@ import { gerarToken, definirCookieAuth } from "../lib/auth.js";
 import { validarSenha, solicitarRedefinicao } from "../lib/redefinicaoSenha.js";
 import { enderecoPublico } from "../lib/enderecoPublico.js";
 import { envioConfigurado } from "../lib/email.js";
+import { normalizarCelular } from "../lib/sms.js";
 import { texto, id as validarId, umDe } from "../lib/validacao.js";
 
 export const usuariosRouter = Router();
 usuariosRouter.use(requirePermissao("administrar"));
 
 const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO", "TRANSPORTADOR", "PORTARIA"];
-const SELECT = { id: true, email: true, nome: true, perfil: true, ativo: true, criadoEm: true };
+const SELECT = { id: true, email: true, nome: true, perfil: true, celular: true, ativo: true, criadoEm: true };
+
+// Celular para os SMS de rastreamento, gravado no formato internacional (+55…).
+function celular(valor) {
+  try {
+    return normalizarCelular(valor);
+  } catch (err) {
+    throw erroHttp(400, err.message);
+  }
+}
 
 
 // Usuário + permissões (efetivas, e se foge do padrão do perfil).
@@ -84,6 +94,7 @@ usuariosRouter.post("/", asyncHandler(async (req, res) => {
     email,
     nome: texto(b.nome, "Nome", { obrigatorio: true, max: 120 }),
     perfil: umDe(b.perfil, PERFIS, "Perfil", { obrigatorio: true }),
+    celular: celular(b.celular),
     senhaHash: await bcrypt.hash(validarSenha(b.senha), 10),
   };
   const criado = await prisma.usuario.create({ data: dados, select: { ...SELECT, permissoes: true } }).catch((err) => {
@@ -106,6 +117,7 @@ usuariosRouter.patch("/:id", asyncHandler(async (req, res) => {
   const trocouPerfil = dados.perfil && dados.perfil !== antes.perfil;
   if (trocouPerfil) dados.permissoes = Prisma.DbNull;
   if ("ativo" in b) dados.ativo = Boolean(b.ativo);
+  if ("celular" in b) dados.celular = celular(b.celular);
   if (b.senha) {
     dados.senhaHash = await bcrypt.hash(validarSenha(b.senha), 10);
     // Senha redefinida derruba as sessões abertas (inclusive "lembrar meu login" de 30 dias).

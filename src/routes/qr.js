@@ -11,6 +11,7 @@ import { decimal, dataHora, inteiro, id as validarId } from "../lib/validacao.js
 import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, FLUXO, validarNovoContainer, gravarNovoContainer, validarMomento, prepararRota } from "./containers.js";
 import { estadoDaEtiqueta } from "./etiquetas.js";
 import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
+import { assumirRastreio } from "../lib/rastreamento.js";
 
 export const qrRouter = Router();
 
@@ -135,6 +136,8 @@ qrRouter.post("/:token/vincular", requirePermissao("qr.registrar"), asyncHandler
     }
   });
   if (reefer) await sincronizarAlertas(container.id);
+  // Quem registra pelo QR passa a receber os SMS de rastreamento deste container.
+  await assumirRastreio({ containerId: container.id, usuarioId: req.usuario.id, posicao: local });
   res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: reefer ? avaliar(container, temperatura) : null });
 }));
 
@@ -148,11 +151,13 @@ qrRouter.post("/:token/leituras", requirePermissao("qr.registrar"), asyncHandler
   if (estado === "ENCERRADA") throw erroHttp(409, `O container ${e.container.numero} já foi encerrado; esta etiqueta não recebe mais leituras.`);
   const temperatura = decimal(b.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 });
   const lidaEm = dataHora(b.lidaEm, "Data/hora") ?? new Date();
+  const local = lerLocalizacao(b);
   await registrarLeitura({
     container: e.container, temperatura, lidaEm, origem: "QRCODE", usuarioEmail: req.usuario.email,
-    extras: { etiquetaId: e.id, ...lerLocalizacao(b) },
+    extras: { etiquetaId: e.id, ...local },
   });
   await sincronizarAlertas(e.container.id);
+  await assumirRastreio({ containerId: e.container.id, usuarioId: req.usuario.id, posicao: local });
   res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: avaliar(e.container, temperatura) });
 }));
 
@@ -269,6 +274,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
 
   await prepararRota(final.id);
   await sincronizarAlertas(final.id);
+  await assumirRastreio({ containerId: final.id, usuarioId: req.usuario.id, posicao });
   res.status(201).json({
     ...(await resumo(await buscarEtiqueta(req.params.token), req)),
     resultado: reefer ? avaliar(final, temperatura) : null,
@@ -372,6 +378,7 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
   });
 
   await sincronizarAlertas(final.id);
+  await assumirRastreio({ containerId: final.id, usuarioId: req.usuario.id, posicao });
   res.status(201).json({
     ...(await resumo(await buscarEtiqueta(req.params.token), req)),
     resultado: reefer ? avaliar(final, temperatura) : null,

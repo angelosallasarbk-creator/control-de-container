@@ -22,6 +22,9 @@ services:
         value: aslog.ccs@gmail.com
       - key: EMAIL_REMETENTE_NOME
         value: C.C.S – Container Control Solutions
+      # SMS de rastreamento (mesma BREVO_API_KEY; créditos de SMS no Brevo).
+      - key: SMS_REMETENTE
+        value: CCS
       # Primeiro administrador: criado na subida só se o banco não tiver usuários.
       # Depois do primeiro login, troque a senha pela tela e remova estas variáveis.
       - key: ADMIN_INICIAL_EMAIL

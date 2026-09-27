@@ -26,6 +26,11 @@ export const CONFIG_PADRAO = {
   // endereço de onde a etiqueta foi gerada. Teste na rede local: http://IP-DO-COMPUTADOR:5174;
   // online: https://seu-sistema.onrender.com.
   urlPublica: "",
+  // Rastreamento por SMS (1 = ligado): quem registra algo pelo QR vira o responsável e recebe
+  // SMS pedindo a posição GPS do container a cada X minutos (no ponto de carregamento, a cada Y).
+  rastreioSmsAtivo: 0,
+  rastreioIntervaloMin: 30,
+  rastreioIntervaloCarregamentoMin: 240,
 };
 
 export async function lerConfiguracao() {

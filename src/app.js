@@ -13,6 +13,7 @@ import { custosRouter } from "./routes/custos.js";
 import { locaisRouter, rotasRouter, tiposLocalRouter } from "./routes/locais.js";
 import { etiquetasRouter } from "./routes/etiquetas.js";
 import { qrRouter } from "./routes/qr.js";
+import { posicaoRouter } from "./routes/posicao.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
@@ -32,6 +33,8 @@ export function criarApp() {
   app.use("/api/auth", authRouter);
   // Porta automática de temperatura: autenticada por token próprio, não pelo login.
   app.use("/api/integracao", integracaoPublicaRouter);
+  // Link do SMS de rastreamento: autenticado pelo código do link, não pelo login.
+  app.use("/api/posicao", posicaoRouter);
 
   // Tudo em /api daqui para baixo exige sessão válida — e relê o usuário no banco (conta
   // desativada ou permissão alterada vale na hora, sem esperar a sessão expirar).

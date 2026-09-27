@@ -10,3 +10,13 @@ export async function enderecoPublico(req) {
   if (process.env.NODE_ENV === "production") return null;
   return req.get("origin") || `${req.protocol}://${req.get("host")}`;
 }
+
+// Mesmo endereço, para quem não tem requisição (agendador de SMS). Em desenvolvimento, sem
+// configuração, usa o próprio servidor local.
+export async function enderecoPublicoFixo() {
+  const { urlPublica } = await lerConfiguracao();
+  const fixo = urlPublica || process.env.APP_URL;
+  if (fixo) return fixo.replace(/\/+$/, "");
+  if (process.env.NODE_ENV === "production") return null;
+  return `http://localhost:${process.env.PORT || 3000}`;
+}

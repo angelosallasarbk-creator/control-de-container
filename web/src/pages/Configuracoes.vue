@@ -19,6 +19,7 @@ const ABAS = computed(() =>
     { chave: "custos", nome: "Custos", visivel: true },
     { chave: "rota", nome: "Previsão de rota", visivel: true },
     { chave: "etiquetas", nome: "Etiquetas QR", visivel: true },
+    { chave: "rastreamento", nome: "Rastreamento (SMS)", visivel: true },
     { chave: "permissoes", nome: "Perfis e permissões", visivel: auth.pode("administrar") },
     { chave: "log", nome: "Log de auditoria", visivel: auth.pode("auditoria.ver") },
   ].filter((a) => a.visivel)
@@ -29,6 +30,8 @@ const aba = computed(() => {
 });
 const irPara = (chave) => router.replace({ query: { ...route.query, aba: chave } });
 const podeEditar = computed(() => auth.pode("administrar"));
+// Liga/desliga do rastreamento (o servidor guarda 1/0).
+const smsLigado = computed({ get: () => Boolean(cfg.rastreioSmsAtivo), set: (v) => (cfg.rastreioSmsAtivo = v ? 1 : 0) });
 
 // ---------- Regras (uma única configuração, salva por aba) ----------
 const cfg = reactive({ intervaloLeituraMinutos: null, cotacaoUSD: 0, cotacaoEUR: 0, urlPublica: "" });
@@ -97,7 +100,7 @@ onMounted(async () => {
   </nav>
 
   <div v-if="erro" class="erro">{{ erro }}</div>
-  <div v-if="!podeEditar && ['geral', 'custos', 'rota', 'etiquetas'].includes(aba)" class="aviso pequeno">Somente leitura — só o administrador altera estas regras.</div>
+  <div v-if="!podeEditar && ['geral', 'custos', 'rota', 'etiquetas', 'rastreamento'].includes(aba)" class="aviso pequeno">Somente leitura — só o administrador altera estas regras.</div>
 
   <!-- Geral -->
   <form v-if="aba === 'geral'" class="card" @submit.prevent="salvar">
@@ -196,6 +199,35 @@ onMounted(async () => {
       <a href="#" @click.prevent="irPara('permissoes')">Perfis e permissões</a>.
     </p>
     <div v-if="podeEditar" class="linha" style="margin-top: 12px"><button type="submit" class="primario">Salvar</button><span v-if="salvo === 'etiquetas'" class="txt-OK pequeno">✓ Salvo.</span></div>
+  </form>
+
+  <!-- Rastreamento por SMS -->
+  <form v-if="aba === 'rastreamento'" class="card" @submit.prevent="salvar">
+    <h2>Rastreamento por SMS</h2>
+    <div class="mudo pequeno" style="margin: -6px 0 10px">
+      Quem registra algo pelo QR do container (vínculo, temperatura, coleta, entrada/saída) passa a ser o responsável por ele e recebe
+      um SMS de aviso. Enquanto o container estiver ativo, o responsável recebe SMS com um link para enviar a posição GPS do celular.
+      Quando outra pessoa registra pelo QR, o rastreamento passa para ela e o anterior para de receber. O celular vem do cadastro do
+      usuário (Configurações → Usuários). O envio usa a conta Brevo (créditos de SMS); sem a chave configurada no servidor, o SMS é só simulado.
+    </div>
+    <div class="grade-form">
+      <label style="grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; justify-content: flex-start; font-weight: 600; cursor: pointer">
+        <input v-model="smsLigado" type="checkbox" :disabled="!podeEditar" style="width: auto" />
+        <span>Enviar SMS de rastreamento</span>
+      </label>
+      <div class="campo">
+        <label>Pedir a posição a cada (minutos)</label>
+        <input v-model.number="cfg.rastreioIntervaloMin" type="number" min="10" max="1440" step="5" required :disabled="!podeEditar" />
+        <span class="dica">Em trânsito e demais etapas ativas.</span>
+      </div>
+      <div class="campo">
+        <label>No ponto de carregamento, a cada (minutos)</label>
+        <input v-model.number="cfg.rastreioIntervaloCarregamentoMin" type="number" min="10" max="1440" step="5" required :disabled="!podeEditar" />
+        <span class="dica">Da chegada até a saída do ponto de carregamento (container parado): {{ (cfg.rastreioIntervaloCarregamentoMin / 60).toFixed(1).replace(".0", "").replace(".", ",") }} h.</span>
+      </div>
+    </div>
+    <p class="mudo pequeno">O link do SMS usa o endereço do sistema da aba <a href="#" @click.prevent="irPara('etiquetas')">Etiquetas QR</a>.</p>
+    <div v-if="podeEditar" class="linha" style="margin-top: 12px"><button type="submit" class="primario">Salvar</button><span v-if="salvo === 'rastreamento'" class="txt-OK pequeno">✓ Salvo.</span></div>
   </form>
 
   <!-- Perfis e permissões -->

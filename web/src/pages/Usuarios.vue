@@ -7,7 +7,7 @@ import CampoSenha from "../components/CampoSenha.vue";
 const lista = ref([]);
 const erro = ref(null);
 const editando = ref(null);
-const form = reactive({ email: "", nome: "", perfil: "OPERADOR", senha: "" });
+const form = reactive({ email: "", nome: "", perfil: "OPERADOR", celular: "", senha: "" });
 const enviando = ref(false);
 const aviso = ref(null);
 
@@ -44,7 +44,7 @@ onMounted(carregar);
 
 function abrir(u) {
   editando.value = u ?? {};
-  Object.assign(form, { email: u?.email ?? "", nome: u?.nome ?? "", perfil: u?.perfil ?? "OPERADOR", senha: "" });
+  Object.assign(form, { email: u?.email ?? "", nome: u?.nome ?? "", perfil: u?.perfil ?? "OPERADOR", celular: u?.celular ?? "", senha: "" });
   erro.value = null;
 }
 
@@ -53,7 +53,7 @@ async function salvar() {
   erro.value = null;
   try {
     if (editando.value.id) {
-      const dados = { nome: form.nome, perfil: form.perfil };
+      const dados = { nome: form.nome, perfil: form.perfil, celular: form.celular };
       if (form.senha) dados.senha = form.senha;
       await api.atualizarUsuario(editando.value.id, dados);
     } else {
@@ -87,7 +87,7 @@ async function alternarAtivo(u) {
   <div v-if="aviso" class="sucesso">{{ aviso }}</div>
   <div class="card tabela-wrap" style="padding: 0">
     <table>
-      <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Criado</th><th>Situação</th><th></th></tr></thead>
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Celular</th><th>Criado</th><th>Situação</th><th></th></tr></thead>
       <tbody>
         <tr v-for="u in lista" :key="u.id" :style="{ opacity: u.ativo ? 1 : 0.55 }">
           <td>{{ u.nome }}</td>
@@ -96,6 +96,7 @@ async function alternarAtivo(u) {
             {{ ROTULO_PERFIL[u.perfil] }}
             <router-link v-if="u.personalizado" to="/configuracoes?aba=permissoes" class="chip amarelo" style="margin-left: 6px" title="Permissões diferentes do padrão do perfil">personalizado</router-link>
           </td>
+          <td class="mudo">{{ u.celular || "—" }}</td>
           <td>{{ fmtDataHora(u.criadoEm) }}</td>
           <td><span class="chip" :class="u.ativo ? 'verde' : ''">{{ u.ativo ? "Ativo" : "Inativo" }}</span></td>
           <td style="text-align: right; white-space: nowrap">
@@ -114,6 +115,11 @@ async function alternarAtivo(u) {
       <div v-if="erro" class="erro">{{ erro }}</div>
       <div class="campo"><label>E-mail *</label><input v-model="form.email" type="email" required :disabled="!!editando.id" /></div>
       <div class="campo"><label>Nome *</label><input v-model="form.nome" required maxlength="120" /></div>
+      <div class="campo">
+        <label for="celular-usuario">Celular (SMS)</label>
+        <input id="celular-usuario" v-model="form.celular" type="tel" inputmode="tel" autocomplete="off" maxlength="25" placeholder="(11) 98765-4321" />
+        <span class="dica">Recebe os SMS de rastreamento dos containers em que registrar algo pelo QR. DDD + número; outro país: +código.</span>
+      </div>
       <div class="campo">
         <label>Perfil *</label>
         <select v-model="form.perfil">

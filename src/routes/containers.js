@@ -12,6 +12,7 @@ import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib
 import { montarContextos } from "../lib/previsao.js";
 import { registrarLeitura } from "../lib/leituras.js";
 import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
+import { resumoRastreamento } from "../lib/rastreamento.js";
 import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
 
 export const containersRouter = Router();
@@ -158,6 +159,13 @@ containersRouter.get("/", asyncHandler(async (req, res) => {
 
 containersRouter.get("/:id", asyncHandler(async (req, res) => {
   res.json(await detalhe(validarId(req.params.id)));
+}));
+
+// Aba "Rastreamento" da ficha: responsável pelos SMS, posições GPS e SMS enviados.
+containersRouter.get("/:id/rastreamento", asyncHandler(async (req, res) => {
+  const r = await resumoRastreamento(validarId(req.params.id));
+  if (!r) throw erroHttp(404, "Container não encontrado.");
+  res.json(r);
 }));
 
 // ---------- Cadastro ----------
