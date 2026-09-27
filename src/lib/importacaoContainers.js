@@ -68,7 +68,7 @@ export async function gerarModelo() {
   };
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "C.C.S – Container Control Solutions";
+  wb.creator = "CCS – Container Control Solutions";
   wb.created = new Date();
   const ws = wb.addWorksheet("Containers", { views: [{ state: "frozen", ySplit: 1 }] });
   ws.columns = COLUNAS.map((c) => ({ header: c.obrigatorio ? `${c.titulo} *` : c.titulo, key: c.chave, width: c.largura }));

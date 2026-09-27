@@ -88,7 +88,7 @@ async function pedirLink() {
     <form class="login-card" method="post" autocomplete="on" @submit.prevent="modo === 'entrar' ? entrar() : pedirLink()">
       <svg width="56" height="56" viewBox="0 0 32 32" style="align-self: center" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="2" fill="#1f5fa8" /><path d="M8 11v10M13 11v10M18 11v10M23 11v10" stroke="#fff" stroke-width="2" /></svg>
       <div class="marca">
-        <div class="marca-sigla">C.C.S</div>
+        <div class="marca-sigla">CCS</div>
         <div class="marca-nome">Container Control Solutions</div>
       </div>
       <div class="login-subtitulo">{{ modo === "entrar" ? "Login" : "Esqueci minha senha" }}</div>

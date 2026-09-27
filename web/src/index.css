@@ -98,13 +98,6 @@ button.lateral-secao:hover:not(:disabled) { background: none; opacity: .9; }
   .lateral.aberta { transform: none; }
   .pagina { padding: 16px; }
   .topo { padding: 12px 16px; }
-  /* Cabeçalho fixo no celular: faixa de críticos em uma linha só (sem a lista de containers). */
-  .faixa-critica { padding: 6px 16px; flex-wrap: nowrap; }
-  .faixa-detalhe, .so-desktop { display: none; }
-  .so-celular { display: inline; }
-}
-@media (min-width: 861px) {
-  .so-celular { display: none; }
 }
 
 /* ---------- Componentes ---------- */
@@ -244,8 +237,6 @@ tr.clicavel { cursor: pointer; }
 .modal-acoes { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* Aviso de alerta crítico no topo */
-.faixa-critica { background: var(--vermelho); color: #fff; padding: 10px 24px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-.faixa-critica button, .faixa-critica .btn { background: rgba(255,255,255,.15); color: #fff; border-color: rgba(255,255,255,.35); }
 .seletor-visao { display: inline-flex; margin-left: 14px; border: 1px solid var(--borda); border-radius: 8px; padding: 2px; background: var(--superficie-2); }
 .seletor-visao button { border: none; background: none; padding: 5px 12px; font-size: 13px; border-radius: 6px; color: var(--texto-2); }
 .seletor-visao button.ativo { background: var(--superficie); color: var(--primaria); font-weight: 700; box-shadow: var(--sombra); }

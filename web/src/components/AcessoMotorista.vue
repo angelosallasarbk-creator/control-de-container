@@ -69,7 +69,7 @@ const concluir = () => executar(async () => {
   <div class="login-shell">
     <div class="login-card">
       <div class="marca">
-        <div class="marca-sigla">C.C.S</div>
+        <div class="marca-sigla">CCS</div>
         <div class="marca-nome">Container Control Solutions</div>
       </div>
       <div class="login-subtitulo">{{ etapa === "cadastro" ? "Primeiro acesso" : "Acesso do motorista" }}</div>

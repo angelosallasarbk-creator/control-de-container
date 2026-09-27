@@ -82,7 +82,7 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 
 ## Telas
 
-- **Login** (C.C.S · Container Control Solutions):
+- **Login** (CCS · Container Control Solutions):
   - **Mostrar/ocultar senha:** botão com o ícone de olho (aberto para ver, cortado para esconder).
   - **"Lembrar meu login":** mantém a sessão por **30 dias** neste navegador. Sem essa opção, a sessão acaba ao fechar o navegador.
   - **Segurança:**
@@ -118,7 +118,7 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 
 - **Home** (antes "Pátio"): **uma aba por região** ("Todas" + regiões + "Sem região" se houver fábrica sem região), com contagem de containers e de críticos em cada aba. Os indicadores do topo são os da aba escolhida, e a aba fica lembrada. Dentro da aba, containers por Ponto de Carregamento divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.
 - **Containers**: lista com filtros e cadastro. O símbolo de QR antes do número indica etiqueta QR vinculada; a caixa **"Sem QR code"** no cabeçalho mostra só os que ainda não têm (vale no Grid e na Tabela, fica lembrada).
-  - **Cadastro por planilha:** **"Baixar modelo"** gera um Excel (.xlsx) com as colunas, listas suspensas dos cadastros ativos (Pontos de Carregamento, armadores, produtos, locais) e uma aba de instruções. **"Upload"** envia a planilha preenchida: primeiro mostra a conferência linha a linha (mesmas regras do cadastro na tela), e só grava as linhas válidas depois da confirmação. Só cadastra containers **novos** — número já ativo ou repetido na planilha é recusado, então reenviar o mesmo arquivo não duplica. Datas em dd/mm/aaaa hh:mm (Brasília); até 1.000 linhas e 5 MB por arquivo. Fica no log como IMPORTAR.
+  - **Cadastro por planilha:** o botão **"Upload"** (ao lado do "+ Novo") abre a janela com **"Baixar modelo"**, que gera um Excel (.xlsx) com as colunas, listas suspensas dos cadastros ativos (Pontos de Carregamento, armadores, produtos, locais) e uma aba de instruções. Na mesma janela, envie a planilha preenchida: primeiro mostra a conferência linha a linha (mesmas regras do cadastro na tela), e só grava as linhas válidas depois da confirmação. Só cadastra containers **novos** — número já ativo ou repetido na planilha é recusado, então reenviar o mesmo arquivo não duplica. Datas em dd/mm/aaaa hh:mm (Brasília); até 1.000 linhas e 5 MB por arquivo. Fica no log como IMPORTAR.
 - **Ficha** do container no formato **lista + detalhe**:
   - **À esquerda,** a lista de containers: os ativos por padrão, com filtro de status e busca por container, navio ou rota. Trocar de container não recarrega a lista.
   - **À direita,** o cabeçalho com número, etapa, tipo e rota, a ação da próxima etapa, Editar e o menu ⋮ (desfazer ou cancelar).
@@ -137,7 +137,7 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
   - No Grid, se o container aberto sair do filtro, abre o primeiro da lista filtrada.
 - **Menu:** as seções Cadastros e Administração recolhem e expandem. O estado fica lembrado, e a seção da tela aberta fica sempre visível.
 - **Previsão de container "Programado":** a simulação parte da **coleta programada**. Se ela não existir ou já tiver passado, parte de agora.
-- **Alertas**: abertos e histórico. Faixa vermelha no topo + sino + bipe quando surge alerta crítico não reconhecido (consulta a cada 30 s).
+- **Alertas**: abertos e histórico. Sino no topo com o número de alertas não reconhecidos + bipe quando surge alerta crítico (consulta a cada 30 s).
 - **Custo estimado**: custo de estadia e demurrage por **abas de Região** e, dentro delas, **abas de Ponto de Carregamento** (mais a "Visão geral"). Tem filtro de período (30/90 dias, 6/12 meses, mês atual/anterior, personalizado); indicadores; gráfico de tendência empilhado estadia × demurrage (por dia, semana ou mês, conforme o período); ranking por Ponto de Carregamento; **principais impactos** gerados automaticamente (estadia × demurrage, concentração por cliente e por armador, etapa em que o tempo foi perdido, estouros de meta, variação entre as metades do período, horas sem custo/h); detalhamento por container com tempo em cada trecho e exportação CSV (Excel).
   - O custo é lançado **no dia em que ocorre**: cada diária de demurrage no dia cobrado, cada hora além da meta de estadia no dia em que passou. Containers ativos contam até agora; cancelados não entram.
   - A estadia usa o custo/h **gravado no container**. Se o custo/h do Ponto de Carregamento for cadastrado depois, salve o cadastro com "Aplicar também aos containers em andamento" (ou o supervisor ajusta em *Editar → Prazos deste container*, na ficha). Horas sem valor aparecem como "sem R$/h".

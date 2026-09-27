@@ -4,6 +4,14 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 1.1.1 — 27/09/2026 (branch `versao-1.1.1`)
+
+Ajustes visuais:
+- Marca "C.C.S" passa a ser **"CCS"** em todas as telas (login, redefinir senha, enviar posição,
+  acesso do motorista), no e-mail de redefinição de senha, no nome do remetente e no Excel.
+- Removida a faixa vermelha de alertas críticos do topo: o **sino** (com o número) e o bipe bastam.
+- Removido o botão "Baixar modelo" do cabeçalho de Containers (redundante: fica dentro do Upload).
+
 ## 1.1.0 — 27/09/2026 (tag `v1.1.0`)
 
 - **Fase 1 — Pedidos de posição por trechos críticos (pronta):** o padrão passa a pedir posição só

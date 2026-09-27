@@ -6,7 +6,7 @@ const TIMEOUT_MS = 10_000;
 
 export const remetente = () => ({
   email: process.env.EMAIL_REMETENTE || "aslog.ccs@gmail.com",
-  name: process.env.EMAIL_REMETENTE_NOME || "C.C.S – Container Control Solutions",
+  name: process.env.EMAIL_REMETENTE_NOME || "CCS – Container Control Solutions",
 });
 
 // Últimos e-mails "enviados" sem chave (para testes e para o desenvolvedor ver o link).

@@ -67,7 +67,7 @@ async function irParaLogin() {
   <div class="login-shell">
     <form class="login-card" autocomplete="on" @submit.prevent="salvar">
       <div class="marca">
-        <div class="marca-sigla">C.C.S</div>
+        <div class="marca-sigla">CCS</div>
         <div class="marca-nome">Container Control Solutions</div>
       </div>
       <div class="login-subtitulo">Criar nova senha</div>
