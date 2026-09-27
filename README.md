@@ -67,6 +67,24 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 
 ## Telas
 
+- **Login** (C.C.S · Container Control Solutions):
+  - **Mostrar/ocultar senha:** botão com o ícone de olho (aberto para ver, cortado para esconder).
+  - **"Lembrar meu login":** mantém a sessão por **30 dias** neste navegador. Sem essa opção, a sessão acaba ao fechar o navegador.
+  - **Segurança:**
+    - A senha **nunca** é guardada no navegador. Só o e-mail fica lembrado.
+    - A sessão é um cookie **httpOnly**, que o JavaScript não lê, e **Secure** em produção.
+    - O campo de senha é limpo depois do envio.
+    - Salvar a senha fica a cargo do gerenciador de senhas do próprio navegador.
+  - **Troca de senha:** quando a senha é redefinida, todas as sessões abertas daquela conta caem na hora, inclusive as lembradas. Quem trocou a própria senha continua logado na sessão atual.
+  - **Bloqueio de tentativas:** só as tentativas **erradas** contam para o bloqueio (10 a cada 15 minutos por IP).
+  - **Esqueci minha senha:** a pessoa informa o e-mail e recebe um link para criar uma nova senha.
+    - A resposta é sempre a mesma, exista ou não a conta.
+    - O link é de **uso único** e vale **30 minutos**. No banco fica só o hash do código.
+    - Um pedido novo substitui o anterior. Há intervalo mínimo de 1 minuto enquanto houver link pendente e limite de pedidos por IP.
+    - Redefinir a senha **derruba todas as sessões** da conta. Contas desativadas não recebem o link.
+    - O administrador também pode mandar o link, pelo botão **"Enviar link de senha"** em Usuários.
+    - O envio é feito pelo **Brevo** (`BREVO_API_KEY`, remetente `EMAIL_REMETENTE`), usando o **endereço do sistema** de Configurações → Etiquetas QR (ou `APP_URL`) para montar o link. Sem a chave, o e-mail não sai e o link aparece só no console do servidor.
+
 - **Home** (antes "Pátio"): **uma aba por região** ("Todas" + regiões + "Sem região" se houver fábrica sem região), com contagem de containers e de críticos em cada aba. Os indicadores do topo são os da aba escolhida, e a aba fica lembrada. Dentro da aba, containers por Ponto de Carregamento divididos em *A caminho da fábrica / Na fábrica / A caminho do porto*, com semáforo, barra da estadia, demurrage e temperatura. Atualiza a cada minuto.
 - **Containers**: lista com filtros e cadastro. **Ficha** no formato **lista + detalhe**:
   - **À esquerda,** a lista de containers: os ativos por padrão, com filtro de status e busca por container, navio ou rota. Trocar de container não recarrega a lista.

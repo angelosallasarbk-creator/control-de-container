@@ -26,8 +26,8 @@ export const useAuthStore = defineStore("auth", {
         if (e.status === 401) this.usuario = null;
       }
     },
-    async login(email, senha) {
-      this.usuario = await api.login(email, senha);
+    async login(email, senha, lembrar = false) {
+      this.usuario = await api.login(email, senha, lembrar);
     },
     async logout() {
       try {

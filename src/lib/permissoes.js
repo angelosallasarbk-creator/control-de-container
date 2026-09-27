@@ -62,6 +62,10 @@ export async function carregarUsuarioAtual(req, res, next) {
   try {
     const u = await prisma.usuario.findUnique({ where: { email: req.usuario.email } });
     if (!u || !u.ativo) return res.status(401).json({ erro: "Conta desativada ou inexistente. Fale com um administrador." });
+    // Sessão emitida antes da última troca de senha (versão diferente) não vale mais.
+    if ((req.usuario.sv ?? 0) !== (u.sessoesValidasApos?.getTime() ?? 0)) {
+      return res.status(401).json({ erro: "Sua senha foi alterada. Entre novamente." });
+    }
     req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil };
     req.permissoes = permissoesEfetivas(u);
     next();

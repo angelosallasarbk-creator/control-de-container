@@ -6,18 +6,28 @@ if (!SEGREDO) {
 }
 
 const COOKIE_NOME = "token_container";
-const EXPIRA_EM = "12h";
+// Sessão normal: 12h e o cookie some ao fechar o navegador. "Lembrar meu login": 30 dias.
+// A senha nunca vai para o navegador — só este token, num cookie httpOnly (o JavaScript da
+// página não lê) e Secure em produção.
+const DURACAO_NORMAL = "12h";
+export const LEMBRAR_DIAS = 30;
 
-export function gerarToken(usuario) {
-  return jwt.sign({ email: usuario.email, nome: usuario.nome, perfil: usuario.perfil }, SEGREDO, { expiresIn: EXPIRA_EM });
+export function gerarToken(usuario, { lembrar = false } = {}) {
+  // sv = "versão" das sessões do usuário no momento da emissão (sessoesValidasApos). Trocar a
+  // senha muda a versão e todo token antigo deixa de bater — comparação exata, sem janela de tempo.
+  const sv = usuario.sessoesValidasApos ? new Date(usuario.sessoesValidasApos).getTime() : 0;
+  return jwt.sign({ email: usuario.email, nome: usuario.nome, perfil: usuario.perfil, lembrar: Boolean(lembrar), sv }, SEGREDO, {
+    expiresIn: lembrar ? `${LEMBRAR_DIAS}d` : DURACAO_NORMAL,
+  });
 }
 
-export function definirCookieAuth(res, token) {
+export function definirCookieAuth(res, token, { lembrar = false } = {}) {
   res.cookie(COOKIE_NOME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    maxAge: 12 * 60 * 60 * 1000,
+    // Sem maxAge = cookie de sessão (apagado ao fechar o navegador).
+    ...(lembrar ? { maxAge: LEMBRAR_DIAS * 24 * 60 * 60 * 1000 } : {}),
   });
 }
 

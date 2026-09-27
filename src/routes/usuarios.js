@@ -5,6 +5,10 @@ import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { Prisma } from "@prisma/client";
 import { requirePermissao, CATALOGO_PERMISSOES, CHAVES, PADRAO_POR_PERFIL, permissoesEfetivas, ehPersonalizado } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
+import { gerarToken, definirCookieAuth } from "../lib/auth.js";
+import { validarSenha, solicitarRedefinicao } from "../lib/redefinicaoSenha.js";
+import { enderecoPublico } from "../lib/enderecoPublico.js";
+import { envioConfigurado } from "../lib/email.js";
 import { texto, id as validarId, umDe } from "../lib/validacao.js";
 
 export const usuariosRouter = Router();
@@ -12,12 +16,7 @@ usuariosRouter.use(requirePermissao("administrar"));
 
 const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO", "TRANSPORTADOR", "PORTARIA"];
 const SELECT = { id: true, email: true, nome: true, perfil: true, ativo: true, criadoEm: true };
-const SENHA_MIN = 8;
 
-function validarSenha(senha) {
-  if (!senha || String(senha).length < SENHA_MIN) throw erroHttp(400, `A senha deve ter pelo menos ${SENHA_MIN} caracteres.`);
-  return String(senha);
-}
 
 // Usuário + permissões (efetivas, e se foge do padrão do perfil).
 const comPermissoes = (u) => {
@@ -107,14 +106,23 @@ usuariosRouter.patch("/:id", asyncHandler(async (req, res) => {
   const trocouPerfil = dados.perfil && dados.perfil !== antes.perfil;
   if (trocouPerfil) dados.permissoes = Prisma.DbNull;
   if ("ativo" in b) dados.ativo = Boolean(b.ativo);
-  if (b.senha) dados.senhaHash = await bcrypt.hash(validarSenha(b.senha), 10);
+  if (b.senha) {
+    dados.senhaHash = await bcrypt.hash(validarSenha(b.senha), 10);
+    // Senha redefinida derruba as sessões abertas (inclusive "lembrar meu login" de 30 dias).
+    dados.sessoesValidasApos = new Date();
+  }
 
   // Evita o administrador se trancar fora do sistema.
   if (antes.email === req.usuario.email && (dados.ativo === false || (dados.perfil && dados.perfil !== "ADMIN"))) {
     throw erroHttp(400, "Você não pode desativar nem remover o perfil de administrador da sua própria conta.");
   }
-  const depois = await prisma.usuario.update({ where: { id: usuarioId }, data: dados, select: { ...SELECT, permissoes: true } });
-  const { senhaHash: _s, permissoes: _p, ...semSenha } = dados;
+  const depois = await prisma.usuario.update({ where: { id: usuarioId }, data: dados, select: { ...SELECT, permissoes: true, sessoesValidasApos: true } });
+  const { senhaHash: _s, permissoes: _p, sessoesValidasApos: _v, ...semSenha } = dados;
+  // Quem trocou a própria senha continua logado nesta sessão (as outras caem).
+  if (dados.senhaHash && antes.email === req.usuario.email) {
+    const lembrar = Boolean(req.usuario.lembrar);
+    definirCookieAuth(res, gerarToken(depois, { lembrar }), { lembrar });
+  }
   await registrarLog({
     usuarioEmail: req.usuario.email,
     acao: "ALTERAR",
@@ -126,5 +134,21 @@ usuariosRouter.patch("/:id", asyncHandler(async (req, res) => {
     dadosAntes: antes,
     dadosDepois: { ...antes, ...semSenha },
   });
-  res.json(comPermissoes(depois));
+  const { sessoesValidasApos: _sv, ...resposta } = depois;
+  res.json(comPermissoes(resposta));
+}));
+
+// Administrador envia o link de "criar nova senha" para o e-mail do usuário.
+usuariosRouter.post("/:id/enviar-redefinicao", asyncHandler(async (req, res) => {
+  const usuarioId = validarId(req.params.id);
+  const u = await prisma.usuario.findUnique({ where: { id: usuarioId }, select: { email: true, ativo: true } });
+  if (!u) throw erroHttp(404, "Usuário não encontrado.");
+  if (!u.ativo) throw erroHttp(400, "Usuário desativado: ative a conta antes de enviar o link.");
+  const base = await enderecoPublico(req);
+  if (!base) throw erroHttp(400, "Defina o endereço do sistema em Configurações → Etiquetas QR para montar o link do e-mail.");
+  const enviado = await solicitarRedefinicao({ email: u.email, baseUrl: base, solicitante: req.usuario.email }).catch((err) => {
+    throw erroHttp(502, `Não foi possível enviar o e-mail agora (${err.message}).`);
+  });
+  if (!enviado) throw erroHttp(429, "Um link acabou de ser enviado para este usuário. Aguarde 1 minuto para enviar outro.");
+  res.json({ mensagem: `Link enviado para ${u.email}.`, simulado: !envioConfigurado() });
 }));

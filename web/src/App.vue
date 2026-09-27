@@ -25,7 +25,7 @@ const ehTransportador = computed(() => auth.usuario?.perfil === "TRANSPORTADOR")
 const ehPortaria = computed(() => auth.usuario?.perfil === "PORTARIA");
 // Só decide com a rota já resolvida: na carga inicial (ex.: QR aberto já logado) route.name ainda
 // é indefinido e redirecionaria a leitura do QR por engano.
-const foraDoPerfil = computed(() => Boolean(restricao.value && route.name && !restricao.value.telas.includes(route.name)));
+const foraDoPerfil = computed(() => Boolean(restricao.value && route.name && !route.meta.publica && !restricao.value.telas.includes(route.name)));
 watch([restricao, () => route.name], () => {
   if (foraDoPerfil.value) router.replace(restricao.value.inicio);
 }, { immediate: true });
@@ -227,7 +227,9 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
 </script>
 
 <template>
-  <div v-if="auth.usuario === undefined" class="vazio">Carregando…</div>
+  <!-- Páginas públicas (link de redefinição de senha) abrem sem login. -->
+  <router-view v-if="route.meta.publica" />
+  <div v-else-if="auth.usuario === undefined" class="vazio">Carregando…</div>
   <Login v-else-if="auth.usuario === null" />
   <div v-else-if="foraDoPerfil" class="vazio">Abrindo…</div>
   <!-- Celular (QR) e folha de impressão: sem menu/cabeçalho. Depois do login continua na mesma URL. -->

@@ -985,3 +985,102 @@ test("tolerância do planejado: configurável em Configurações e enviada com o
   assert.equal((await agentes.ADMIN.get(`/api/containers/${algum.id}`)).body.toleranciaPlanejadoMinutos, 180);
   await agentes.ADMIN.put("/api/configuracao").send(cfg);
 });
+
+test("login: 'lembrar' = cookie persistente de 30 dias; sem lembrar = cookie de sessão; senha nunca volta", async () => {
+  const criado = await agentes.ADMIN.post("/api/usuarios").send({ email: "lembrar@teste.local", nome: "Lembrar", perfil: "OPERADOR", senha: "senha-teste-123" });
+  assert.equal(criado.status, 201);
+  assert.ok(!JSON.stringify(criado.body).includes("senha"), "cadastro não devolve senha/hash");
+
+  const normal = await request(app).post("/api/auth/login").send({ email: "lembrar@teste.local", senha: "senha-teste-123" });
+  assert.equal(normal.status, 200);
+  const cNormal = normal.headers["set-cookie"].find((c) => c.startsWith("token_container="));
+  assert.match(cNormal, /HttpOnly/i);
+  assert.doesNotMatch(cNormal, /Max-Age|Expires/i, "sem lembrar: cookie some ao fechar o navegador");
+  assert.ok(!JSON.stringify(normal.body).toLowerCase().includes("senha"), "resposta do login não traz senha");
+
+  const lembrado = request.agent(app);
+  const rLembrar = await lembrado.post("/api/auth/login").send({ email: "lembrar@teste.local", senha: "senha-teste-123", lembrar: true });
+  assert.equal(rLembrar.status, 200, JSON.stringify(rLembrar.body));
+  const cLembrar = rLembrar.headers["set-cookie"].find((c) => c.startsWith("token_container="));
+  assert.match(cLembrar, /HttpOnly/i);
+  assert.match(cLembrar, /Max-Age=2592000/, "lembrar: 30 dias");
+  assert.equal((await lembrado.get("/api/auth/me")).status, 200);
+
+  // Admin redefine a senha: a sessão lembrada cai na hora; novo login com a senha nova funciona.
+  const u = (await agentes.ADMIN.get("/api/usuarios")).body.find((x) => x.email === "lembrar@teste.local");
+  assert.equal((await agentes.ADMIN.patch(`/api/usuarios/${u.id}`).send({ senha: "senha-nova-456" })).status, 200);
+  const caiu = await lembrado.get("/api/auth/me");
+  assert.equal(caiu.status, 401);
+  assert.match(caiu.body.erro, /senha foi alterada/);
+  assert.equal((await request(app).post("/api/auth/login").send({ email: "lembrar@teste.local", senha: "senha-teste-123" })).status, 401);
+  const novo = request.agent(app);
+  assert.equal((await novo.post("/api/auth/login").send({ email: "lembrar@teste.local", senha: "senha-nova-456", lembrar: true })).status, 200);
+  assert.equal((await novo.get("/api/auth/me")).status, 200, "sessão nova vale");
+
+  // Quem troca a própria senha continua logado nesta sessão.
+  const proprio = request.agent(app);
+  await proprio.post("/api/auth/login").send({ email: "chefe@teste.local", senha: "senha-inicial-123" });
+  const eu = (await proprio.get("/api/usuarios")).body.find((x) => x.email === "chefe@teste.local");
+  assert.equal((await proprio.patch(`/api/usuarios/${eu.id}`).send({ senha: "senha-inicial-456" })).status, 200);
+  assert.equal((await proprio.get("/api/auth/me")).status, 200, "a própria sessão foi renovada");
+});
+
+test("esqueci minha senha: link por e-mail, uso único, expira, resposta não revela a conta", async () => {
+  const { caixaDeSaida } = await import("./lib/email.js");
+  const { prisma: db } = await import("./lib/prisma.js");
+  await agentes.ADMIN.post("/api/usuarios").send({ email: "reset@teste.local", nome: "Pessoa Reset", perfil: "OPERADOR", senha: "senha-antiga-123" });
+  const sessaoAntiga = request.agent(app);
+  assert.equal((await sessaoAntiga.post("/api/auth/login").send({ email: "reset@teste.local", senha: "senha-antiga-123", lembrar: true })).status, 200);
+
+  // Mesma resposta para e-mail existente e inexistente; só o existente recebe e-mail.
+  const antes = caixaDeSaida.length;
+  const inexistente = await request(app).post("/api/auth/esqueci-senha").send({ email: "ninguem@teste.local" });
+  const existente = await request(app).post("/api/auth/esqueci-senha").send({ email: "RESET@teste.local " });
+  assert.equal(inexistente.status, 200);
+  assert.deepEqual(inexistente.body, existente.body, "resposta idêntica");
+  assert.equal(caixaDeSaida.length, antes + 1);
+  const email = caixaDeSaida.at(-1);
+  assert.equal(email.para, "reset@teste.local");
+  assert.match(email.assunto, /Redefinição de senha/);
+  const codigo = email.texto.match(/\/redefinir-senha\/([A-Za-z0-9_-]+)/)[1];
+  assert.ok(codigo.length >= 40, "código longo e aleatório");
+  const noBanco = await db.usuario.findUnique({ where: { email: "reset@teste.local" } });
+  assert.notEqual(noBanco.resetTokenHash, codigo, "banco guarda só o hash");
+  assert.ok(!/resetTokenHash|resetExpiraEm|senhaHash|sessoesValidasApos/.test(JSON.stringify((await agentes.ADMIN.get("/api/usuarios")).body)), "lista de usuários não expõe campos sensíveis");
+
+  // Pedido repetido em menos de 1 min não gera outro e-mail (mesma resposta).
+  await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
+  assert.equal(caixaDeSaida.length, antes + 1);
+
+  // Conferir e redefinir.
+  assert.deepEqual((await request(app).get("/api/auth/redefinir-senha/codigo-falso")).body, { valido: false });
+  assert.equal((await request(app).get(`/api/auth/redefinir-senha/${codigo}`)).body.valido, true);
+  assert.equal((await request(app).post("/api/auth/redefinir-senha").send({ codigo, senha: "curta" })).status, 400, "senha curta");
+  const ok = await request(app).post("/api/auth/redefinir-senha").send({ codigo, senha: "senha-nova-789" });
+  assert.equal(ok.status, 200);
+  assert.equal((await request(app).post("/api/auth/redefinir-senha").send({ codigo, senha: "outra-senha-000" })).status, 400, "uso único");
+  assert.equal((await sessaoAntiga.get("/api/auth/me")).status, 401, "sessões antigas (inclusive lembradas) caem");
+  assert.equal((await request(app).post("/api/auth/login").send({ email: "reset@teste.local", senha: "senha-nova-789" })).status, 200);
+  const log = (await agentes.ADMIN.get("/api/logs?entidade=Usuario")).body;
+  assert.ok(log.some((l) => l.acao === "RESET_SENHA_SOLICITADO") && log.some((l) => l.acao === "RESET_SENHA"));
+
+  // Link expirado não vale.
+  await db.usuario.update({ where: { email: "reset@teste.local" }, data: { resetSolicitadoEm: new Date(Date.now() - 120e3) } });
+  await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
+  const codigo2 = caixaDeSaida.at(-1).texto.match(/\/redefinir-senha\/([A-Za-z0-9_-]+)/)[1];
+  await db.usuario.update({ where: { email: "reset@teste.local" }, data: { resetExpiraEm: new Date(Date.now() - 1000) } });
+  assert.equal((await request(app).get(`/api/auth/redefinir-senha/${codigo2}`)).body.valido, false, "expirado");
+
+  // Administrador envia o link; conta desativada não recebe.
+  const u = (await agentes.ADMIN.get("/api/usuarios")).body.find((x) => x.email === "reset@teste.local");
+  await db.usuario.update({ where: { id: u.id }, data: { resetSolicitadoEm: null } });
+  const pelaAdmin = await agentes.ADMIN.post(`/api/usuarios/${u.id}/enviar-redefinicao`);
+  assert.equal(pelaAdmin.status, 200);
+  assert.equal(pelaAdmin.body.simulado, true, "sem BREVO_API_KEY nos testes: envio simulado");
+  assert.equal((await agentes.SUPERVISOR.post(`/api/usuarios/${u.id}/enviar-redefinicao`)).status, 403);
+  await agentes.ADMIN.patch(`/api/usuarios/${u.id}`).send({ ativo: false });
+  const n = caixaDeSaida.length;
+  await db.usuario.update({ where: { id: u.id }, data: { resetSolicitadoEm: null } });
+  await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
+  assert.equal(caixaDeSaida.length, n, "conta desativada não recebe link");
+});

@@ -2,12 +2,27 @@
 import { onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { ROTULO_PERFIL, fmtDataHora } from "../formato.js";
+import CampoSenha from "../components/CampoSenha.vue";
 
 const lista = ref([]);
 const erro = ref(null);
 const editando = ref(null);
 const form = reactive({ email: "", nome: "", perfil: "OPERADOR", senha: "" });
 const enviando = ref(false);
+const aviso = ref(null);
+
+// Envia ao usuário o e-mail com o link para ele mesmo criar uma nova senha.
+async function enviarLink(u) {
+  if (!confirm(`Enviar para ${u.email} um link para criar uma nova senha? O link vale por 30 minutos.`)) return;
+  erro.value = null;
+  aviso.value = null;
+  try {
+    const r = await api.enviarRedefinicao(u.id);
+    aviso.value = r.simulado ? `${r.mensagem} (ambiente sem envio de e-mail configurado: o link foi registrado só no servidor)` : r.mensagem;
+  } catch (e) {
+    erro.value = e.message;
+  }
+}
 
 const DESCRICAO_PERFIL = {
   ADMIN: "Tudo, inclusive usuários, permissões, integração e configurações.",
@@ -69,6 +84,7 @@ async function alternarAtivo(u) {
     <button class="primario" @click="abrir(null)">+ Novo usuário</button>
   </div>
   <div v-if="erro && !editando" class="erro">{{ erro }}</div>
+  <div v-if="aviso" class="sucesso">{{ aviso }}</div>
   <div class="card tabela-wrap" style="padding: 0">
     <table>
       <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Criado</th><th>Situação</th><th></th></tr></thead>
@@ -84,6 +100,7 @@ async function alternarAtivo(u) {
           <td><span class="chip" :class="u.ativo ? 'verde' : ''">{{ u.ativo ? "Ativo" : "Inativo" }}</span></td>
           <td style="text-align: right; white-space: nowrap">
             <button class="pequeno" @click="abrir(u)">Editar</button>
+            <button v-if="u.ativo" class="pequeno" title="Envia um e-mail para o usuário criar uma nova senha" @click="enviarLink(u)">Enviar link de senha</button>
             <button class="pequeno" @click="alternarAtivo(u)">{{ u.ativo ? "Desativar" : "Ativar" }}</button>
           </td>
         </tr>
@@ -109,7 +126,7 @@ async function alternarAtivo(u) {
       </div>
       <div class="campo">
         <label>{{ editando.id ? "Nova senha (deixe em branco para manter)" : "Senha *" }}</label>
-        <input v-model="form.senha" type="password" :required="!editando.id" minlength="8" autocomplete="new-password" />
+        <CampoSenha id="senha-usuario" v-model="form.senha" :obrigatorio="!editando.id" :minlength="8" autocomplete="new-password" name="new-password" />
         <span class="dica">Mínimo de 8 caracteres.</span>
       </div>
       <div class="modal-acoes">

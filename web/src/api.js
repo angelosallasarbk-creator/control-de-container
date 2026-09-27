@@ -26,8 +26,14 @@ const qs = (params = {}) => {
 };
 
 export const api = {
-  login: (email, senha) => request("/auth/login", { method: "POST", body: { email, senha } }),
+  // lembrar = sessão de 30 dias (cookie httpOnly). A senha só trafega nesta requisição (HTTPS).
+  login: (email, senha, lembrar = false) => request("/auth/login", { method: "POST", body: { email, senha, lembrar } }),
   logout: () => request("/auth/logout", { method: "POST" }),
+  // Esqueci minha senha (link por e-mail, uso único, 30 min).
+  esqueciSenha: (email) => request("/auth/esqueci-senha", { method: "POST", body: { email } }),
+  conferirRedefinicao: (codigo) => request(`/auth/redefinir-senha/${encodeURIComponent(codigo)}`),
+  redefinirSenha: (codigo, senha) => request("/auth/redefinir-senha", { method: "POST", body: { codigo, senha } }),
+  enviarRedefinicao: (id) => request(`/usuarios/${id}/enviar-redefinicao`, { method: "POST" }),
   me: () => request("/auth/me"),
 
   painel: () => request("/painel"),

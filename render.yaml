@@ -15,6 +15,13 @@ services:
         generateValue: true
       - key: ORS_API_KEY
         sync: false
+      # E-mail "Esqueci minha senha" (Brevo, chave de API v3 xkeysib-…).
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_REMETENTE
+        value: aslog.ccs@gmail.com
+      - key: EMAIL_REMETENTE_NOME
+        value: C.C.S – Container Control Solutions
       # Primeiro administrador: criado na subida só se o banco não tiver usuários.
       # Depois do primeiro login, troque a senha pela tela e remova estas variáveis.
       - key: ADMIN_INICIAL_EMAIL

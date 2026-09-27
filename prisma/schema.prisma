@@ -81,6 +81,14 @@ model Usuario {
   perfil    Perfil   @default(VISUALIZACAO)
   // Permissões personalizadas (lista de chaves de src/lib/permissoes.js). null = padrão do perfil.
   permissoes Json?
+  // Sessões (tokens) emitidas antes deste instante deixam de valer — ex.: senha redefinida.
+  // Assim um "lembrar meu login" (sessão de 30 dias) não sobrevive à troca de senha.
+  sessoesValidasApos DateTime?
+  // "Esqueci minha senha": só o HASH (SHA-256) do código do link fica no banco; uso único,
+  // expira em 30 min; um pedido novo substitui o anterior.
+  resetTokenHash     String?   @unique
+  resetExpiraEm      DateTime?
+  resetSolicitadoEm  DateTime?
   ativo     Boolean  @default(true)
   criadoEm  DateTime @default(now())
 }
