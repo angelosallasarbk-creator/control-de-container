@@ -5,6 +5,7 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, rotuloEtapa, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora, fmtFolga } from "../formato.js";
 import NovoContainer from "../components/NovoContainer.vue";
+import MarcaQr from "../components/MarcaQr.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
 import { passaFiltroContainers } from "../filtroContainers.js";
@@ -121,7 +122,7 @@ function textoDemurrage(d) {
       <tbody>
         <tr v-for="c in linhas" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
           <td><span class="ponto" :class="c.semaforo" :title="c.semaforo"></span></td>
-          <td class="mono negrito">{{ c.numero }}<div v-if="c.booking" class="mudo pequeno">BK {{ c.booking }}</div></td>
+          <td class="mono negrito" style="white-space: nowrap"><MarcaQr v-if="c.qrVinculado" /> {{ c.numero }}<div v-if="c.booking" class="mudo pequeno">BK {{ c.booking }}</div></td>
           <td>{{ ROTULO_TIPO[c.tipo] }}</td>
           <td>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</td>
           <td>{{ c.armador.nome }}</td>

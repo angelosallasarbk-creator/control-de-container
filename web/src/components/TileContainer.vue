@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth.js";
+import MarcaQr from "./MarcaQr.vue";
 import { rotuloEtapa, ROTULO_TIPO, fmtHoras, fmtTemp, fmtMoeda, fmtFolga, fmtDataHora } from "../formato.js";
 
 const props = defineProps({ c: { type: Object, required: true } });
@@ -22,7 +23,7 @@ const textoDemurrage = computed(() => {
 <template>
   <div class="tile" :class="[c.semaforo, { consulta: !abreFicha }]" @click="abrir">
     <div class="linha-entre">
-      <span class="num mono">{{ c.numero }}</span>
+      <span class="num mono"><MarcaQr v-if="c.qrVinculado" /> {{ c.numero }}</span>
       <span v-if="c.alertas.CRITICO" class="chip vermelho" title="Alertas críticos abertos">⚠ {{ c.alertas.CRITICO }}</span>
       <span v-else-if="c.alertas.ATENCAO" class="chip amarelo" title="Alertas de atenção abertos">{{ c.alertas.ATENCAO }}</span>
     </div>

@@ -28,10 +28,13 @@ export function serializarLeitura(l) {
 
 // leiturasAsc: leituras do container da mais antiga para a mais recente.
 // ctxPrevisao: contexto de rota deste container (previsao.montarContextos); sem ele, sem previsão.
+// Conta só as etiquetas QR ligadas (VINCULADA) — as listas mostram o ícone de QR vinculado.
+export const CONTAGEM_QR = { _count: { select: { etiquetas: { where: { status: "VINCULADA" } } } } };
+
 export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = null) {
   const previsao = ctxPrevisao ? estimarCiclo(c, ctxPrevisao, agora, configRodagem(config)) : null;
   const situacao = calcularSituacao(c, leiturasAsc, agora, config.intervaloLeituraMinutos, previsao, config.atrasoColetaCriticoHoras);
-  const { leituras: _l, ...resto } = c;
+  const { leituras: _l, _count, ...resto } = c;
   return {
     ...decimaisParaNumero(resto),
     reefer: ehReefer(c.tipo),
@@ -43,6 +46,8 @@ export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = nul
     portoEntrega: c.portoEntrega ? decimaisParaNumero(c.portoEntrega, CAMPOS_LOCAL) : c.portoEntrega,
     // Nome das etapas conforme o tipo dos locais (ex.: COLETADO → "Coleta ferroviária").
     rotulosEtapa: rotulosDasEtapas(c),
+    // Tem etiqueta QR ligada agora (consulta com CONTAGEM_QR, ou a lista de etiquetas da ficha).
+    qrVinculado: _count ? _count.etiquetas > 0 : Array.isArray(c.etiquetas) ? c.etiquetas.some((e) => e.status === "VINCULADA") : false,
     // Configurações → Geral: tolerância do "no prazo" na aba Etapas (planejado × realizado).
     toleranciaPlanejadoMinutos: config.toleranciaPlanejadoMinutos,
     situacao,

@@ -8,6 +8,7 @@ import { api } from "../api.js";
 import { FLUXO, ROTULO_STATUS, ROTULO_TIPO, rotuloEtapa } from "../formato.js";
 import { filtroContainers, passaFiltroContainers } from "../filtroContainers.js";
 import Icone from "./Icone.vue";
+import MarcaQr from "./MarcaQr.vue";
 
 const props = defineProps({ selecionado: { type: [Number, String], default: null } });
 const emit = defineEmits(["carregada", "filtrada", "novo"]);
@@ -117,7 +118,7 @@ const abrir = (c) => router.push(`/containers/${c.id}`);
         <span class="linha-entre" style="gap: 8px">
           <span class="linha" style="gap: 8px; min-width: 0">
             <span class="ponto" :class="c.semaforo"></span>
-            <span class="numero">{{ c.numero }}</span>
+            <span class="numero"><MarcaQr v-if="c.qrVinculado" /> {{ c.numero }}</span>
           </span>
           <span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span>
         </span>

@@ -5,7 +5,7 @@ import { requirePermissao, tem } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
-import { montarContainer, serializarLeitura } from "../lib/containerView.js";
+import { montarContainer, serializarLeitura, CONTAGEM_QR } from "../lib/containerView.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
 import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib/validacao.js";
@@ -48,6 +48,7 @@ const SELECT_LOCAL = { select: { id: true, nome: true, tipo: SELECT_TIPO, cidade
 const INCLUDE_BASICO = {
   grupo: true, armador: true, produto: true,
   portoRetirada: SELECT_LOCAL, localCarregamento: SELECT_LOCAL, portoEntrega: SELECT_LOCAL,
+  ...CONTAGEM_QR,
 };
 
 // Valida um local do trajeto: existe, está ativo (ou já era o atual) e o tipo tem a função certa.

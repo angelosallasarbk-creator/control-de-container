@@ -1159,6 +1159,13 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   assert.equal(db.rastreioResponsavelId, u1.body.id);
   assert.ok(smsPara("+5511987654321").some((s) => s.texto.includes("RSTU5000005") && s.texto.includes("vinculado")));
   const t0 = db.rastreioUltimoEnvioEm.getTime();
+  // Listas marcam o container com QR vinculado (ícone na Home, Grid e Tabela).
+  const naLista = (await agentes.ADMIN.get("/api/containers")).body;
+  assert.equal(naLista.find((x) => x.id === c.body.id).qrVinculado, true);
+  assert.ok(naLista.some((x) => x.qrVinculado === false), "sem etiqueta = false");
+  const noPainel = (await agentes.ADMIN.get("/api/painel")).body.grupos.flatMap((g) => g.containers);
+  assert.equal(noPainel.find((x) => x.id === c.body.id).qrVinculado, true);
+  assert.equal((await agentes.ADMIN.get(`/api/containers/${c.body.id}`)).body.qrVinculado, true);
 
   // 2) Agendador: antes do intervalo nada; depois de 30 min um pedido — e só um, mesmo rodando 2x.
   const antes = smsPara("+5511987654321").length;

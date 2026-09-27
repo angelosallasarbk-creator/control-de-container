@@ -15,6 +15,7 @@ import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ListaContainersLateral from "../components/ListaContainersLateral.vue";
 import Icone from "../components/Icone.vue";
 import NovoContainer from "../components/NovoContainer.vue";
+import MarcaQr from "../components/MarcaQr.vue";
 import imagemContainer from "../assets/container.png";
 
 // Sem id (/containers no modelo Grid): em tela larga abre o primeiro da lista; em tela estreita
@@ -367,7 +368,7 @@ function reconhecido() {
             <img class="ilustracao" :src="imagemContainer" width="100" height="49" alt="" />
             <div class="identificacao">
               <div class="linha" style="gap: 10px; flex-wrap: wrap">
-                <h1 class="numero">{{ c.numero }}</h1>
+                <h1 class="numero"><MarcaQr v-if="c.qrVinculado" tamanho="0.85em" />{{ c.numero }}</h1>
                 <span class="chip azul chip-grande">{{ rotuloEtapa(c, c.status) }}</span>
                 <span class="chip chip-grande">{{ ROTULO_TIPO[c.tipo] }}</span>
               </div>
@@ -955,8 +956,8 @@ function reconhecido() {
 .cabecalho { display: flex; flex-direction: column; gap: 14px; padding-bottom: 0; }
 .cab-linha { display: flex; gap: 16px; align-items: flex-start; }
 .ilustracao { flex-shrink: 0; margin-top: 2px; width: 100px; height: auto; }
-.identificacao { flex: 1; min-width: 0; }
-.numero { font-size: 28px; font-weight: 800; letter-spacing: .01em; margin: 0; }
+.identificacao { flex: 1; min-width: min-content; }
+.numero { font-size: 28px; font-weight: 800; letter-spacing: .01em; margin: 0; display: flex; align-items: center; gap: .3em; white-space: nowrap; }
 .chip-grande { font-size: 13px; padding: 4px 12px; }
 .rota-cab { font-size: 17px; color: var(--texto-2); margin-top: 4px; }
 .acoes { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
