@@ -11,7 +11,7 @@ import Icone from "./Icone.vue";
 import MarcaQr from "./MarcaQr.vue";
 
 const props = defineProps({ selecionado: { type: [Number, String], default: null } });
-const emit = defineEmits(["carregada", "filtrada", "novo"]);
+const emit = defineEmits(["carregada", "filtrada", "novo", "upload"]);
 const router = useRouter();
 const auth = useAuthStore();
 const refItens = ref(null);
@@ -83,8 +83,8 @@ const visiveis = computed(() => {
     .map(({ c }) => c);
 });
 // Mudou o filtro do cabeçalho: a ficha decide se troca o container aberto.
-watch(() => [filtroContainers.regioes, filtroContainers.grupos], () => emit("filtrada", visiveis.value), { deep: true });
-const filtrando = computed(() => filtroContainers.regioes.length || filtroContainers.grupos.length);
+watch(() => [filtroContainers.regioes, filtroContainers.grupos, filtroContainers.semQr], () => emit("filtrada", visiveis.value), { deep: true });
+const filtrando = computed(() => filtroContainers.regioes.length || filtroContainers.grupos.length || filtroContainers.semQr);
 const abrir = (c) => router.push(`/containers/${c.id}`);
 </script>
 
@@ -92,7 +92,10 @@ const abrir = (c) => router.push(`/containers/${c.id}`);
   <aside class="lista-lateral card">
     <div class="linha-entre">
       <h2>Containers</h2>
-      <button v-if="auth.pode('containers.operar')" type="button" class="primario pequeno" @click="emit('novo')">+ Novo</button>
+      <span v-if="auth.pode('containers.operar')" class="linha" style="gap: 6px">
+        <button type="button" class="pequeno" title="Cadastrar vários containers por planilha" @click="emit('upload')"><Icone nome="upload" :tamanho="15" /> Upload</button>
+        <button type="button" class="primario pequeno" @click="emit('novo')">+ Novo</button>
+      </span>
     </div>
     <label class="busca">
       <Icone nome="busca" :tamanho="16" />
@@ -126,7 +129,7 @@ const abrir = (c) => router.push(`/containers/${c.id}`);
         <span v-if="rota(c)" class="rota">{{ rota(c) }}</span>
       </button>
       <div v-if="!carregando && !visiveis.length" class="vazio pequeno">
-        Nenhum container encontrado{{ filtrando ? " com os filtros de Região / Ponto de Carregamento" : "" }}.
+        Nenhum container encontrado{{ filtrando ? " com os filtros do cabeçalho" : "" }}.
       </div>
     </div>
   </aside>

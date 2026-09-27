@@ -1122,6 +1122,99 @@ test("reset de senha: log diz quando o envio é simulado e registra falha do Bre
   }
 });
 
+test("planilha de containers: modelo com listas, prévia sem gravar, confirma só as válidas", async () => {
+  const ExcelJS = (await import("exceljs")).default;
+  const { calcularDigitoVerificador } = await import("./lib/iso6346.js");
+  const num = (base) => `${base}${calcularDigitoVerificador(base)}`;
+  const binario = (res, cb) => { const partes = []; res.on("data", (c) => partes.push(c)); res.on("end", () => cb(null, Buffer.concat(partes))); };
+
+  const g = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Planilha SA", fabrica: "Fábrica Upload", metaEstadiaHoras: 20 });
+  assert.equal(g.status, 201);
+  assert.equal((await agentes.SUPERVISOR.post("/api/armadores").send({ nome: "Armador Planilha", freeTimeDias: 9, valorDiaria: 100 })).status, 201);
+  assert.equal((await agentes.SUPERVISOR.post("/api/produtos").send({ nome: "Resfriado Planilha", setpoint: 2, tempMin: 0, tempMax: 4, toleranciaMinutos: 30 })).status, 201);
+
+  // Modelo: só quem opera containers; listas suspensas com os cadastros ativos.
+  assert.equal((await agentes.VISUALIZACAO.get("/api/containers/modelo")).status, 403);
+  const modelo = await agentes.OPERADOR.get("/api/containers/modelo").buffer(true).parse(binario);
+  assert.equal(modelo.status, 200);
+  assert.match(modelo.headers["content-disposition"], /modelo-containers\.xlsx/);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(modelo.body);
+  const ws = wb.getWorksheet("Containers");
+  const cab = ws.getRow(1).values.slice(1);
+  assert.equal(cab[0], "Número do container *");
+  const listas = wb.getWorksheet("Listas");
+  const valoresDe = (nome) => listas.getColumn(listas.getRow(1).values.indexOf(nome)).values.slice(2);
+  assert.ok(valoresDe("grupos").includes("Planilha SA / Fábrica Upload"));
+  assert.ok(valoresDe("retirada").includes("Porto de Santos") && !valoresDe("retirada").includes("Armazém Cubatão"));
+  assert.ok(valoresDe("carregamento").includes("Armazém Cubatão"));
+
+  // Preenche: cabeçalho pelo nome (ordem livre não importa); várias situações.
+  const col = (titulo) => cab.findIndex((t) => t.replace(" *", "") === titulo) + 1;
+  const linha = (n, v) => { for (const [t, x] of Object.entries(v)) ws.getRow(n).getCell(col(t)).value = x; };
+  const ok1 = num("PLNU100001"), ok2 = num("PLNU100002"), ativo = num("PLNU100003");
+  const base = { Tipo: "40' Dry", "Ponto de Carregamento": "planilha sa / fabrica upload", Armador: "Armador Planilha" };
+  linha(2, { "Número do container": ok1, ...base, "Local de retirada": "Porto de Santos", "Local de carregamento": "Armazém Cubatão", "Coleta programada": "05/10/2026 08:30", Booking: "BK-PL-1" });
+  linha(3, { "Número do container": ok2, ...base, Tipo: "20' Reefer", Produto: "Resfriado Planilha", "Coleta programada": new Date(Date.UTC(2026, 9, 6, 14, 0)) });
+  linha(4, { "Número do container": ok1, ...base }); // repetido na planilha
+  linha(5, { "Número do container": num("PLNU100004"), ...base, Tipo: "40' Reefer" }); // reefer sem produto
+  linha(6, { "Número do container": "PLNU1000050", ...base }); // dígito errado
+  linha(7, { "Número do container": "PLNU1000060", ...base, "Dígito conferido": "sim" }); // dígito errado, confirmado
+  linha(8, { "Número do container": num("PLNU100007"), ...base, Armador: "Armador Inexistente" });
+  linha(9, { "Número do container": num("PLNU100008"), ...base, "Local de retirada": "Armazém Cubatão" }); // local da função errada
+  linha(10, { "Número do container": ativo, ...base });
+  linha(12, { "Número do container": num("PLNU100009"), ...base, "Coleta programada": "31/13/2026" }); // (linha 11 vazia é ignorada)
+  const arquivo = Buffer.from(await wb.xlsx.writeBuffer());
+  // Número já ativo no sistema.
+  const cad = { grupoId: g.body.id, armadorId: (await agentes.ADMIN.get("/api/armadores")).body.find((a) => a.nome === "Armador Planilha").id };
+  assert.equal((await agentes.ADMIN.post("/api/containers").send({ numero: ativo, tipo: "DRY_40", ...cad })).status, 201);
+
+  const enviar = (agente, conf) => agente.post(`/api/containers/importar${conf ? "?confirmar=1" : ""}`).set("Content-Type", "application/octet-stream").send(arquivo);
+  assert.equal((await enviar(agentes.VISUALIZACAO)).status, 403);
+  assert.equal((await agentes.OPERADOR.post("/api/containers/importar").set("Content-Type", "application/octet-stream").send(Buffer.from("não é excel"))).status, 400);
+
+  const antes = await prisma.container.count();
+  const previa = await enviar(agentes.OPERADOR);
+  assert.equal(previa.status, 200, JSON.stringify(previa.body));
+  assert.equal(await prisma.container.count(), antes, "prévia não grava");
+  assert.equal(previa.body.total, 10);
+  const erroDa = (n) => previa.body.linhas.find((l) => l.linha === n).erro;
+  assert.equal(erroDa(2), null);
+  assert.equal(erroDa(3), null);
+  assert.equal(erroDa(7), null, "dígito errado aceito com SIM");
+  assert.match(erroDa(4), /repetido na planilha \(também na linha 2\)/);
+  assert.match(erroDa(5), /reefer precisa de um produto/);
+  assert.match(erroDa(6), /Dígito conferido/);
+  assert.match(erroDa(8), /Armador: "Armador Inexistente" não encontrado/);
+  assert.match(erroDa(9), /não é um local de retirada/);
+  assert.match(erroDa(10), /Já está ativo/);
+  assert.match(erroDa(12), /Coleta programada: data inválida/);
+  assert.deepEqual([previa.body.validos, previa.body.comErro], [3, 7]);
+
+  const conf = await enviar(agentes.OPERADOR, true);
+  assert.equal(conf.status, 200);
+  assert.equal(conf.body.importados, 3);
+  assert.equal(await prisma.container.count(), antes + 3);
+  const c1 = await prisma.container.findFirst({ where: { numero: ok1 }, include: { portoRetirada: true, localCarregamento: true } });
+  assert.equal(c1.portoRetirada.nome, "Porto de Santos");
+  assert.equal(c1.localCarregamento.nome, "Armazém Cubatão");
+  assert.equal(c1.booking, "BK-PL-1");
+  assert.equal(c1.coletaProgramadaEm.toISOString(), "2026-10-05T11:30:00.000Z", "texto dd/mm/aaaa hh:mm = horário de Brasília");
+  assert.equal(c1.criadoPor, "operador@teste.local");
+  const c2 = await prisma.container.findFirst({ where: { numero: ok2 } });
+  assert.equal(c2.coletaProgramadaEm.toISOString(), "2026-10-06T17:00:00.000Z", "data do Excel = horário de Brasília");
+  assert.equal(Number(c2.tempMax), 4, "faixa copiada do produto");
+  const log = (await agentes.ADMIN.get("/api/logs?entidade=Container")).body;
+  assert.ok(log.some((l) => l.acao === "IMPORTAR" && l.descricao.includes("3 container(s) cadastrado(s), 7 linha(s) recusada(s)")));
+  // Reenviar o mesmo arquivo: nada duplica.
+  const de_novo = await enviar(agentes.OPERADOR, true);
+  assert.equal(de_novo.body.importados, 0);
+  assert.equal(await prisma.container.count(), antes + 3);
+
+  const ids = (await prisma.container.findMany({ where: { numero: { in: [ok1, ok2, "PLNU1000060", ativo] } }, select: { id: true } })).map((x) => x.id);
+  for (const id of ids) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste da planilha" });
+});
+
 test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de responsável, intervalos, link de posição", async () => {
   const { executarRastreamento } = await import("./lib/rastreamento.js");
   const { caixaDeSaidaSms } = await import("./lib/sms.js");

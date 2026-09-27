@@ -5,6 +5,8 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_STATUS, ROTULO_TIPO, FLUXO, rotuloEtapa, fmtHoras, fmtTemp, fmtMoeda, fmtDataHora, fmtFolga } from "../formato.js";
 import NovoContainer from "../components/NovoContainer.vue";
+import ImportarContainers from "../components/ImportarContainers.vue";
+import Icone from "../components/Icone.vue";
 import MarcaQr from "../components/MarcaQr.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
@@ -16,6 +18,7 @@ const lista = ref([]);
 const carregando = ref(false);
 const erro = ref(null);
 const novoAberto = ref(false);
+const uploadAberto = ref(false);
 const filtro = reactive({ situacao: "ativos", status: "", busca: "" });
 
 async function carregar() {
@@ -96,7 +99,10 @@ function textoDemurrage(d) {
           </select>
         </div>
       </div>
-      <button v-if="auth.pode('containers.operar')" class="primario" @click="novoAberto = true">+ Novo container</button>
+      <span v-if="auth.pode('containers.operar')" class="linha" style="gap: 8px">
+        <button type="button" title="Cadastrar vários containers por planilha" @click="uploadAberto = true"><Icone nome="upload" :tamanho="16" /> Upload</button>
+        <button class="primario" @click="novoAberto = true">+ Novo container</button>
+      </span>
     </div>
   </div>
 
@@ -156,4 +162,5 @@ function textoDemurrage(d) {
   </div>
 
   <NovoContainer v-if="novoAberto" @fechar="novoAberto = false" @criado="criado" />
+  <ImportarContainers v-if="uploadAberto" @fechar="uploadAberto = false" @importados="carregar" />
 </template>

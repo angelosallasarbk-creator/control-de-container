@@ -15,6 +15,7 @@ import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ListaContainersLateral from "../components/ListaContainersLateral.vue";
 import Icone from "../components/Icone.vue";
 import NovoContainer from "../components/NovoContainer.vue";
+import ImportarContainers from "../components/ImportarContainers.vue";
 import MarcaQr from "../components/MarcaQr.vue";
 import imagemContainer from "../assets/container.png";
 
@@ -32,6 +33,7 @@ function aoFiltrarLista(lista) {
   router.replace(`/containers/${lista[0].id}`);
 }
 const novoAberto = ref(false);
+const uploadAberto = ref(false);
 function criado(x) {
   novoAberto.value = false;
   refLista.value?.carregar();
@@ -351,7 +353,7 @@ function reconhecido() {
 
 <template>
   <div class="mestre-detalhe">
-    <ListaContainersLateral ref="refLista" :selecionado="id" :class="{ 'so-largo': id }" @carregada="aoCarregarLista" @filtrada="aoFiltrarLista" @novo="novoAberto = true" />
+    <ListaContainersLateral ref="refLista" :selecionado="id" :class="{ 'so-largo': id }" @carregada="aoCarregarLista" @filtrada="aoFiltrarLista" @novo="novoAberto = true" @upload="uploadAberto = true" />
 
     <section v-if="!id" class="detalhe so-largo">
       <div class="card vazio">Selecione um container na lista.</div>
@@ -846,6 +848,7 @@ function reconhecido() {
   </div>
 
   <NovoContainer v-if="novoAberto" @fechar="novoAberto = false" @criado="criado" />
+  <ImportarContainers v-if="uploadAberto" @fechar="uploadAberto = false" @importados="refLista?.carregar(); atualizarAlertas()" />
 
   <!-- Modais -->
   <template v-if="c">

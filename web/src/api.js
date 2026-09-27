@@ -47,6 +47,25 @@ export const api = {
   cancelar: (id, motivo) => request(`/containers/${id}/cancelar`, { method: "POST", body: { motivo } }),
   registrarLeitura: (id, dados) => request(`/containers/${id}/leituras`, { method: "POST", body: dados }),
   rastreamento: (id) => request(`/containers/${id}/rastreamento`),
+  // Cadastro em lote: modelo .xlsx (download) e upload (prévia; confirmar = grava as válidas).
+  baixarModeloContainers: async () => {
+    const res = await fetch(`${BASE}/containers/modelo`, { credentials: "include" });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).erro || `Erro ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: "modelo-containers.xlsx" });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  },
+  importarContainers: async (arquivo, confirmar = false) => {
+    const res = await fetch(`${BASE}/containers/importar${confirmar ? "?confirmar=1" : ""}`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/octet-stream" }, body: arquivo,
+    });
+    const corpo = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(corpo.erro || (res.status === 413 ? "Arquivo grande demais (máximo 5 MB)." : `Erro ${res.status}`));
+    return corpo;
+  },
   // Link do SMS de rastreamento (público, sem login).
   conferirPedidoPosicao: (codigo) => request(`/posicao/${encodeURIComponent(codigo)}`),
   enviarPosicao: (codigo, dados) => request(`/posicao/${encodeURIComponent(codigo)}`, { method: "POST", body: dados }),

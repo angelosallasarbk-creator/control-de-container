@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao, tem } from "../lib/permissoes.js";
@@ -13,6 +13,7 @@ import { montarContextos } from "../lib/previsao.js";
 import { registrarLeitura } from "../lib/leituras.js";
 import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
 import { resumoRastreamento } from "../lib/rastreamento.js";
+import { gerarModelo, lerPlanilha } from "../lib/importacaoContainers.js";
 import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
 
 export const containersRouter = Router();
@@ -157,6 +158,86 @@ containersRouter.get("/", asyncHandler(async (req, res) => {
   const contextos = await montarContextos(containers, config);
   res.json(containers.map((c) => montarContainer(c, [...c.leituras].reverse(), agora, config, contextos.get(c.id))));
 }));
+
+// ---------- Cadastro em lote por planilha (Baixar modelo / Upload) ----------
+
+containersRouter.get("/modelo", requirePermissao("containers.operar"), asyncHandler(async (_req, res) => {
+  const arquivo = await gerarModelo();
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", 'attachment; filename="modelo-containers.xlsx"');
+  res.send(Buffer.from(arquivo));
+}));
+
+// Confere cada linha com a MESMA validação do cadastro na tela (sem gravar).
+async function conferirLinhas(linhas, email) {
+  const ativos = new Set(
+    (await prisma.container.findMany({
+      where: { numero: { in: linhas.map((l) => l.numero).filter(Boolean) }, status: { notIn: STATUS_ENCERRADOS } },
+      select: { numero: true },
+    })).map((c) => c.numero)
+  );
+  for (const l of linhas) {
+    if (l.erro) continue;
+    try {
+      if (ativos.has(l.numero)) throw erroHttp(409, "Já está ativo no sistema (não é sobrescrito).");
+      l.dados = await validarNovoContainer(l.corpo, email);
+    } catch (err) {
+      if (!err.status) throw err;
+      l.erro = err.extras?.codigo === "DIGITO_INVALIDO"
+        ? "O dígito verificador não confere. Se o número estiver certo, escreva SIM na coluna \"Dígito conferido\"."
+        : err.message;
+    }
+  }
+}
+
+// Corpo = o arquivo .xlsx (application/octet-stream). Sem ?confirmar=1 só devolve a prévia;
+// com ?confirmar=1 grava as linhas válidas (cada container na sua transação) e ignora as com erro.
+containersRouter.post(
+  "/importar",
+  requirePermissao("containers.operar"),
+  express.raw({ type: () => true, limit: "5mb" }),
+  asyncHandler(async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw erroHttp(400, "Envie o arquivo da planilha (.xlsx).");
+    const email = req.usuario.email;
+    const confirmar = req.query.confirmar === "1";
+    const { linhas } = await lerPlanilha(req.body);
+    await conferirLinhas(linhas, email);
+
+    const criados = [];
+    if (confirmar) {
+      for (const l of linhas.filter((x) => !x.erro)) {
+        try {
+          const c = await prisma.$transaction((tx) => gravarNovoContainer(tx, l.dados, email, `Container ${l.numero} cadastrado por planilha (linha ${l.linha})`));
+          l.importado = true;
+          criados.push(c.id);
+        } catch (err) {
+          if (!err.status) throw err;
+          l.erro = err.message; // ex.: cadastrado por outra pessoa entre a prévia e a confirmação
+        }
+      }
+      for (const id of criados) {
+        await prepararRota(id).catch((err) => console.error(`Importação: rota do container ${id}:`, err.message));
+        await sincronizarAlertas(id).catch((err) => console.error(`Importação: alertas do container ${id}:`, err.message));
+      }
+      const comErro = linhas.filter((x) => x.erro).length;
+      await registrarLog({
+        usuarioEmail: email, acao: "IMPORTAR", entidade: "Container",
+        descricao: `Cadastro por planilha: ${criados.length} container(s) cadastrado(s)${comErro ? `, ${comErro} linha(s) recusada(s)` : ""}`,
+      });
+    }
+    res.json({
+      confirmado: confirmar,
+      total: linhas.length,
+      validos: linhas.filter((l) => !l.erro).length,
+      comErro: linhas.filter((l) => l.erro).length,
+      importados: criados.length,
+      linhas: linhas.map((l) => ({
+        linha: l.linha, numero: l.numero, erro: l.erro ?? null, importado: Boolean(l.importado),
+        tipo: l.dados?.tipo ?? l.corpo?.tipo ?? null,
+      })),
+    });
+  })
+);
 
 containersRouter.get("/:id", asyncHandler(async (req, res) => {
   res.json(await detalhe(validarId(req.params.id)));
