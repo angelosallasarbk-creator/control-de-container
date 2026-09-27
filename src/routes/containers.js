@@ -61,7 +61,15 @@ const FUNCAO_DO_CAMPO = {
 
 // Nome da etapa conforme o tipo do local (ex.: "Coleta ferroviária"); sem local, o genérico.
 const nomeEtapa = (c, status) => rotulosDasEtapas(c)[status] ?? ROTULO_STATUS[status];
-export async function validarLocais(corpo, atual = {}) {
+// Consulta de cadastro com cache opcional: na importação em lote cada cadastro é lido uma vez só.
+function buscarCadastro(cache, modelo, id, args = {}) {
+  if (!cache) return prisma[modelo].findUnique({ where: { id }, ...args });
+  const chave = `${modelo}:${id}`;
+  if (!cache.has(chave)) cache.set(chave, prisma[modelo].findUnique({ where: { id }, ...args }));
+  return cache.get(chave);
+}
+
+export async function validarLocais(corpo, atual = {}, cache = null) {
   const dados = {};
   for (const [campo, { funcao, rotulo, exemplo }] of Object.entries(FUNCAO_DO_CAMPO)) {
     if (!(campo in corpo)) continue;
@@ -70,7 +78,7 @@ export async function validarLocais(corpo, atual = {}) {
       continue;
     }
     const localId = validarId(corpo[campo], rotulo);
-    const local = await prisma.local.findUnique({ where: { id: localId }, include: { tipo: true } });
+    const local = await buscarCadastro(cache, "local", localId, { include: { tipo: true } });
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
     if (local.tipo.funcao !== funcao) throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome}; escolha um local de ${ROTULO_FUNCAO[funcao].toLowerCase()} (ex.: ${exemplo}).`);
     if (!local.ativo && atual[campo] !== localId) throw erroHttp(400, `${rotulo}: o local "${local.nome}" está inativo.`);
@@ -170,6 +178,7 @@ containersRouter.get("/modelo", requirePermissao("containers.operar"), asyncHand
 
 // Confere cada linha com a MESMA validação do cadastro na tela (sem gravar).
 async function conferirLinhas(linhas, email) {
+  const cache = new Map();
   const ativos = new Set(
     (await prisma.container.findMany({
       where: { numero: { in: linhas.map((l) => l.numero).filter(Boolean) }, status: { notIn: STATUS_ENCERRADOS } },
@@ -180,7 +189,7 @@ async function conferirLinhas(linhas, email) {
     if (l.erro) continue;
     try {
       if (ativos.has(l.numero)) throw erroHttp(409, "Já está ativo no sistema (não é sobrescrito).");
-      l.dados = await validarNovoContainer(l.corpo, email);
+      l.dados = await validarNovoContainer(l.corpo, email, { cache });
     } catch (err) {
       if (!err.status) throw err;
       l.erro = err.extras?.codigo === "DIGITO_INVALIDO"
@@ -190,8 +199,10 @@ async function conferirLinhas(linhas, email) {
   }
 }
 
-// Corpo = o arquivo .xlsx (application/octet-stream). Sem ?confirmar=1 só devolve a prévia;
-// com ?confirmar=1 grava as linhas válidas (cada container na sua transação) e ignora as com erro.
+// Corpo = o arquivo .xlsx (application/octet-stream) — UMA requisição por etapa. Sem ?confirmar=1
+// só devolve a prévia; com ?confirmar=1 grava as linhas válidas de uma vez (uma transação, inserção
+// em lote) e ignora as com erro. Cadastros são lidos uma vez só (cache) e as distâncias do
+// trajeto são calculadas para o lote inteiro (pares repetidos uma vez só).
 containersRouter.post(
   "/importar",
   requirePermissao("containers.operar"),
@@ -205,19 +216,25 @@ containersRouter.post(
 
     const criados = [];
     if (confirmar) {
-      for (const l of linhas.filter((x) => !x.erro)) {
-        try {
-          const c = await prisma.$transaction((tx) => gravarNovoContainer(tx, l.dados, email, `Container ${l.numero} cadastrado por planilha (linha ${l.linha})`));
-          l.importado = true;
-          criados.push(c.id);
-        } catch (err) {
-          if (!err.status) throw err;
-          l.erro = err.message; // ex.: cadastrado por outra pessoa entre a prévia e a confirmação
-        }
+      const validas = linhas.filter((x) => !x.erro);
+      const linhaDe = new Map(validas.map((l) => [l.numero, l]));
+      const r = validas.length
+        ? await prisma.$transaction(
+          (tx) => gravarContainersEmLote(tx, validas.map((l) => l.dados), email, (c) => `Container ${c.numero} cadastrado por planilha (linha ${linhaDe.get(c.numero).linha})`),
+          { timeout: 120_000, maxWait: 10_000 }
+        )
+        : { criados: [], recusados: [] };
+      for (const c of r.criados) {
+        linhaDe.get(c.numero).importado = true;
+        criados.push(c.id);
       }
+      // Cadastrado por outra pessoa entre a conferência e a confirmação.
+      for (const numero of r.recusados) linhaDe.get(numero).erro = "Já está ativo no sistema (cadastrado enquanto a planilha era conferida).";
+      // Distâncias do lote de uma vez (pares repetidos só uma vez) e alertas com a mesma configuração.
+      await garantirDistancias(r.criados.flatMap(paresDoContainer)).catch((err) => console.error("Importação: distâncias do lote:", err.message));
+      const config = await lerConfiguracao();
       for (const id of criados) {
-        await prepararRota(id).catch((err) => console.error(`Importação: rota do container ${id}:`, err.message));
-        await sincronizarAlertas(id).catch((err) => console.error(`Importação: alertas do container ${id}:`, err.message));
+        await sincronizarAlertas(id, { config }).catch((err) => console.error(`Importação: alertas do container ${id}:`, err.message));
       }
       const comErro = linhas.filter((x) => x.erro).length;
       await registrarLog({
@@ -260,7 +277,7 @@ containersRouter.get("/:id/rastreamento", asyncHandler(async (req, res) => {
 
 // Valida um container novo (cadastro na tela ou pelo QR do transportador) e devolve os dados
 // prontos para gravar, com os prazos copiados dos cadastros.
-export async function validarNovoContainer(b, usuarioEmail) {
+export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {}) {
   const { numero, formatoValido, digitoValido } = validarNumeroContainer(b.numero);
   if (!formatoValido) {
     throw erroHttp(400, "Número do container inválido. Formato esperado: 4 letras + 7 dígitos (ex.: MSKU1234565).");
@@ -275,9 +292,9 @@ export async function validarNovoContainer(b, usuarioEmail) {
   const produtoId = b.produtoId ? validarId(b.produtoId, "Produto") : null;
 
   const [grupo, armador, produto] = await Promise.all([
-    prisma.grupoOperacao.findUnique({ where: { id: grupoId } }),
-    prisma.armador.findUnique({ where: { id: armadorId } }),
-    produtoId ? prisma.produto.findUnique({ where: { id: produtoId } }) : null,
+    buscarCadastro(cache, "grupoOperacao", grupoId),
+    buscarCadastro(cache, "armador", armadorId),
+    produtoId ? buscarCadastro(cache, "produto", produtoId) : null,
   ]);
   if (!grupo?.ativo) throw erroHttp(400, "Ponto de Carregamento inexistente ou inativo.");
   if (!armador?.ativo) throw erroHttp(400, "Armador inexistente ou inativo.");
@@ -287,7 +304,7 @@ export async function validarNovoContainer(b, usuarioEmail) {
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta");
   if (coletadoEm && coletadoEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "A coleta não pode estar no futuro.");
   // Local de carregamento não informado → o local padrão do Ponto de Carregamento.
-  const locais = await validarLocais({ localCarregamentoId: grupo.localId, ...b });
+  const locais = await validarLocais({ localCarregamentoId: grupo.localId, ...b }, {}, cache);
 
   const dados = {
     numero,
@@ -343,6 +360,32 @@ export async function gravarNovoContainer(tx, dados, usuarioEmail, descricao = n
     tx
   );
   return c;
+}
+
+/**
+ * Grava vários containers novos de uma vez (importação por planilha), numa transação só:
+ * 1 consulta de duplicados + 1 inserção dos containers + 1 dos eventos + 1 do log.
+ * Números que ficaram ativos entre a conferência e a confirmação são devolvidos em `recusados`.
+ */
+export async function gravarContainersEmLote(tx, lista, usuarioEmail, descricao) {
+  const ativos = new Set((await tx.container.findMany({
+    where: { numero: { in: lista.map((d) => d.numero) }, status: { notIn: STATUS_ENCERRADOS } }, select: { numero: true },
+  })).map((c) => c.numero));
+  const livres = lista.filter((d) => !ativos.has(d.numero));
+  if (!livres.length) return { criados: [], recusados: [...ativos] };
+  const criados = await tx.container.createManyAndReturn({ data: livres });
+  await tx.eventoContainer.createMany({
+    data: criados.flatMap((c) => [
+      { containerId: c.id, statusDe: null, statusPara: "PROGRAMADO", ocorridoEm: c.criadoEm, usuarioEmail },
+      ...(c.coletadoEm ? [{ containerId: c.id, statusDe: "PROGRAMADO", statusPara: "COLETADO", ocorridoEm: c.coletadoEm, usuarioEmail }] : []),
+    ]),
+  });
+  await tx.logAuditoria.createMany({
+    data: criados.map((c) => ({
+      usuarioEmail, acao: "CRIAR", entidade: "Container", entidadeId: String(c.id), descricao: descricao(c), dadosDepois: JSON.stringify(c),
+    })),
+  });
+  return { criados, recusados: [...ativos] };
 }
 
 containersRouter.post("/", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { api, qrMotorista } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal } from "../formato.js";
@@ -30,7 +30,9 @@ const sucesso = ref(null); // { temperatura, resultado, numero }
 const confirmarSubstituicao = ref(null); // código da etiqueta anterior
 const f = reactive({ numero: "", temperatura: "", lidaEm: paraInputLocal() });
 // Transportador: onde retirou (Tipo > Local) e, se o container não existir, os dados do cadastro.
-const col = reactive({ tipoId: "", localId: "", tipoContainer: "", grupoId: "", armadorId: "", produtoId: "" });
+const col = reactive({ tipoId: "", localId: "", carregamentoId: "", entregaId: "", tipoContainer: "", grupoId: "", armadorId: "", produtoId: "" });
+// Trajeto (retirada, carregamento, entrega) preenchido com a programação: quem lê só confere.
+const trajetoPreenchido = ref(false);
 const opcoes = ref(null);
 const precisaCadastro = ref(false);
 // Portaria: entrada ou saída do ponto de carregamento.
@@ -48,6 +50,7 @@ async function carregar() {
     if (op) opcoes.value = op;
     info.value = r;
     erroFatal.value = null;
+    if (r.container?.trajeto && r.container.status === "PROGRAMADO") await aplicarTrajeto(r.container.trajeto);
   } catch (e) {
     if (tratarErroMotorista(e)) return;
     erroFatal.value = e.message;
@@ -68,6 +71,34 @@ const modoColeta = computed(
 const locaisDoTipo = computed(() => (opcoes.value?.locais ?? []).filter((l) => l.tipoId === col.tipoId));
 watch(() => col.tipoId, () => {
   col.localId = locaisDoTipo.value.length === 1 ? locaisDoTipo.value[0].id : "";
+});
+
+// Preenche retirada (tipo + local), carregamento e entrega com a programação do container.
+async function aplicarTrajeto(t) {
+  if (!t) return;
+  const retirada = (opcoes.value?.locais ?? []).find((l) => l.id === t.portoRetiradaId);
+  if (retirada) {
+    col.tipoId = retirada.tipoId;
+    await nextTick(); // deixa o "trocou o tipo" limpar o local antes de preencher
+    col.localId = retirada.id;
+  }
+  col.carregamentoId = t.localCarregamentoId ?? "";
+  col.entregaId = t.portoEntregaId ?? "";
+  trajetoPreenchido.value = Boolean(t.portoRetiradaId || t.localCarregamentoId || t.portoEntregaId);
+}
+// Etiqueta nova: número digitado e válido → busca a programação (se o container já estiver cadastrado).
+let buscaProgramacao = null;
+watch(() => conferencia.value?.formatoValido && conferencia.value.numero, (numero) => {
+  clearTimeout(buscaProgramacao);
+  if (!numero || !modoColeta.value || estado.value !== "LIVRE") return;
+  buscaProgramacao = setTimeout(async () => {
+    try {
+      const p = await q.qrProgramacao(numero);
+      if (p.cadastrado && p.numero === conferencia.value?.numero) await aplicarTrajeto(p.trajeto);
+    } catch {
+      // sem a programação, a pessoa preenche à mão
+    }
+  }, 400);
 });
 const novoReefer = computed(() => col.tipoContainer.startsWith("REEFER"));
 // Temperatura: container conhecido reefer, cadastro novo reefer, ou etiqueta nova (ainda não se sabe).
@@ -143,6 +174,8 @@ async function coletar({ substituir = false, confirmarDigito = false } = {}) {
     const dados = {
       numero: f.numero,
       portoRetiradaId: col.localId,
+      localCarregamentoId: col.carregamentoId || undefined,
+      portoEntregaId: col.entregaId || undefined,
       coletadoEm: horarioDaLeitura(),
       temperatura: f.temperatura === "" ? undefined : String(f.temperatura).replace(",", "."),
       substituir,
@@ -423,6 +456,23 @@ function novaLeitura() {
               <option v-for="l in locaisDoTipo" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
             <span v-if="!locaisDoTipo.length" class="dica txt-ATENCAO">Nenhum local deste tipo cadastrado. Avise a operação.</span>
+          </div>
+          <div class="campo">
+            <label for="local-carregamento">Local de carregamento</label>
+            <select id="local-carregamento" v-model="col.carregamentoId" class="grande-campo">
+              <option value="">— {{ precisaCadastro ? "o do Ponto de Carregamento" : "não informado" }} —</option>
+              <option v-for="l in opcoes?.locaisCarregamento ?? []" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+            </select>
+          </div>
+          <div class="campo">
+            <label for="local-entrega">Local de entrega</label>
+            <select id="local-entrega" v-model="col.entregaId" class="grande-campo">
+              <option value="">— não informado —</option>
+              <option v-for="l in opcoes?.locais ?? []" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+            </select>
+          </div>
+          <div v-if="trajetoPreenchido" class="aviso pequeno trajeto-aviso">
+            ✓ Retirada, carregamento e entrega vieram da programação do container. Confira e altere só o que estiver diferente.
           </div>
 
           <!-- Container ainda não cadastrado: dados mínimos -->

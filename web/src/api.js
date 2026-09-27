@@ -26,6 +26,8 @@ const rotasQr = (prefixo) => ({
   qrLeitura: (token, dados) => request(`${prefixo}/${token}/leituras`, { method: "POST", body: dados }),
   // Transportador/motorista: coleta pelo QR (Tipo > Local de retirada; cadastra o container se preciso).
   qrOpcoesColeta: () => request(`${prefixo}/opcoes/coleta`),
+  // Programação (trajeto) do container pelo número — preenche a coleta em etiqueta nova.
+  qrProgramacao: (numero) => request(`${prefixo}/opcoes/container/${encodeURIComponent(numero)}`),
   qrColeta: (token, dados) => request(`${prefixo}/${token}/coleta`, { method: "POST", body: dados }),
   // Portaria: entrada/saída no ponto de carregamento.
   qrPortaria: (token, dados) => request(`${prefixo}/${token}/portaria`, { method: "POST", body: dados }),

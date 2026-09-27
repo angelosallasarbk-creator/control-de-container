@@ -19,11 +19,11 @@ export const COLUNAS = [
   { chave: "tipo", titulo: "Tipo", obrigatorio: true, largura: 13, lista: "tipos", ajuda: "20' Dry, 40' Dry, 40' HC, 20' Reefer ou 40' Reefer." },
   { chave: "grupo", titulo: "Ponto de Carregamento", obrigatorio: true, largura: 38, lista: "grupos", ajuda: "Exatamente como no cadastro: Cliente / Fábrica." },
   { chave: "armador", titulo: "Armador", obrigatorio: true, largura: 22, lista: "armadores" },
-  { chave: "produto", titulo: "Produto", largura: 24, lista: "produtos", ajuda: "Obrigatório para reefer (define a faixa de temperatura)." },
-  { chave: "portoRetirada", titulo: "Local de retirada", largura: 30, lista: "retirada", ajuda: "Porto ou terminal de retirada do vazio." },
-  { chave: "localCarregamento", titulo: "Local de carregamento", largura: 30, lista: "carregamento", ajuda: "Vazio = o local padrão do Ponto de Carregamento." },
-  { chave: "portoEntrega", titulo: "Local de entrega", largura: 30, lista: "retirada", ajuda: "Porto ou terminal de entrega do cheio." },
-  { chave: "coletaProgramadaEm", titulo: "Coleta programada", largura: 18, data: true, ajuda: "Data/hora (dd/mm/aaaa hh:mm), horário de Brasília." },
+  { chave: "produto", titulo: "Produto", obrigatorio: true, largura: 24, lista: "produtos", ajuda: "Produto da carga (no reefer define a faixa de temperatura)." },
+  { chave: "portoRetirada", titulo: "Local de retirada", obrigatorio: true, largura: 30, lista: "retirada", ajuda: "Porto ou terminal de retirada do vazio." },
+  { chave: "localCarregamento", titulo: "Local de carregamento", obrigatorio: true, largura: 30, lista: "carregamento", ajuda: "Fábrica ou armazém onde o container será ovado." },
+  { chave: "portoEntrega", titulo: "Local de entrega", obrigatorio: true, largura: 30, lista: "retirada", ajuda: "Porto ou terminal de entrega do cheio." },
+  { chave: "coletaProgramadaEm", titulo: "Coleta programada", obrigatorio: true, largura: 18, data: true, ajuda: "Data/hora (dd/mm/aaaa hh:mm), horário de Brasília." },
   { chave: "booking", titulo: "Booking", largura: 16 },
   { chave: "navio", titulo: "Navio", largura: 20 },
   { chave: "deadline", titulo: "Deadline do navio", largura: 18, data: true, ajuda: "Data/hora do cut-off (dd/mm/aaaa hh:mm)." },
@@ -203,7 +203,9 @@ export async function lerPlanilha(buffer) {
     if (linhas.length >= MAX_LINHAS) throw erroHttp(400, `A planilha passa de ${MAX_LINHAS} containers. Divida em arquivos menores.`);
     const numero = v.numero === null ? null : String(v.numero).toUpperCase().replace(/\s/g, "");
     try {
-      if (!numero) throw new Error("Número do container em branco.");
+      // Colunas obrigatórias (as com * no modelo) preenchidas.
+      const emBranco = COLUNAS.filter((c) => c.obrigatorio && v[c.chave] === null).map((c) => c.titulo);
+      if (emBranco.length) throw new Error(`Obrigatório(s) em branco: ${emBranco.join(", ")}.`);
       const repetida = vistos.get(numero);
       if (repetida) throw new Error(`Número repetido na planilha (também na linha ${repetida}).`);
       vistos.set(numero, n);
