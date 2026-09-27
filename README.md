@@ -232,6 +232,19 @@ São 33 testes: regras de prazo/temperatura (puras) e API completa contra o banc
 3. Primeiro admin: preencha `ADMIN_INICIAL_EMAIL`, `ADMIN_INICIAL_NOME` e `ADMIN_INICIAL_SENHA` no Render. Na subida, se o banco não tiver nenhum usuário, o admin é criado (ver log "Admin inicial criado"). Depois do primeiro login, troque a senha em *Usuários* e **remova as três variáveis**. Alternativa com shell: `npm run criar-admin -- email@empresa.com "Nome" "senha-forte"`.
 4. **Não rode `npm run seed` em produção.**
 
+## Versões e rollback
+
+- **Produção = branch `main`** (o Render publica a cada push nela). Cada versão publicada ganha uma **tag** (`v1.0.0`, `v1.1.0`…); o histórico está no `CHANGELOG.md`.
+- **Versão nova = branch própria** (ex.: `versao-1.1`). Pode ser enviada ao GitHub sem afetar a produção; só vai ao ar quando for juntada na `main` (com aprovação), e aí recebe a tag.
+- **Qual versão está no ar:** rodapé do menu lateral ou `GET /api/saude` (campo `versao`).
+- **Migrações de banco só com acréscimos** (colunas/tabelas novas, nada apagado ou renomeado): assim a versão anterior continua funcionando com o banco já migrado, e voltar o código não exige mexer no banco.
+
+**Rollback (voltar para a versão anterior):**
+1. **Mais rápido:** no Render → serviço → *Events/Deploys* → no deploy da versão anterior, **Rollback**. Volta o código em segundos, sem build. Atenção: o próximo push na `main` publica de novo o que estiver lá — faça o passo 2 em seguida.
+2. **Definitivo (Git):** criar na `main` um commit que desfaz a versão (`git revert` do merge, ex.: `git revert -m 1 <merge>`) e dar push. Não usar `git push --force`.
+3. **Banco:** normalmente nada a fazer (migração só com acréscimos). Antes de publicar qualquer migração que altere/remova dados, fazer **backup** do banco (pg_dump) e planejar o retorno.
+4. Conferir `/api/saude` → `versao` e testar o login.
+
 ## Operação e solução de problemas
 
 - **Está funcionando?** `GET /api/saude` → `{"ok":true}`.

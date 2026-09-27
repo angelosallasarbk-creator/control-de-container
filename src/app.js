@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import express from "express";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
@@ -18,6 +19,8 @@ import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
 
+const VERSAO = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
 // App separado do listen (server.js) para os testes de API usarem o mesmo app sem abrir porta.
 export function criarApp() {
   const app = express();
@@ -29,7 +32,8 @@ export function criarApp() {
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
 
-  app.get("/api/saude", (_req, res) => res.json({ ok: true }));
+  // versao: qual versão está no ar (conferência depois de publicar ou de um rollback).
+  app.get("/api/saude", (_req, res) => res.json({ ok: true, versao: VERSAO }));
   app.use("/api/auth", authRouter);
   // Porta automática de temperatura: autenticada por token próprio, não pelo login.
   app.use("/api/integracao", integracaoPublicaRouter);

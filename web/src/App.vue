@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth.js";
+// Versão do package.json (injetada pelo Vite no build) — rodapé do menu.
+const VERSAO = __VERSAO__;
 import { api } from "./api.js";
 import { ROTULO_ALERTA, ROTULO_PERFIL } from "./formato.js";
 import Login from "./pages/Login.vue";
@@ -298,6 +300,7 @@ const criticos = computed(() => resumo.value?.criticosNaoReconhecidos ?? []);
         <div class="negrito" style="color: #fff">{{ auth.usuario.nome }}</div>
         <div>{{ ROTULO_PERFIL[auth.usuario.perfil] }}</div>
         <button class="pequeno" @click="auth.logout()">Sair</button>
+        <div class="versao" title="Versão do sistema">v{{ VERSAO }}</div>
       </div>
     </aside>
 
