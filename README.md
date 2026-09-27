@@ -46,7 +46,7 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 
 Motorista **não é usuário do sistema** — com milhares de motoristas, criar e manter um login para cada um não é viável.
 
-- **Identidade = celular verificado.** Ao ler o QR sem estar logado, o motorista informa o celular e recebe um **código de 6 dígitos por SMS** (vale **15 min**; pedir outro encerra o anterior; até 5 tentativas; 1 pedido/min e 5/h por celular, limite por aparelho e teto global de 300 códigos/hora — `MOTORISTA_MAX_CODIGOS_HORA`). No banco fica só o HMAC do código.
+- **Identidade = celular verificado.** Ao ler o QR sem estar logado, o motorista informa o celular e recebe um **código de 6 dígitos por SMS** (vale **15 min**; pedir outro encerra o anterior; até 5 tentativas; 1 pedido/min e 5/h por celular, limite por aparelho e teto global de 500 códigos/hora — `MOTORISTA_MAX_CODIGOS_HORA`, ajustável no Render). No banco fica só o HMAC do código.
 - **Primeiro acesso:** nome, transportadora (lista), placa, CPF opcional (validado) e **aceite do termo de uso dos dados (LGPD)**. Cadastro livre — a transportadora bloqueia quem não for dela.
 - **Sessão no celular por 60 dias** (cookie httpOnly `cc_motorista`, só para `/api/motorista`; só o hash do token no banco). Nas próximas leituras o QR abre direto.
 - **O que ele faz:** as mesmas telas do QR do perfil Transportador (coleta com local de retirada, cadastro do container se não existir, vínculo, temperatura) — rotas `/api/motorista/qr/*`, as mesmas do QR da equipe. Nos registros aparece como "Nome (motorista · Transportadora)". Portaria e o resto do sistema ficam fechados.

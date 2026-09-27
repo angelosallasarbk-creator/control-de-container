@@ -15,7 +15,7 @@ import { enviarSms, normalizarCelular } from "./sms.js";
 export const VALIDADE_CODIGO_MIN = 15;
 export const MAX_TENTATIVAS = 5;
 export const SESSAO_DIAS = 60;
-export const MAX_CODIGOS_POR_HORA = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA) || 300;
+export const MAX_CODIGOS_POR_HORA = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA) || 500;
 export const COOKIE_MOTORISTA = "cc_motorista";
 const MIN = 60 * 1000;
 const COMPROVANTE_MIN = 30;
@@ -48,7 +48,7 @@ export async function pedirCodigo({ celular: bruto, ip, agora = new Date() }) {
   });
   if (recentes[0] && agora - recentes[0].criadoEm < MIN) throw erroHttp(429, "Aguarde 1 minuto para pedir outro código.");
   if (recentes.length >= 5) throw erroHttp(429, "Muitos códigos pedidos para este celular. Tente de novo em 1 hora.");
-  // Teto global (proteção contra robô disparando SMS para muitos números = custo): 300 códigos/hora.
+  // Teto global (proteção contra robô disparando SMS para muitos números = custo): 500 códigos/hora (ajustável).
   const ultimaHora = await prisma.codigoAcessoMotorista.count({ where: { criadoEm: { gte: new Date(agora.getTime() - 60 * MIN) } } });
   if (ultimaHora >= MAX_CODIGOS_POR_HORA) {
     console.error(`Acesso do motorista: teto de ${MAX_CODIGOS_POR_HORA} códigos/hora atingido — possível abuso.`);

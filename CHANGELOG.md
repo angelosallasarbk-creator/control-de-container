@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 1.1.0 — em desenvolvimento (branch `versao-1.1`)
+## 1.1.0 — 27/09/2026 (tag `v1.1.0`)
 
 - **Fase 1 — Pedidos de posição por trechos críticos (pronta):** o padrão passa a pedir posição só
   quando a previsão estoura, há risco de prazo (alertas abertos), o container está parado (2 últimas
@@ -16,7 +16,7 @@ Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno e
 
 - **Fase 2 — Transportadoras e motoristas sem usuário (pronta):** cadastro de Transportadoras;
   motorista entra pelo QR com o celular + código SMS de 6 dígitos (15 min, pedido novo encerra o
-  anterior, 5 tentativas, limites por celular/aparelho/global), primeiro acesso com termo LGPD,
+  anterior, 5 tentativas, limites por celular/aparelho e teto global de 500 códigos/hora), primeiro acesso com termo LGPD,
   sessão de 60 dias no celular; registra pelo QR como Transportador; rastreamento aponta para o
   motorista; perfil **Gestor da transportadora** com a tela Motoristas (pré-cadastro, planilha,
   bloquear/desbloquear, encerrar acessos); retenção automática de posições (90 dias). Migração
