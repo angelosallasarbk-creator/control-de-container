@@ -82,7 +82,7 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
           <td>
             <template v-if="t.km !== null">{{ fmtKm(t.km) }}</template>
             <template v-else-if="t.fonte">{{ fmtHoras(t.horas) }}</template>
-            <template v-else>{{ fmtHoras(t.horas) }} (fila na entrega)</template>
+            <template v-else>{{ fmtHoras(t.horas) }} ({{ t.parada ? "tempo de parada" : "fila na entrega" }})</template>
             <div v-if="t.fonte" class="mudo">
               {{ FONTE[t.fonte] }}<template v-if="t.fonte === 'HISTORICO'"> ({{ t.amostras }} passagens)</template>
             </div>

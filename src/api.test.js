@@ -597,7 +597,8 @@ test("permissões por usuário: padrão do perfil, personalizar, valer na hora, 
 test("tipos de local: padrões da migração, cadastro, rótulos por função e travas", async () => {
   const padrao = (await agentes.VISUALIZACAO.get("/api/tipos-local")).body;
   const tipo = (nome) => padrao.find((t) => t.nome === nome);
-  assert.deepEqual(padrao.map((t) => t.nome).sort(), ["Armazém", "Fábrica", "Porto / Terminal", "Terminal Ferroviário"]);
+  assert.deepEqual(padrao.map((t) => t.nome).sort(), ["Armazém", "Fábrica", "Ponto Fiscal", "Porto / Terminal", "Terminal Ferroviário"]);
+  assert.equal(tipo("Ponto Fiscal").funcao, "PARADA", "v1.2: Ponto Fiscal = parada no trajeto");
   assert.equal(tipo("Terminal Ferroviário").funcao, "RETIRADA_ENTREGA");
   assert.equal(tipo("Terminal Ferroviário").rotuloColeta, "Coleta ferroviária");
   assert.equal(tipo("Armazém").rotuloChegada, "Chegada no armazém");
@@ -1706,4 +1707,120 @@ test("QR da coleta: trajeto programado vem preenchido; quem lê confirma ou corr
   assert.ok(log.some((l) => l.descricao.includes("local de entrega alterado na leitura")));
   assert.ok(!log.some((l) => l.descricao.includes("local de carregamento alterado")), "carregamento só confirmado");
   await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste do trajeto" });
+});
+
+test("v1.2 trajeto com Ponto Fiscal: cadastro, editar trajeto, recálculo, Planejado e passagem (ficha e QR)", async () => {
+  const PF = ids.tipo["Ponto Fiscal"];
+  // Cadastro: posição no trajeto é obrigatória; tempo de parada vazio = 1 h; fila não se aplica.
+  assert.equal((await agentes.SUPERVISOR.post("/api/locais").send({ nome: "PF Sem Posição", tipoId: PF })).status, 400);
+  const pf1 = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Posto Fiscal Cubatão", tipoId: PF, posicaoParada: "ANTES_CARREGAMENTO", tempoParadaHoras: 2, filaHoras: 5, latitude: -23.91, longitude: -46.40 });
+  assert.equal(pf1.status, 201, JSON.stringify(pf1.body));
+  assert.deepEqual([pf1.body.posicaoParada, pf1.body.tempoParadaHoras, pf1.body.filaHoras], ["ANTES_CARREGAMENTO", 2, null]);
+  const pf2 = (await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Posto Fiscal Santos", tipoId: PF, posicaoParada: "APOS_CARREGAMENTO", latitude: -23.93, longitude: -46.35 })).body;
+  assert.equal(pf2.tempoParadaHoras, 1, "tempo padrão 1 h");
+  const paradas = (await agentes.OPERADOR.get("/api/locais?funcao=PARADA")).body.map((l) => l.nome);
+  assert.ok(paradas.includes("Posto Fiscal Cubatão") && paradas.includes("Posto Fiscal Santos"));
+
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  // Ponto fiscal não serve como retirada.
+  assert.equal((await agentes.ADMIN.post("/api/containers").send({ numero: "PFTU1000000", confirmarDigito: true, tipo: "DRY_40", ...cad, portoRetiradaId: pf1.body.id })).status, 400);
+  const c = await agentes.ADMIN.post("/api/containers").send({
+    numero: "PFTU1000001", confirmarDigito: true, tipo: "DRY_40", ...cad,
+    portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos,
+    coletaProgramadaEm: new Date(Date.now() + 48 * 3600e3).toISOString(),
+  });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const id = c.body.id;
+  const antes = (await agentes.ADMIN.get(`/api/containers/${id}`)).body;
+  assert.equal(antes.situacao.previsao.disponivel, true);
+  assert.deepEqual(antes.paradas, []);
+  const planoAntes = antes.planejamento;
+  assert.ok(planoAntes?.NA_FABRICA, "Planejado gravado");
+
+  // Validações do Editar trajeto.
+  const P = (papel, localId, paradaId) => ({ papel, localId, ...(paradaId ? { paradaId } : {}) });
+  const put = (ag, pontos) => ag.put(`/api/containers/${id}/trajeto`).send({ pontos });
+  assert.equal((await put(agentes.VISUALIZACAO, [P("RETIRADA", ids.santos), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)])).status, 403);
+  assert.equal((await put(agentes.OPERADOR, [P("CARREGAMENTO", ids.cubatao), P("RETIRADA", ids.santos), P("ENTREGA", ids.santos)])).status, 400, "começa na retirada");
+  assert.equal((await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("CARREGAMENTO", pf1.body.id), P("ENTREGA", ids.santos)])).status, 400, "ponto fiscal não é carregamento");
+  assert.equal((await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("PARADA", ids.cubatao), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)])).status, 400, "armazém não é parada");
+  assert.equal((await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("PARADA", pf1.body.id), P("PARADA", pf1.body.id), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)])).status, 400, "parada repetida");
+  assert.equal((await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("CARREGAMENTO", ids.cubatao)])).status, 400, "sem entrega");
+
+  // Adiciona o ponto fiscal antes do carregamento: trechos, tempo parado, ciclo e Planejado recalculados.
+  const r1 = await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("PARADA", pf1.body.id), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)]);
+  assert.equal(r1.status, 200, JSON.stringify(r1.body));
+  assert.equal(r1.body.paradas.length, 1);
+  assert.deepEqual([r1.body.paradas[0].nome, r1.body.paradas[0].fase, r1.body.paradas[0].tempoParadaHoras], ["Posto Fiscal Cubatão", "ANTES_CARREGAMENTO", 2]);
+  const prev = r1.body.situacao.previsao;
+  const etapas = prev.trechos.map((t) => t.etapa);
+  assert.deepEqual(etapas.slice(0, 3), ["Retirada → Posto Fiscal Cubatão (vazio)", "Parada: Posto Fiscal Cubatão", "Posto Fiscal Cubatão → carregamento (vazio)"]);
+  assert.equal(prev.trechos[1].horas, 2);
+  assert.ok(prev.cicloHoras >= antes.situacao.previsao.cicloHoras + 1.9, `ciclo soma a parada (${antes.situacao.previsao.cicloHoras} → ${prev.cicloHoras})`);
+  assert.equal(prev.paradas[0].nome, "Posto Fiscal Cubatão");
+  assert.ok(prev.paradas[0].previsao, "passagem prevista");
+  const paradaId = r1.body.paradas[0].id;
+  assert.ok(r1.body.planejamento.PARADAS?.[paradaId], "Programado: Planejado refeito com a parada");
+  assert.notDeepEqual(r1.body.planejamento, planoAntes);
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${id}`)).body;
+  assert.ok(log.some((l) => l.acao === "TRAJETO" && l.descricao.includes("agora: Porto de Santos → Posto Fiscal Cubatão → Armazém Cubatão → Porto de Santos")));
+
+  // Arrastar para depois do carregamento: mesma parada (id), fase muda; segunda parada entra.
+  const r2 = await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("CARREGAMENTO", ids.cubatao), P("PARADA", pf2.id), P("PARADA", pf1.body.id, paradaId), P("ENTREGA", ids.santos)]);
+  assert.equal(r2.status, 200, JSON.stringify(r2.body));
+  assert.deepEqual(r2.body.paradas.map((p) => [p.nome, p.fase, p.ordem]), [["Posto Fiscal Santos", "APOS_CARREGAMENTO", 0], ["Posto Fiscal Cubatão", "APOS_CARREGAMENTO", 1]]);
+  assert.equal(r2.body.paradas[1].id, paradaId, "parada mantida (mesmo id)");
+  // Passagem antes da coleta / depois do carregamento sem saída: recusadas.
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${id}/paradas/${paradaId}/passagem`).send({})).status, 409);
+
+  // Volta o ponto para antes do carregamento e coleta o container: depois da coleta o Planejado não muda.
+  await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("PARADA", pf1.body.id, paradaId), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)]);
+  const coletadoEm = new Date(Date.now() - 5 * 3600e3);
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${id}/avancar`).send({ ocorridoEm: coletadoEm.toISOString() })).status, 200);
+  const coletado = (await agentes.ADMIN.get(`/api/containers/${id}`)).body;
+  const planoColetado = coletado.planejamento;
+  const r3 = await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("PARADA", pf1.body.id, paradaId), P("CARREGAMENTO", ids.cubatao), P("PARADA", pf2.id), P("ENTREGA", ids.santos)]);
+  assert.deepEqual(r3.body.planejamento, planoColetado, "coletado: Planejado mantido");
+  assert.equal(r3.body.situacao.previsao.paradas.length, 2, "ETA com as duas paradas");
+
+  // Passagem pela ficha: horário real vira base do trecho seguinte.
+  const passouEm = new Date(Date.now() - 2 * 3600e3);
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${id}/paradas/${paradaId}/passagem`).send({ passouEm: new Date(coletadoEm.getTime() - 60e3).toISOString() })).status, 400, "antes da coleta");
+  const pass = await agentes.OPERADOR.post(`/api/containers/${id}/paradas/${paradaId}/passagem`).send({ passouEm: passouEm.toISOString() });
+  assert.equal(pass.status, 201, JSON.stringify(pass.body));
+  const pp = pass.body.paradas.find((p) => p.id === paradaId);
+  assert.deepEqual([new Date(pp.passouEm).getTime(), pp.origemRegistro, pp.registradoPor], [passouEm.getTime(), "FICHA", "operador@teste.local"]);
+  const marco = pass.body.situacao.previsao.paradas.find((m) => m.paradaId === paradaId);
+  assert.equal(new Date(marco.realizado).getTime(), passouEm.getTime());
+  const trechoSeguinte = pass.body.situacao.previsao.trechos.find((t) => t.etapa === "Posto Fiscal Cubatão → carregamento (vazio)");
+  assert.equal(new Date(trechoSeguinte.inicio).getTime(), passouEm.getTime(), "trecho seguinte parte do horário real");
+  assert.equal(pass.body.status, "COLETADO", "passagem não muda o status");
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${id}/paradas/${paradaId}/passagem`).send({})).status, 409, "já registrada");
+  // Parada com passagem: não pode sair do trajeto nem trocar de lado.
+  assert.equal((await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)])).status, 409);
+  assert.equal((await put(agentes.OPERADOR, [P("RETIRADA", ids.santos), P("CARREGAMENTO", ids.cubatao), P("PARADA", pf1.body.id, paradaId), P("ENTREGA", ids.santos)])).status, 409);
+  // Desfazer: só quem corrige.
+  assert.equal((await agentes.OPERADOR.delete(`/api/containers/${id}/paradas/${paradaId}/passagem`)).status, 403);
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/containers/${id}/paradas/${paradaId}/passagem`)).status, 200);
+
+  // Passagem pelo QR (no próprio ponto): o QR oferece a próxima parada pendente da etapa.
+  const [e] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e.token}/vincular`).send({ numero: "PFTU1000001" })).status, 201);
+  const leitura = (await agentes.OPERADOR.get(`/api/qr/${e.token}`)).body;
+  assert.deepEqual(leitura.container.proximaParada, { id: paradaId, nome: "Posto Fiscal Cubatão", fase: "ANTES_CARREGAMENTO" });
+  const qr = await agentes.OPERADOR.post(`/api/qr/${e.token}/passagem`).send({ latitude: -23.91, longitude: -46.4, precisaoM: 10 });
+  assert.equal(qr.status, 201, JSON.stringify(qr.body));
+  assert.equal(qr.body.passagem, "Posto Fiscal Cubatão");
+  assert.equal(qr.body.container.proximaParada, null, "depois do carregamento vem a outra (só após a saída)");
+  const db = await prisma.paradaContainer.findUnique({ where: { id: paradaId } });
+  assert.deepEqual([db.origemRegistro, Number(db.latitude)], ["QR", -23.91]);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e.token}/passagem`).send({})).status, 409, "nada pendente nesta etapa");
+  const log2 = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${id}`)).body;
+  assert.ok(log2.some((l) => l.acao === "PASSAGEM" && l.descricao.includes("pelo QR")));
+  assert.ok(log2.some((l) => l.acao === "DESFAZER" && l.descricao.includes("passagem por Posto Fiscal Cubatão desfeita")));
+
+  // Local de parada usado não pode mudar de função.
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/locais/${pf1.body.id}`).send({ tipoId: ids.tipo["Armazém"] })).status, 409);
+  await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de paradas" });
 });

@@ -13,6 +13,7 @@ import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, FL
 import { estadoDaEtiqueta } from "./etiquetas.js";
 import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { assumirRastreio } from "../lib/rastreamento.js";
+import { SELECT_PARADA, serializarParadas, proximaParada, registrarPassagem } from "../lib/trajeto.js";
 
 export const qrRouter = Router();
 
@@ -23,7 +24,7 @@ const quemRegistrou = (req) => (req.usuario.motoristaId ? { motoristaId: req.usu
 
 async function buscarEtiqueta(token) {
   if (!TOKEN.test(token)) throw erroHttp(404, "Etiqueta não reconhecida. Confira se o QR é do Controle de Container.");
-  const e = await prisma.etiquetaQR.findUnique({ where: { token }, include: { container: { include: { grupo: true, ...SELECT_LOCAIS_ETAPAS } } } });
+  const e = await prisma.etiquetaQR.findUnique({ where: { token }, include: { container: { include: { grupo: true, ...SELECT_LOCAIS_ETAPAS, paradas: { select: SELECT_PARADA } } } } });
   if (!e) throw erroHttp(404, "Etiqueta não reconhecida. Confira se o QR é do Controle de Container.");
   return e;
 }
@@ -45,6 +46,9 @@ async function resumo(e, req) {
       retirada: c.portoRetirada?.nome ?? null,
       // Trajeto programado: a tela da coleta já abre com ele preenchido (quem lê só confere).
       trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId },
+      // Pontos de parada (ex.: Ponto Fiscal) e o próximo pendente na etapa atual (o QR oferece a passagem).
+      paradas: serializarParadas(c.paradas),
+      proximaParada: (() => { const p = proximaParada(c, c.paradas ?? []); return p ? { id: p.id, nome: p.local.nome, fase: p.fase } : null; })(),
       ultimasLeituras: ultimas.map((l) => ({ ...l, temperatura: Number(l.temperatura) })),
     },
     podeRegistrar: tem(req, "qr.registrar"),
@@ -165,6 +169,26 @@ qrRouter.post("/:token/leituras", requirePermissao("qr.registrar"), asyncHandler
   await sincronizarAlertas(e.container.id);
   await assumirRastreio({ containerId: e.container.id, ...quemRegistrou(req), posicao: local });
   res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), resultado: avaliar(e.container, temperatura) });
+}));
+
+// Passagem por um ponto de parada (ex.: Ponto Fiscal) lida no próprio ponto: horário de agora + GPS.
+// Sem paradaId, registra a próxima pendente da etapa atual.
+qrRouter.post("/:token/passagem", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
+  const b = req.body ?? {};
+  const e = await buscarEtiqueta(req.params.token);
+  const estado = estadoDaEtiqueta(e);
+  if (estado !== "VINCULADA") throw erroHttp(409, estado === "LIVRE" ? "Esta etiqueta ainda não está ligada a um container." : `A etiqueta ${e.codigo} não recebe mais registros.`);
+  const c = e.container;
+  const parada = b.paradaId
+    ? c.paradas.find((p) => p.id === Number(b.paradaId))
+    : proximaParada(c, c.paradas);
+  if (!parada) throw erroHttp(409, "Não há ponto de parada pendente para este container nesta etapa.");
+  const posicao = lerLocalizacao(b);
+  const completa = await prisma.paradaContainer.findUnique({ where: { id: parada.id }, include: { local: true } });
+  await registrarPassagem({ container: c, parada: completa, passouEm: new Date(), quem: req.usuario.email, origem: "QR", posicao });
+  await sincronizarAlertas(c.id);
+  await assumirRastreio({ containerId: c.id, ...quemRegistrou(req), posicao });
+  res.status(201).json({ ...(await resumo(await buscarEtiqueta(req.params.token), req)), passagem: completa.local.nome });
 }));
 
 // ---------- Transportador: coleta pelo QR ----------

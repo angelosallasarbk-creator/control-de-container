@@ -27,6 +27,7 @@ const rotasQr = (prefixo) => ({
   // Transportador/motorista: coleta pelo QR (Tipo > Local de retirada; cadastra o container se preciso).
   qrOpcoesColeta: () => request(`${prefixo}/opcoes/coleta`),
   // Programação (trajeto) do container pelo número — preenche a coleta em etiqueta nova.
+  qrPassagem: (token, dados) => request(`${prefixo}/${token}/passagem`, { method: "POST", body: dados }),
   qrProgramacao: (numero) => request(`${prefixo}/opcoes/container/${encodeURIComponent(numero)}`),
   qrColeta: (token, dados) => request(`${prefixo}/${token}/coleta`, { method: "POST", body: dados }),
   // Portaria: entrada/saída no ponto de carregamento.
@@ -79,6 +80,10 @@ export const api = {
   cancelar: (id, motivo) => request(`/containers/${id}/cancelar`, { method: "POST", body: { motivo } }),
   registrarLeitura: (id, dados) => request(`/containers/${id}/leituras`, { method: "POST", body: dados }),
   rastreamento: (id) => request(`/containers/${id}/rastreamento`),
+  // Trajeto com pontos de parada (Editar trajeto) e passagem pelos pontos.
+  salvarTrajeto: (id, pontos) => request(`/containers/${id}/trajeto`, { method: "PUT", body: { pontos } }),
+  registrarPassagem: (id, paradaId, passouEm) => request(`/containers/${id}/paradas/${paradaId}/passagem`, { method: "POST", body: passouEm ? { passouEm } : {} }),
+  desfazerPassagem: (id, paradaId) => request(`/containers/${id}/paradas/${paradaId}/passagem`, { method: "DELETE" }),
   solicitarPosicao: (id) => request(`/containers/${id}/solicitar-posicao`, { method: "POST" }),
   // Cadastro em lote: modelo .xlsx (download) e upload (prévia; confirmar = grava as válidas).
   baixarModeloContainers: async () => {

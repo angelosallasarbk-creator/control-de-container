@@ -1,6 +1,8 @@
 // Previsão do ciclo do container (funções puras, sem banco/rede):
-//   coleta no porto → [rodagem vazio] → fábrica → [tempo na fábrica] → saída
-//   → [rodagem cheio] → porto de entrega → [fila/gate] → entrega
+//   coleta no porto → [rodagem vazio (+ paradas)] → fábrica → [tempo na fábrica] → saída
+//   → [rodagem cheio (+ paradas)] → porto de entrega → [fila/gate] → entrega
+// Paradas (ex.: Ponto Fiscal): rodagem até a parada + tempo parado; com a passagem registrada, o
+// trecho seguinte parte do horário real.
 // Regra de rodagem configurável (Configurações): o caminhão só roda dentro da janela diária
 // (ex.: 05h–22h, horário de Brasília) e faz no máximo `kmPorDia` por dia; fim de semana e
 // feriado rodam normal. Fora da janela ele fica parado e continua no dia seguinte.
@@ -72,8 +74,42 @@ function nivelRisco(folgaHoras, limiteAtencaoHoras) {
 }
 
 /**
+ * Percorre uma perna (ida ou volta) a partir de `inicio`, passando pelas paradas.
+ * Devolve o horário de chegada ao destino da perna, os trechos (rodagem e paradas) e os marcos de
+ * passagem (previsão ou horário real). `destinoReal` (etapa já registrada) torna as previsões das
+ * paradas não registradas sem sentido (null).
+ */
+function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [], nomes, carga, fase, destinoReal, cfg, futuro }) {
+  const lista = [];
+  const marcos = [];
+  if (!paradas.length) {
+    const fim = destinoReal ?? futuro(chegadaDoTrecho(inicio, kmTotal, cfg));
+    lista.push({ etapa: `${nomes.origem} → ${nomes.destino} (${carga})`, km: kmTotal, fonte: fonteTotal, inicio, fim, real: Boolean(destinoReal) });
+    return { fim, trechos: lista, marcos };
+  }
+  let t = inicio;
+  let origem = nomes.origemCurto;
+  paradas.forEach((p, i) => {
+    const km = trechos[i]?.km ?? null;
+    const real = p.passouEm ? new Date(p.passouEm) : null;
+    const chegada = km === null ? t : futuro(chegadaDoTrecho(t, km, cfg));
+    lista.push({ etapa: `${origem} → ${p.nome} (${carga})`, km, fonte: trechos[i]?.fonte ?? null, inicio: t, fim: real ?? chegada, real: Boolean(real) });
+    const saida = real ?? futuro(new Date(chegada.getTime() + p.tempoHoras * HORA));
+    lista.push({ etapa: `Parada: ${p.nome}`, horas: p.tempoHoras, inicio: real ?? chegada, fim: saida, real: Boolean(real), parada: true });
+    marcos.push({ paradaId: p.id, nome: p.nome, fase, previsao: real || destinoReal ? null : chegada, realizado: real });
+    t = saida;
+    origem = p.nome;
+  });
+  const ultimo = trechos[paradas.length] ?? null;
+  const fim = destinoReal ?? futuro(chegadaDoTrecho(t, ultimo?.km ?? 0, cfg));
+  lista.push({ etapa: `${origem} → ${nomes.destino} (${carga})`, km: ultimo?.km ?? null, fonte: ultimo?.fonte ?? null, inicio: t, fim, real: Boolean(destinoReal) });
+  return { fim, trechos: lista, marcos };
+}
+
+/**
  * c: container (datas, status, freeTimeDias, valorDiaria, moeda, deadline, metaEstadiaHoras)
- * ctx: { kmIda, fonteIda, kmVolta, fonteVolta, filaEntregaHoras, tempoFabricaHoras, fonteTempoFabrica, amostrasFabrica }
+ * ctx: { kmIda, fonteIda, kmVolta, fonteVolta, filaEntregaHoras, tempoFabricaHoras, fonteTempoFabrica, amostrasFabrica,
+ *        paradasIda, trechosIda, paradasVolta, trechosVolta }
  * cfg: { rodagemInicioMin, rodagemFimMin, kmPorDia, riscoFolgaHoras }
  * Container PROGRAMADO é simulado com a coleta na data programada (ou agora, se não houver ou já
  * tiver passado) — hipotetico = true.
@@ -95,9 +131,19 @@ export function estimarCiclo(c, ctx, agora, cfg) {
 
   // Ainda não coletado: simula a coleta na data programada (ou agora, se ela já passou/não existe).
   const coleta = aconteceu(c.coletadoEm) ?? futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
-  const chegadaFabrica = aconteceu(c.chegadaFabricaEm) ?? futuro(chegadaDoTrecho(coleta, ctx.kmIda, cfg));
+  const ida = percorrerPerna({
+    inicio: coleta, kmTotal: ctx.kmIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
+    nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "carregamento" }, carga: "vazio", fase: "ANTES_CARREGAMENTO",
+    destinoReal: aconteceu(c.chegadaFabricaEm), cfg, futuro,
+  });
+  const chegadaFabrica = ida.fim;
   const saidaFabrica = aconteceu(c.saidaFabricaEm) ?? futuro(new Date(chegadaFabrica.getTime() + ctx.tempoFabricaHoras * HORA));
-  const chegadaPorto = futuro(chegadaDoTrecho(saidaFabrica, ctx.kmVolta, cfg));
+  const volta = percorrerPerna({
+    inicio: saidaFabrica, kmTotal: ctx.kmVolta, fonteTotal: ctx.fonteVolta, paradas: ctx.paradasVolta, trechos: ctx.trechosVolta,
+    nomes: { origem: "Carregamento", origemCurto: "Carregamento", destino: "entrega" }, carga: "cheio", fase: "APOS_CARREGAMENTO",
+    destinoReal: null, cfg, futuro,
+  });
+  const chegadaPorto = volta.fim;
   const entrega = futuro(new Date(chegadaPorto.getTime() + ctx.filaEntregaHoras * HORA));
 
   // Free time contado como em calcularDemurrage: dia da coleta = dia 1.
@@ -112,9 +158,9 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   const cicloHoras = (entrega - coleta) / HORA;
 
   const trechos = [
-    { etapa: "Retirada → carregamento (vazio)", km: ctx.kmIda, fonte: ctx.fonteIda, inicio: coleta, fim: chegadaFabrica, real: Boolean(c.chegadaFabricaEm), hipotetico },
+    ...ida.trechos.map((t, i) => (i === 0 ? { ...t, hipotetico } : t)),
     { etapa: "No local de carregamento", horas: ctx.tempoFabricaHoras, fonte: ctx.fonteTempoFabrica, amostras: ctx.amostrasFabrica, inicio: chegadaFabrica, fim: saidaFabrica, real: Boolean(c.saidaFabricaEm) },
-    { etapa: "Carregamento → entrega (cheio)", km: ctx.kmVolta, fonte: ctx.fonteVolta, inicio: saidaFabrica, fim: chegadaPorto, real: false },
+    ...volta.trechos,
     { etapa: "Fila / gate na entrega", horas: ctx.filaEntregaHoras, inicio: chegadaPorto, fim: entrega, real: false },
   ].map((t) => ({ ...t, km: arred(t.km), horas: arred(t.horas ?? (t.fim - t.inicio) / HORA), duracaoHoras: arred((t.fim - t.inicio) / HORA) }));
 
@@ -124,6 +170,8 @@ export function estimarCiclo(c, ctx, agora, cfg) {
     // Coleta usada na simulação (programada ou agora) — só quando ainda não coletado.
     coletaSimulada: hipotetico ? coleta : null,
     trechos,
+    // Passagem pelas paradas do trajeto (ex.: Ponto Fiscal): previsão ou horário real.
+    paradas: [...ida.marcos, ...volta.marcos],
     previsaoChegadaFabrica: chegadaFabrica,
     previsaoSaidaFabrica: saidaFabrica,
     previsaoChegadaPorto: chegadaPorto,

@@ -102,11 +102,29 @@ export async function invalidarDistancias(localId) {
   await prisma.distanciaRota.deleteMany({ where: { OR: [{ origemId: localId }, { destinoId: localId }] } });
 }
 
-// Pares (ida e volta) do trajeto de um container.
-export const paresDoContainer = (c) => [
-  [c.portoRetiradaId, c.localCarregamentoId],
-  [c.localCarregamentoId, c.portoEntregaId],
-];
+// Paradas do trajeto em ordem: antes do carregamento, depois do carregamento.
+export const ordenarParadas = (paradas = []) => {
+  const fase = (p) => (p.fase === "ANTES_CARREGAMENTO" ? 0 : 1);
+  return [...paradas].sort((a, b) => fase(a) - fase(b) || a.ordem - b.ordem || (a.id ?? 0) - (b.id ?? 0));
+};
+
+// Sequência de locais do trajeto: retirada → paradas antes → carregamento → paradas depois → entrega.
+export function sequenciaDoTrajeto(c) {
+  const paradas = ordenarParadas(c.paradas);
+  return [
+    c.portoRetiradaId,
+    ...paradas.filter((p) => p.fase === "ANTES_CARREGAMENTO").map((p) => p.localId),
+    c.localCarregamentoId,
+    ...paradas.filter((p) => p.fase === "APOS_CARREGAMENTO").map((p) => p.localId),
+    c.portoEntregaId,
+  ];
+}
+
+// Pares (trechos consecutivos) do trajeto de um container, incluindo as paradas (se vierem em c.paradas).
+export const paresDoContainer = (c) => {
+  const seq = sequenciaDoTrajeto(c);
+  return seq.slice(1).map((destino, i) => [seq[i], destino]);
+};
 
 // Garante as distâncias dos pares informados (uma chamada por vez, para respeitar o limite
 // do plano gratuito). Falha de um par não impede os demais.

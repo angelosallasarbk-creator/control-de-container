@@ -11,9 +11,9 @@ import { estimarCiclo } from "../lib/estimativa.js";
 import { configRodagem, montarContextos } from "../lib/previsao.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, decimal, dataHora, id as validarId, umDe } from "../lib/validacao.js";
-import { FUNCOES, ROTULO_FUNCAO, ROTULOS_DA_FUNCAO, SELECT_TIPO } from "../lib/tiposLocal.js";
+import { FUNCOES, ROTULO_FUNCAO, ROTULOS_DA_FUNCAO, SELECT_TIPO, POSICOES_PARADA } from "../lib/tiposLocal.js";
 
-const USO = { grupos: true, retiradas: true, carregamentos: true, entregas: true };
+const USO = { grupos: true, retiradas: true, carregamentos: true, entregas: true, paradas: true };
 const INCLUDE = { tipo: SELECT_TIPO, _count: { select: USO } };
 
 // Tipo informado precisa existir e estar ativo (ou já ser o tipo atual do local).
@@ -34,8 +34,24 @@ function validar(b, parcial) {
   if ("latitude" in b) d.latitude = decimal(b.latitude, "Latitude", { min: -90, max: 90 });
   if ("longitude" in b) d.longitude = decimal(b.longitude, "Longitude", { min: -180, max: 180 });
   if ("filaHoras" in b) d.filaHoras = decimal(b.filaHoras, "Fila/gate (h)", { min: 0, max: 240 });
+  if ("posicaoParada" in b) d.posicaoParada = b.posicaoParada ? umDe(b.posicaoParada, POSICOES_PARADA, "Posição no trajeto") : null;
+  if ("tempoParadaHoras" in b) d.tempoParadaHoras = decimal(b.tempoParadaHoras, "Tempo médio de parada (h)", { min: 0, max: 72 });
   if ("ativo" in b) d.ativo = Boolean(b.ativo);
   return d;
+}
+
+// Ponto de parada: posição padrão no trajeto (antes/depois do carregamento) é obrigatória; tempo
+// parado vazio = 1 h. Outras funções não têm esses campos.
+function ajustarCamposDeParada(dados, funcao, antes) {
+  if (funcao !== "PARADA") {
+    dados.posicaoParada = null;
+    dados.tempoParadaHoras = null;
+    return;
+  }
+  const posicao = "posicaoParada" in dados ? dados.posicaoParada : antes.posicaoParada;
+  if (!posicao) throw erroHttp(400, "Informe se o ponto fica antes ou depois do ponto de carregamento.");
+  const tempo = "tempoParadaHoras" in dados ? dados.tempoParadaHoras : antes.tempoParadaHoras;
+  if (tempo === null || tempo === undefined) dados.tempoParadaHoras = 1;
 }
 
 function validarCoordenadas(l) {
@@ -81,6 +97,7 @@ locaisRouter.post("/", requirePermissao("cadastros.editar"), asyncHandler(async 
   validarCoordenadas(dados);
   const tipo = await validarTipo(dados.tipoId);
   if (tipo.funcao !== "RETIRADA_ENTREGA") dados.filaHoras = null; // fila/gate só em retirada/entrega
+  ajustarCamposDeParada(dados, tipo.funcao, {});
   const criado = await prisma.local.create({ data: dados, include: INCLUDE }).catch((err) => {
     if (err.code === "P2002") throw erroHttp(409, "Já existe um local com esse nome.");
     throw err;
@@ -98,10 +115,11 @@ locaisRouter.patch("/:id", requirePermissao("cadastros.editar"), asyncHandler(as
   validarCoordenadas({ latitude: "latitude" in dados ? dados.latitude : antes.latitude, longitude: "longitude" in dados ? dados.longitude : antes.longitude });
   // Trocar por outro tipo da MESMA função é livre (ex.: Porto → Terminal Ferroviário); mudar a
   // função quebraria o trajeto de containers que já usam o local.
-  if (tipoNovo.funcao !== antes.tipo.funcao && antes._count.retiradas + antes._count.carregamentos + antes._count.entregas > 0) {
+  if (tipoNovo.funcao !== antes.tipo.funcao && antes._count.retiradas + antes._count.carregamentos + antes._count.entregas + antes._count.paradas > 0) {
     throw erroHttp(409, `Este local já foi usado em containers como ${ROTULO_FUNCAO[antes.tipo.funcao].toLowerCase()}; o novo tipo precisa ter a mesma função.`);
   }
   if (tipoNovo.funcao !== "RETIRADA_ENTREGA") dados.filaHoras = null;
+  ajustarCamposDeParada(dados, tipoNovo.funcao, antes);
   const mudouCoordenada =
     ("latitude" in dados && String(dados.latitude) !== String(antes.latitude === null ? null : Number(antes.latitude))) ||
     ("longitude" in dados && String(dados.longitude) !== String(antes.longitude === null ? null : Number(antes.longitude)));

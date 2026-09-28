@@ -16,6 +16,7 @@ import ListaContainersLateral from "../components/ListaContainersLateral.vue";
 import Icone from "../components/Icone.vue";
 import NovoContainer from "../components/NovoContainer.vue";
 import ImportarContainers from "../components/ImportarContainers.vue";
+import EditarTrajeto from "../components/EditarTrajeto.vue";
 import MarcaQr from "../components/MarcaQr.vue";
 import imagemContainer from "../assets/container.png";
 
@@ -103,7 +104,7 @@ const km = computed(() => kmDoCiclo(p.value));
 const alertasAbertos = computed(() => (c.value?.alertas ?? []).filter((a) => a.chaveAberta));
 const alertasEncerrados = computed(() => (c.value?.alertas ?? []).filter((a) => !a.chaveAberta));
 const leiturasDesc = computed(() => [...(c.value?.leituras ?? [])].reverse().slice(0, 30));
-const rota = computed(() => [c.value?.portoRetirada?.nome, c.value?.localCarregamento?.nome, c.value?.portoEntrega?.nome].filter(Boolean));
+const rota = computed(() => (c.value ? [c.value.portoRetirada?.nome, ...(c.value.paradas ?? []).filter((x) => x.fase === "ANTES_CARREGAMENTO").map((x) => x.nome), c.value.localCarregamento?.nome, ...(c.value.paradas ?? []).filter((x) => x.fase === "APOS_CARREGAMENTO").map((x) => x.nome), c.value.portoEntrega?.nome].filter(Boolean) : []));
 const RISCO = { OK: { texto: "Sem risco", cor: "verde" }, ATENCAO: { texto: "Atenção", cor: "amarelo" }, CRITICO: { texto: "Risco alto", cor: "vermelho" } };
 
 // ----- Faixas de alerta no topo (o que exige ação agora) -----
@@ -263,6 +264,82 @@ const etapas = computed(() => {
   });
 });
 const fmtDesvio = (min) => `+${fmtHoras(min / 60)}`;
+
+// Etapas + passagens pelos pontos de parada (ex.: Ponto Fiscal): as de antes do carregamento
+// entram depois da coleta; as de depois, depois da saída do carregamento.
+const linhasEtapas = computed(() => {
+  if (!c.value) return [];
+  const cancelado = c.value.status === "CANCELADO";
+  const agora = new Date();
+  const marcos = new Map((p.value?.paradas ?? []).map((m) => [m.paradaId, m]));
+  const linhaParada = (pa) => {
+    const planejado = c.value.planejamento?.PARADAS?.[pa.id] ?? null;
+    const feita = Boolean(pa.passouEm);
+    const eta = !feita && !cancelado ? marcos.get(pa.id)?.previsao ?? null : null;
+    let situacao = "futura";
+    let desvioMin = null;
+    if (feita) {
+      desvioMin = planejado ? minutosEntre(pa.passouEm, planejado) : null;
+      situacao = desvioMin !== null && desvioMin > TOLERANCIA_MIN.value ? "atrasou" : "ok";
+    } else if (!cancelado && planejado && minutosEntre(agora, planejado) > TOLERANCIA_MIN.value) {
+      situacao = "pendenteAtrasada";
+      desvioMin = minutosEntre(agora, planejado);
+    }
+    return {
+      etapa: "parada-" + pa.id, parada: pa, nome: "Passagem: " + pa.nome, planejado, eta, realizado: pa.passouEm, feita, situacao, desvioMin,
+      etaDesvioMin: eta && planejado ? minutosEntre(eta, planejado) : null,
+    };
+  };
+  const paradas = c.value.paradas ?? [];
+  const linhas = [];
+  for (const e of etapas.value) {
+    linhas.push(e);
+    if (e.etapa === "COLETADO") paradas.filter((x) => x.fase === "ANTES_CARREGAMENTO").forEach((x) => linhas.push(linhaParada(x)));
+    if (e.etapa === "SAIU_FABRICA") paradas.filter((x) => x.fase === "APOS_CARREGAMENTO").forEach((x) => linhas.push(linhaParada(x)));
+  }
+  return linhas;
+});
+// Passagem pode ser registrada quando o container já está no trecho da parada.
+const podePassar = (pa) =>
+  auth.pode("containers.operar") && !encerrado.value && !pa.passouEm &&
+  (pa.fase === "ANTES_CARREGAMENTO" ? Boolean(c.value.coletadoEm) : Boolean(c.value.saidaFabricaEm));
+const passagem = ref(null); // { parada, quando }
+function abrirPassagem(pa) {
+  passagem.value = { parada: pa, quando: paraInputLocal() };
+  erro.value = null;
+}
+async function registrarPassagem() {
+  const { parada, quando } = passagem.value;
+  await executar(() => api.registrarPassagem(c.value.id, parada.id, deInputLocal(quando)), "Passagem por " + parada.nome + " registrada.");
+  if (!erro.value) passagem.value = null;
+}
+async function desfazerPassagem(pa) {
+  if (!confirm("Desfazer a passagem por " + pa.nome + "?")) return;
+  await executar(() => api.desfazerPassagem(c.value.id, pa.id), "Passagem por " + pa.nome + " desfeita.");
+}
+
+// ----- Editar trajeto (pontos de parada, arrastar) -----
+const trajetoAberto = ref(false);
+function trajetoSalvo(novo) {
+  c.value = novo;
+  trajetoAberto.value = false;
+  mensagem.value = "Trajeto salvo: distâncias, ciclo e ETA recalculados.";
+  refLista.value?.carregar();
+  atualizarAlertas();
+  setTimeout(() => (mensagem.value = null), 5000);
+}
+// Sequência do trajeto para exibir: retirada → paradas → carregamento → paradas → entrega.
+const sequenciaTrajeto = computed(() => {
+  if (!c.value) return [];
+  const pa = c.value.paradas ?? [];
+  return [
+    { papel: "Retirada", nome: c.value.portoRetirada?.nome },
+    ...pa.filter((x) => x.fase === "ANTES_CARREGAMENTO").map((x) => ({ papel: x.tipo ?? "Parada", nome: x.nome, parada: x })),
+    { papel: "Carregamento", nome: c.value.localCarregamento?.nome },
+    ...pa.filter((x) => x.fase === "APOS_CARREGAMENTO").map((x) => ({ papel: x.tipo ?? "Parada", nome: x.nome, parada: x })),
+    { papel: "Entrega", nome: c.value.portoEntrega?.nome },
+  ];
+});
 
 // ----- Visão geral: "Situação da operação" (etapa atual → próxima, com prazo e atraso) -----
 const proximaEtapa = computed(() => (proximo.value ? etapas.value.find((e) => e.etapa === proximo.value) : null));
@@ -659,11 +736,16 @@ function reconhecido() {
             <table class="fluxo">
               <thead><tr><th>Etapa</th><th>Planejado</th><th>ETA</th><th>Realizado</th></tr></thead>
               <tbody>
-                <tr v-for="(e, i) in etapas" :key="e.etapa" :class="{ feita: e.feita, atual: e.atual }">
+                <tr v-for="(e, i) in linhasEtapas" :key="e.etapa" :class="{ feita: e.feita, atual: e.atual, 'linha-parada': e.parada }">
                   <td>
-                    <span class="marco" :class="{ feita: e.feita, atrasada: e.situacao === 'pendenteAtrasada', ultimo: i === etapas.length - 1 }"></span>
+                    <span class="marco" :class="{ feita: e.feita, atrasada: e.situacao === 'pendenteAtrasada', ultimo: i === linhasEtapas.length - 1, parada: e.parada }"></span>
                     <span class="nome-etapa">{{ e.nome }}</span>
                     <span v-if="e.situacao === 'pendenteAtrasada'" class="chip amarelo" style="margin-left: 8px">Atrasada</span>
+                    <div v-if="e.parada" class="acoes-passagem">
+                      <button v-if="podePassar(e.parada)" type="button" class="pequeno" @click="abrirPassagem(e.parada)">Registrar passagem</button>
+                      <button v-if="e.parada.passouEm && auth.pode('containers.corrigir') && !encerrado" type="button" class="pequeno" @click="desfazerPassagem(e.parada)">Desfazer</button>
+                      <span v-if="e.parada.passouEm" class="mudo pequeno">{{ e.parada.origemRegistro === "QR" ? "pelo QR" : "pela ficha" }} · {{ e.parada.registradoPor }}</span>
+                    </div>
                   </td>
                   <td>{{ e.planejado ? fmtDataHora(e.planejado) : "—" }}</td>
                   <td>
@@ -710,6 +792,17 @@ function reconhecido() {
               <strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →
               <strong>{{ c.portoEntrega?.nome ?? "entrega ?" }}</strong>
             </span>
+          </div>
+          <div class="trajeto-pontos">
+            <template v-for="(pt, i) in sequenciaTrajeto" :key="i">
+              <span v-if="i" class="seta-trajeto" aria-hidden="true">→</span>
+              <span class="ponto-trajeto" :class="{ parada: pt.parada }">
+                <span class="papel">{{ pt.papel }}</span>
+                <strong>{{ pt.nome ?? "?" }}</strong>
+                <span v-if="pt.parada?.passouEm" class="txt-OK pequeno">✓ passou</span>
+              </span>
+            </template>
+            <button v-if="auth.pode('containers.operar') && !encerrado" type="button" class="pequeno primario editar-trajeto-btn" @click="trajetoAberto = true">Editar trajeto</button>
           </div>
           <PrevisaoCiclo v-if="s.previsao" :p="s.previsao" :free-time-dias="c.freeTimeDias" sem-numeros />
           <div v-else-if="encerrado" class="mudo">Ciclo encerrado.</div>
@@ -892,6 +985,22 @@ function reconhecido() {
   </div>
 
   <NovoContainer v-if="novoAberto" @fechar="novoAberto = false" @criado="criado" />
+  <EditarTrajeto v-if="trajetoAberto && c" :container="c" @fechar="trajetoAberto = false" @salvo="trajetoSalvo" />
+  <div v-if="passagem" class="fundo-modal" @mousedown.self="passagem = null">
+    <form class="modal estreito" @submit.prevent="registrarPassagem">
+      <h2>Passagem por {{ passagem.parada.nome }}</h2>
+      <div v-if="erro" class="erro">{{ erro }}</div>
+      <div class="campo">
+        <label for="quando-passagem">Data e hora da passagem</label>
+        <input id="quando-passagem" v-model="passagem.quando" type="datetime-local" required />
+        <span class="dica">A previsão dos trechos seguintes passa a contar a partir deste horário.</span>
+      </div>
+      <div class="modal-acoes">
+        <button type="button" @click="passagem = null">Cancelar</button>
+        <button type="submit" class="primario" :disabled="enviando">Registrar passagem</button>
+      </div>
+    </form>
+  </div>
   <ImportarContainers v-if="uploadAberto" @fechar="uploadAberto = false" @importados="refLista?.carregar(); atualizarAlertas()" />
 
   <!-- Modais -->
@@ -995,6 +1104,15 @@ function reconhecido() {
 
 <style scoped>
 .motivos-agora { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+.trajeto-pontos { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; }
+.ponto-trajeto { display: inline-flex; flex-direction: column; padding: 6px 10px; border: 1px solid var(--borda); border-radius: 8px; background: var(--azul-fundo); font-size: 13px; line-height: 1.25; }
+.ponto-trajeto.parada { background: #fff; border-style: dashed; }
+.ponto-trajeto .papel { font-size: 11px; color: var(--texto-2); text-transform: uppercase; letter-spacing: .03em; }
+.seta-trajeto { color: var(--texto-2); }
+.editar-trajeto-btn { margin-left: auto; }
+.acoes-passagem { display: flex; gap: 6px; align-items: center; margin: 4px 0 0 22px; flex-wrap: wrap; }
+.linha-parada .nome-etapa { font-weight: 500; }
+.marco.parada { border-radius: 3px; }
 .grade-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 20px; }
 .mestre-detalhe { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
 .detalhe { display: flex; flex-direction: column; gap: 14px; min-width: 0; }

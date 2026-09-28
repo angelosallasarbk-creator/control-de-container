@@ -52,6 +52,13 @@ enum TipoAlerta {
 enum FuncaoLocal {
   RETIRADA_ENTREGA // retirada do vazio / entrega do cheio (porto, terminal ferroviário…); tem fila/gate
   CARREGAMENTO // onde o container é ovado (fábrica, armazém…)
+  PARADA // ponto intermediário do trajeto (ex.: Ponto Fiscal): tempo de parada; passagem registrada
+}
+
+// Onde um ponto de parada fica no trajeto, em relação ao ponto de carregamento.
+enum PosicaoParada {
+  ANTES_CARREGAMENTO
+  APOS_CARREGAMENTO
 }
 
 enum NivelAlerta {
@@ -154,25 +161,29 @@ model TipoLocal {
 
 // Ponto físico do trajeto; o tipo define se é carregamento ou retirada/entrega.
 model Local {
-  id        Int       @id @default(autoincrement())
-  nome      String    @unique
-  tipoId    Int
-  tipo      TipoLocal @relation(fields: [tipoId], references: [id])
-  endereco  String?
-  cidade    String?
-  uf        String?
-  latitude  Decimal?  @db.Decimal(9, 6)
-  longitude Decimal?  @db.Decimal(9, 6)
-  filaHoras Decimal?  @db.Decimal(5, 1) // porto: fila/gate; vazio = padrão das Configurações
-  ativo     Boolean   @default(true)
-  criadoEm  DateTime  @default(now())
+  id               Int            @id @default(autoincrement())
+  nome             String         @unique
+  tipoId           Int
+  tipo             TipoLocal      @relation(fields: [tipoId], references: [id])
+  endereco         String?
+  cidade           String?
+  uf               String?
+  latitude         Decimal?       @db.Decimal(9, 6)
+  longitude        Decimal?       @db.Decimal(9, 6)
+  filaHoras        Decimal?       @db.Decimal(5, 1) // porto: fila/gate; vazio = padrão das Configurações
+  // Ponto de parada (função PARADA): posição padrão no trajeto e tempo médio parado (entra no ETA).
+  posicaoParada    PosicaoParada?
+  tempoParadaHoras Decimal?       @db.Decimal(5, 1)
+  ativo            Boolean        @default(true)
+  criadoEm         DateTime       @default(now())
 
   grupos            GrupoOperacao[]
-  retiradas         Container[]     @relation("PortoRetirada")
-  carregamentos     Container[]     @relation("LocalCarregamento")
-  entregas          Container[]     @relation("PortoEntrega")
-  distanciasOrigem  DistanciaRota[] @relation("Origem")
-  distanciasDestino DistanciaRota[] @relation("Destino")
+  retiradas         Container[]       @relation("PortoRetirada")
+  carregamentos     Container[]       @relation("LocalCarregamento")
+  entregas          Container[]       @relation("PortoEntrega")
+  distanciasOrigem  DistanciaRota[]   @relation("Origem")
+  distanciasDestino DistanciaRota[]   @relation("Destino")
+  paradas           ParadaContainer[]
 
   @@index([tipoId])
 }
@@ -281,6 +292,8 @@ model Container {
   leituras  LeituraTemperatura[]
   alertas   Alerta[]
   etiquetas EtiquetaQR[]
+  // Pontos de parada do trajeto (ex.: Ponto Fiscal), em ordem, antes ou depois do carregamento.
+  paradas   ParadaContainer[]
 
   // Rastreamento por SMS: quem registrou algo pelo QR por último recebe os pedidos de posição.
   rastreioResponsavelId Int?
@@ -550,4 +563,25 @@ model SessaoMotorista {
   dispositivo String? // navegador/celular (User-Agent resumido) — para o gestor reconhecer a sessão
 
   @@index([motoristaId])
+}
+
+// Ponto de parada no trajeto de um container (ex.: Ponto Fiscal). A ordem é a do trajeto dentro da
+// fase (antes/depois do carregamento). A passagem é um marco: não muda o status do container.
+model ParadaContainer {
+  id             Int           @id @default(autoincrement())
+  containerId    Int
+  container      Container     @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  localId        Int
+  local          Local         @relation(fields: [localId], references: [id])
+  fase           PosicaoParada
+  ordem          Int
+  passouEm       DateTime?
+  registradoPor  String?
+  origemRegistro String? // FICHA | QR
+  latitude       Decimal?      @db.Decimal(9, 6)
+  longitude      Decimal?      @db.Decimal(9, 6)
+  precisaoM      Int?
+  criadoEm       DateTime      @default(now())
+
+  @@index([containerId])
 }
