@@ -1824,3 +1824,56 @@ test("v1.2 trajeto com Ponto Fiscal: cadastro, editar trajeto, recálculo, Plane
   assert.equal((await agentes.SUPERVISOR.patch(`/api/locais/${pf1.body.id}`).send({ tipoId: ids.tipo["Armazém"] })).status, 409);
   await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de paradas" });
 });
+
+test("v1.3: Ponto de Carregamento como parada (checkbox) e motorista/placa do QR no container", async () => {
+  const { assumirRastreio } = await import("./lib/rastreamento.js");
+  // Ponto de Carregamento marcado como possível ponto de parada.
+  const g = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Parada SA", fabrica: "Fábrica Parada", metaEstadiaHoras: 12 });
+  assert.equal(g.status, 201);
+  assert.equal(g.body.podeSerParada, false, "padrão: não é parada");
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/grupos/${g.body.id}`).send({ podeSerParada: true, posicaoParada: "ANTES_CARREGAMENTO" })).status, 400, "precisa do local (endereço)");
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/grupos/${g.body.id}`).send({ localId: ids.rioVerde, podeSerParada: true })).status, 400, "precisa da posição");
+  const marcado = await agentes.SUPERVISOR.patch(`/api/grupos/${g.body.id}`).send({ localId: ids.rioVerde, podeSerParada: true, posicaoParada: "ANTES_CARREGAMENTO", tempoParadaHoras: 3 });
+  assert.equal(marcado.status, 200, JSON.stringify(marcado.body));
+  assert.deepEqual([marcado.body.podeSerParada, marcado.body.posicaoParada, marcado.body.tempoParadaHoras], [true, "ANTES_CARREGAMENTO", 3]);
+
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const c = await agentes.ADMIN.post("/api/containers").send({
+    numero: "PCPU1300001", confirmarDigito: true, tipo: "DRY_40", ...cad,
+    portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos,
+  });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const P = (papel, localId) => ({ papel, localId });
+  const put = (pontos) => agentes.OPERADOR.put(`/api/containers/${c.body.id}/trajeto`).send({ pontos });
+  // Local de fábrica NÃO marcado não serve como parada; marcado serve.
+  const naoMarcado = await put([P("RETIRADA", ids.santos), P("PARADA", ids.cubatao), P("CARREGAMENTO", ids.rioVerde), P("ENTREGA", ids.santos)]);
+  assert.equal(naoMarcado.status, 400);
+  assert.match(naoMarcado.body.erro, /Pode ser ponto de parada/);
+  const r = await put([P("RETIRADA", ids.santos), P("PARADA", ids.rioVerde), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)]);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual([r.body.paradas[0].nome, r.body.paradas[0].tipo, r.body.paradas[0].tempoParadaHoras], ["Fábrica Rio Verde", "Ponto de Carregamento", 3]);
+  const trechoParada = r.body.situacao.previsao.trechos.find((t) => t.etapa === "Parada: Fábrica Rio Verde");
+  assert.equal(trechoParada?.horas, 3, "tempo de parada do Ponto de Carregamento");
+  // O próprio local de carregamento não pode ser parada.
+  assert.equal((await put([P("RETIRADA", ids.santos), P("PARADA", ids.rioVerde), P("CARREGAMENTO", ids.rioVerde), P("ENTREGA", ids.santos)])).status, 400);
+  // Desmarcar limpa posição e tempo.
+  const desmarcado = await agentes.SUPERVISOR.patch(`/api/grupos/${g.body.id}`).send({ podeSerParada: false });
+  assert.deepEqual([desmarcado.body.posicaoParada, desmarcado.body.tempoParadaHoras], [null, null]);
+
+  // Motorista e placa do motorista que registrou pelo QR vão para o container (e atualizam).
+  const t = (await prisma.transportadora.findFirst({ where: { ativo: true } })) ?? (await prisma.transportadora.create({ data: { nome: "Transp V13" } }));
+  const m = await prisma.motorista.create({ data: { nome: "Carlos Placa", celular: "+5511955551300", placa: "ABC1D23", transportadoraId: t.id, consentimentoEm: new Date() } });
+  await assumirRastreio({ containerId: c.body.id, motoristaId: m.id });
+  let db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.deepEqual([db.motorista, db.placa], ["Carlos Placa", "ABC1D23"]);
+  await prisma.motorista.update({ where: { id: m.id }, data: { placa: "XYZ9A88" } });
+  await assumirRastreio({ containerId: c.body.id, motoristaId: m.id });
+  db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.equal(db.placa, "XYZ9A88", "placa trocada numa nova leitura atualiza o container");
+  const log = (await agentes.ADMIN.get(`/api/logs?entidade=Container&entidadeId=${c.body.id}`)).body;
+  assert.ok(log.some((l) => l.descricao.includes("motorista/placa pela leitura do QR — Carlos Placa · XYZ9A88 (antes: Carlos Placa · ABC1D23)")));
+  const lista = (await agentes.ADMIN.get("/api/containers")).body.find((x) => x.id === c.body.id);
+  assert.deepEqual([lista.motorista, lista.placa], ["Carlos Placa", "XYZ9A88"], "aparece na lista de containers");
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste v1.3" });
+});

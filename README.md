@@ -46,10 +46,13 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 
 - **Cadastro:** Cadastros → Locais, tipo **"Ponto Fiscal"** (função "Parada no trajeto"; dá para criar outros tipos com essa função). Ao escolher o tipo, o formulário pergunta se o ponto fica **antes ou depois do ponto de carregamento** (posição padrão) e o **tempo médio de parada** (padrão 1 h).
 - **Editar trajeto** (ficha do container → aba Trajeto): lista Retirada → pontos → Carregamento → pontos → Entrega. Retirada, carregamento e entrega ficam fixos na ordem (troca-se só o local). **"+ Adicionar ponto"** cria uma linha no final; ao escolher o ponto ele vai para a posição padrão e pode ser **arrastado** (pela alça ⋮⋮, ou ↑ ↓ no celular) para antes ou depois do carregamento. Ao salvar: distâncias de cada trecho, km total, **ciclo, ETA e alertas recalculados**; container ainda **Programado** tem o **Planejado refeito** (depois da coleta, o Planejado original fica).
+- **Ponto de Carregamento como parada (v1.3):** em Cadastros → Ponto de Carregamento, o checkbox **"Pode ser ponto de parada no trajeto"** (com posição padrão antes/depois do carregamento e tempo médio de parada) faz o local desse ponto aparecer como opção no "Editar trajeto" ("Ponto de Carregamento: Cliente / Fábrica"). O próprio local de carregamento do container não pode ser também uma parada.
 - **Previsão:** cada ponto soma a rodagem até ele + o tempo de parada. Os trechos aparecem separados na aba Trajeto (ex.: "Retirada → Ponto Fiscal X", "Parada: Ponto Fiscal X", "Ponto Fiscal X → carregamento").
 - **Passagem** (marco — não muda o status do container): aparece na aba **Etapas** com Planejado, ETA e Realizado. Registro pela **ficha** ("Registrar passagem", com horário) ou pelo **QR** no próprio ponto ("Registrar passagem" com horário de agora + GPS; o QR oferece o próximo ponto pendente da etapa). Pontos antes do carregamento só depois da coleta; depois do carregamento, só após a saída. Com a passagem registrada, a previsão dos trechos seguintes parte do horário real. **Desfazer** exige "Desfazer e cancelar etapas". Ponto com passagem registrada não pode sair do trajeto nem trocar de lado. Tudo no log (TRAJETO, PASSAGEM, DESFAZER).
 
 ## Motoristas e transportadoras (v1.1)
+
+- **Motorista e placa no container (v1.3):** a cada registro pelo QR feito por um motorista, o container passa a mostrar o nome e a placa dele (ficha → Dados e coluna "Motorista / Placa" na Tabela). Na tela do QR o motorista confere a placa e toca em **"Trocar"** se mudou de caminhão; o próximo registro atualiza o container (a troca fica no log).
 
 Motorista **não é usuário do sistema** — com milhares de motoristas, criar e manter um login para cada um não é viável.
 

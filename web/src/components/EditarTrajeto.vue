@@ -12,6 +12,7 @@ const props = defineProps({ container: { type: Object, required: true } });
 const emit = defineEmits(["fechar", "salvo"]);
 
 const locais = ref([]);
+const gruposParada = ref([]); // Pontos de Carregamento marcados como "pode ser ponto de parada"
 const erro = ref(null);
 const enviando = ref(false);
 let seq = 0;
@@ -31,15 +32,30 @@ const pontos = ref([
 
 onMounted(async () => {
   try {
-    locais.value = await api.locais({ ativos: "1" });
+    const [ls, gs] = await Promise.all([api.locais({ ativos: "1" }), api.listar("grupos", { ativos: "1" })]);
+    locais.value = ls;
+    gruposParada.value = gs.filter((g) => g.podeSerParada && g.localId);
   } catch (e) {
     erro.value = e.message;
   }
 });
 // Local inativo que já está no trajeto continua aparecendo.
 const incluiAtual = (lista, id) => (id && !lista.some((l) => l.id === id) ? [...lista, { id, nome: "(local inativo)" }] : lista);
+// Opções de parada: Pontos Fiscais (função Parada) + Pontos de Carregamento marcados como parada.
+const opcoesParada = computed(() => {
+  const fiscais = locais.value.filter((l) => l.tipo.funcao === "PARADA");
+  const vistos = new Set(fiscais.map((l) => l.id));
+  const carregamentos = [];
+  for (const g of gruposParada.value) {
+    if (vistos.has(g.localId)) continue;
+    vistos.add(g.localId);
+    carregamentos.push({ id: g.localId, nome: `${g.cliente} / ${g.fabrica}`, uf: g.local?.uf, posicaoParada: g.posicaoParada, pontoCarregamento: true });
+  }
+  return [...fiscais, ...carregamentos];
+});
 const opcoes = (p) => {
-  const funcao = p.papel === "CARREGAMENTO" ? "CARREGAMENTO" : p.papel === "PARADA" ? "PARADA" : "RETIRADA_ENTREGA";
+  if (p.papel === "PARADA") return incluiAtual(opcoesParada.value, p.localId);
+  const funcao = p.papel === "CARREGAMENTO" ? "CARREGAMENTO" : "RETIRADA_ENTREGA";
   return incluiAtual(locais.value.filter((l) => l.tipo.funcao === funcao), p.localId);
 };
 const ROTULO = { RETIRADA: "Retirada", CARREGAMENTO: "Carregamento", ENTREGA: "Entrega", PARADA: "Ponto de parada" };
@@ -87,7 +103,7 @@ function adicionar() {
 function escolheu(p) {
   if (!p.nova) return;
   p.nova = false;
-  const local = locais.value.find((l) => l.id === p.localId);
+  const local = opcoesParada.value.find((l) => l.id === p.localId);
   const i = pontos.value.indexOf(p);
   const destino = local?.posicaoParada === "ANTES_CARREGAMENTO" ? idx("CARREGAMENTO") : idx("ENTREGA");
   mover(i, destino > i ? destino - 1 : destino);
@@ -144,7 +160,7 @@ async function salvar() {
             <select v-model="p.localId" :aria-label="ROTULO[p.papel]" required @change="escolheu(p)">
               <option value="" disabled>{{ p.papel === "PARADA" ? "Escolha o ponto (ex.: Ponto Fiscal)…" : "Escolha o local…" }}</option>
               <option v-for="l in opcoes(p)" :key="l.id" :value="l.id">
-                {{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}{{ p.papel === "PARADA" && l.posicaoParada ? ` — ${ROTULO_POSICAO_PARADA[l.posicaoParada].toLowerCase()}` : "" }}
+                {{ l.pontoCarregamento ? "Ponto de Carregamento: " : "" }}{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}{{ p.papel === "PARADA" && l.posicaoParada ? ` — ${ROTULO_POSICAO_PARADA[l.posicaoParada].toLowerCase()}` : "" }}
               </option>
             </select>
           </div>
@@ -156,7 +172,7 @@ async function salvar() {
         </li>
       </ol>
       <button type="button" class="adicionar" @click="adicionar">+ Adicionar ponto</button>
-      <p v-if="!locais.some((l) => l.tipo.funcao === 'PARADA')" class="dica pequeno mudo">Nenhum ponto de parada cadastrado. Cadastre em Cadastros → Locais com o tipo "Ponto Fiscal".</p>
+      <p v-if="!opcoesParada.length" class="dica pequeno mudo">Nenhum ponto de parada cadastrado. Cadastre um Ponto Fiscal em Cadastros → Locais, ou marque "Pode ser ponto de parada" em Cadastros → Ponto de Carregamento.</p>
 
       <div class="modal-acoes">
         <button type="button" @click="emit('fechar')">Cancelar</button>

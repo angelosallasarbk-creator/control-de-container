@@ -49,7 +49,7 @@ function sessaoEncerrada(msg) {
 <template>
   <div v-if="auth.usuario === undefined || motorista === undefined" class="vazio">Carregando…</div>
   <LeituraQR v-else-if="auth.usuario" :token="token" />
-  <LeituraQR v-else-if="motorista" :token="token" :motorista="motorista" @sair="sair" @sessao-encerrada="sessaoEncerrada" />
+  <LeituraQR v-else-if="motorista" :token="token" :motorista="motorista" @sair="sair" @sessao-encerrada="sessaoEncerrada" @motorista-atualizado="motorista = $event" />
   <div v-else-if="modoEquipe">
     <Login />
     <p class="voltar-motorista"><button type="button" class="link" @click="modoEquipe = false">← Sou motorista (entrar pelo celular)</button></p>

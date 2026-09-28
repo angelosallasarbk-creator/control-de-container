@@ -99,9 +99,11 @@ export async function assumirRastreio({ containerId, usuarioId = null, motorista
   try {
     const c = await prisma.container.findUnique({
       where: { id: containerId },
-      select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true },
+      select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, motorista: true, placa: true },
     });
     if (!c) return { trocou: false };
+    // Motorista (acesso pelo celular): nome e placa atuais dele vão para o container a cada registro.
+    if (motoristaId) await atualizarMotoristaDoContainer(c, motoristaId);
     const temPosicao = posicao.latitude !== undefined && posicao.latitude !== null;
     if (temPosicao) {
       await prisma.posicaoContainer.create({
@@ -144,6 +146,21 @@ export async function assumirRastreio({ containerId, usuarioId = null, motorista
     console.error(`Rastreamento: falha ao assumir o rastreio do container ${containerId}:`, err);
     return { trocou: false, erro: err.message };
   }
+}
+
+// Container.motorista/placa = os do motorista que registrou pelo QR (troca de caminhão/motorista
+// aparece na hora). Só grava quando muda; fica no log.
+async function atualizarMotoristaDoContainer(c, motoristaId) {
+  const m = await prisma.motorista.findUnique({ where: { id: motoristaId }, include: { transportadora: { select: { nome: true } } } });
+  if (!m) return;
+  const placa = m.placa ?? c.placa;
+  if (c.motorista === m.nome && c.placa === placa) return;
+  await prisma.container.update({ where: { id: c.id }, data: { motorista: m.nome, placa } });
+  await registrarLog({
+    usuarioEmail: identidadeMotorista(m), acao: "ALTERAR", entidade: "Container", entidadeId: c.id,
+    descricao: `Container ${c.numero}: motorista/placa pela leitura do QR — ${m.nome} · ${placa ?? "sem placa"}` +
+      (c.motorista || c.placa ? ` (antes: ${c.motorista ?? "—"} · ${c.placa ?? "—"})` : ""),
+  });
 }
 
 /**

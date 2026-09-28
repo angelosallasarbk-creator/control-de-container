@@ -4,6 +4,14 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 1.3.0 — 28/09/2026 (tag `v1.3.0`)
+
+- **Ponto de Carregamento como ponto de parada:** checkbox no cadastro (posição padrão e tempo de
+  parada); aparece como opção no Editar trajeto. Migração só com acréscimos
+  (`20260929090000_ponto_carregamento_parada`); voltar para a 1.2 não precisa de script.
+- **Motorista e placa do QR no container:** gravados a cada registro do motorista pelo QR; troca de
+  placa na tela do QR; coluna "Motorista / Placa" na Tabela de containers.
+
 ## 1.2.0 — 28/09/2026 (tag `v1.2.0`)
 
 - **Ponto Fiscal / pontos de parada no trajeto:** tipo de local novo (função PARADA) com posição

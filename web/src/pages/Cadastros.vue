@@ -30,6 +30,7 @@ const CONFIG = {
       { rotulo: "Meta de estadia", valor: (r) => `${r.metaEstadiaHoras}h` },
       { rotulo: "Alerta antes", valor: (r) => `${r.alertaEstadiaHoras}h` },
       { rotulo: "Custo/h excedida", valor: (r) => (r.custoEstadiaPorHora ? fmtMoeda(r.custoEstadiaPorHora) : "—") },
+      { rotulo: "Parada no trajeto", valor: (r) => (r.podeSerParada ? `sim · ${r.posicaoParada === "APOS_CARREGAMENTO" ? "depois" : "antes"} do carregamento · ${r.tempoParadaHoras ?? 1}h` : "—") },
     ],
     campos: [
       { chave: "cliente", rotulo: "Cliente", tipo: "text", obrigatorio: true },
@@ -46,6 +47,16 @@ const CONFIG = {
       { chave: "metaEstadiaHoras", rotulo: "Meta de estadia (horas)", tipo: "number", obrigatorio: true, min: 1 },
       { chave: "alertaEstadiaHoras", rotulo: "Avisar quando faltarem (horas)", tipo: "number", obrigatorio: true, min: 0, padrao: 6 },
       { chave: "custoEstadiaPorHora", rotulo: "Custo por hora excedida (R$, opcional)", tipo: "number", step: "0.01", min: 0 },
+      {
+        chave: "podeSerParada", rotulo: "Pode ser ponto de parada no trajeto", tipo: "checkbox", padrao: false,
+        dica: "Aparece como opção de parada no \"Editar trajeto\" dos containers (usa o local de carregamento acima).",
+      },
+      {
+        chave: "posicaoParada", rotulo: "Como parada, fica antes ou depois do carregamento?", tipo: "select", obrigatorio: true,
+        opcoes: [{ valor: "ANTES_CARREGAMENTO", rotulo: "Antes do ponto de carregamento" }, { valor: "APOS_CARREGAMENTO", rotulo: "Depois do ponto de carregamento" }],
+        vazio: "Escolha…", mostrarSe: (f) => f.podeSerParada,
+      },
+      { chave: "tempoParadaHoras", rotulo: "Tempo médio de parada (horas)", tipo: "number", step: "0.5", min: 0, placeholder: "padrão: 1h", mostrarSe: (f) => f.podeSerParada },
     ],
   },
   armadores: {
@@ -130,7 +141,7 @@ onMounted(() => {
 });
 
 function opcoesDoCampo(c) {
-  const lista = c.opcoesDe ? opcoesDinamicas.value[c.opcoesDe] ?? [] : (c.opcoes ?? []).map((o) => ({ valor: o, rotulo: o }));
+  const lista = c.opcoesDe ? opcoesDinamicas.value[c.opcoesDe] ?? [] : (c.opcoes ?? []).map((o) => (typeof o === "object" ? o : { valor: o, rotulo: o }));
   return c.vazio ? [{ valor: "", rotulo: c.vazio }, ...lista] : lista;
 }
 
@@ -140,7 +151,7 @@ const aplicarEmAndamento = ref(true);
 
 function abrir(registro) {
   editando.value = registro ?? {};
-  form.value = Object.fromEntries(cfg.value.campos.map((c) => [c.chave, registro ? registro[c.chave] ?? "" : c.padrao ?? ""]));
+  form.value = Object.fromEntries(cfg.value.campos.map((c) => [c.chave, c.tipo === "checkbox" ? Boolean(registro ? registro[c.chave] : c.padrao) : registro ? registro[c.chave] ?? "" : c.padrao ?? ""]));
   aplicarEmAndamento.value = true;
   erro.value = null;
   aviso.value = null;
@@ -153,6 +164,9 @@ async function salvar() {
     const dados = { ...form.value };
     for (const c of cfg.value.campos) {
       if (c.tipo === "number" && dados[c.chave] === "") dados[c.chave] = null;
+      // Campo escondido (condição não atendida): não vai; selecionado vazio vira null.
+      if (c.mostrarSe && !c.mostrarSe(dados)) { delete dados[c.chave]; continue; }
+      if (c.tipo === "select" && !c.opcoesDe && dados[c.chave] === "") dados[c.chave] = null;
       if (c.opcoesDe) {
         const original = editando.value.id ? editando.value[c.chave] ?? "" : "";
         // Só envia o vínculo se foi escolhido/alterado: em branco num cadastro novo significa
@@ -243,12 +257,17 @@ async function excluir(r) {
       <form class="modal estreito" @submit.prevent="salvar">
         <h2>{{ editando.id ? "Editar" : "Novo" }} · {{ cfg.titulo }}</h2>
         <div v-if="erro" class="erro">{{ erro }}</div>
-        <div v-for="c in cfg.campos" :key="c.chave" class="campo">
+        <template v-for="c in cfg.campos" :key="c.chave">
+        <label v-if="c.tipo === 'checkbox'" class="campo-check">
+          <input v-model="form[c.chave]" type="checkbox" />
+          <span>{{ c.rotulo }}<span v-if="c.dica" class="dica" style="display: block">{{ c.dica }}</span></span>
+        </label>
+        <div v-else-if="!c.mostrarSe || c.mostrarSe(form)" class="campo">
           <label>{{ c.rotulo }}{{ c.obrigatorio ? " *" : "" }}</label>
-          <select v-if="c.tipo === 'select'" v-model="form[c.chave]">
+          <select v-if="c.tipo === 'select'" v-model="form[c.chave]" :required="c.obrigatorio">
             <option v-for="o in opcoesDoCampo(c)" :key="o.valor" :value="o.valor">{{ o.rotulo }}</option>
           </select>
-          <input v-else v-model="form[c.chave]" :type="c.tipo" :required="c.obrigatorio" :min="c.min" :step="c.step" />
+          <input v-else v-model="form[c.chave]" :type="c.tipo" :required="c.obrigatorio" :min="c.min" :step="c.step" :placeholder="c.placeholder" />
           <span v-if="c.dica" class="dica">{{ c.dica }}</span>
           <span v-if="c.opcoesDe === 'regioes' && !opcoesDinamicas.regioes?.length" class="dica">
             Nenhuma região cadastrada ainda — <router-link to="/cadastros/regioes">cadastrar regiões</router-link>.
@@ -257,6 +276,7 @@ async function excluir(r) {
             Nenhuma fábrica/armazém cadastrado ainda — <router-link to="/locais">cadastrar locais</router-link>.
           </span>
         </div>
+        </template>
         <div v-if="editando.emAndamento" class="aviso">
           <label class="linha" style="gap: 8px; align-items: flex-start">
             <input v-model="aplicarEmAndamento" type="checkbox" style="margin-top: 3px" />
@@ -275,3 +295,9 @@ async function excluir(r) {
     </div>
   </template>
 </template>
+
+<style scoped>
+.campo-check { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; cursor: pointer; margin-bottom: 10px; }
+.campo-check input { width: auto; margin-top: 3px; }
+.campo-check .dica { font-weight: 400; }
+</style>

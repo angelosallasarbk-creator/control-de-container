@@ -124,19 +124,24 @@ model Regiao {
 // A região é da fábrica: todos os grupos da mesma fábrica ficam na mesma região
 // (garantido na validação do cadastro, ver routes/cadastros.js).
 model GrupoOperacao {
-  id                  Int         @id @default(autoincrement())
+  id                  Int            @id @default(autoincrement())
   cliente             String
   fabrica             String
   regiaoId            Int?
-  regiao              Regiao?     @relation(fields: [regiaoId], references: [id])
+  regiao              Regiao?        @relation(fields: [regiaoId], references: [id])
   // Local físico padrão de carregamento (endereço/coordenadas) usado na previsão de rota.
   localId             Int?
-  local               Local?      @relation(fields: [localId], references: [id])
+  local               Local?         @relation(fields: [localId], references: [id])
   metaEstadiaHoras    Int
-  alertaEstadiaHoras  Int         @default(6) // avisa quando faltarem X horas para vencer a meta
-  custoEstadiaPorHora Decimal?    @db.Decimal(12, 2)
-  ativo               Boolean     @default(true)
-  criadoEm            DateTime    @default(now())
+  alertaEstadiaHoras  Int            @default(6) // avisa quando faltarem X horas para vencer a meta
+  custoEstadiaPorHora Decimal?       @db.Decimal(12, 2)
+  // Pode ser ponto de parada no trajeto de outros containers (Editar trajeto): usa o local acima,
+  // com posição padrão (antes/depois do carregamento) e tempo médio de parada.
+  podeSerParada       Boolean        @default(false)
+  posicaoParada       PosicaoParada?
+  tempoParadaHoras    Decimal?       @db.Decimal(5, 1)
+  ativo               Boolean        @default(true)
+  criadoEm            DateTime       @default(now())
   containers          Container[]
 
   @@unique([cliente, fabrica])
