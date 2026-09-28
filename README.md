@@ -42,6 +42,17 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos da Home.
 
+## Produtos: categoria e temperatura (v1.4)
+
+- **Categoria do produto:** Congelado, Refrigerado ou **Carga Seca**. Congelado e Refrigerado têm faixa (setpoint, mínima, máxima, tolerância); Carga Seca não tem temperatura.
+- **Controle de temperatura** = container **reefer** com produto **Congelado/Refrigerado**. Sem isso (container dry ou produto Carga Seca): o QR não pede temperatura, a ficha não mostra a aba nem as informações de temperatura, não há alerta de temperatura/sem leitura, e leituras (manual, QR ou integração) são recusadas.
+- Numa etiqueta nova, o QR descobre o container pelo número digitado e esconde a temperatura se ele for Carga Seca.
+- Produtos já cadastrados foram classificados pela faixa na migração (setpoint ≤ -5 °C = Congelado, senão Refrigerado). Pela API, produto sem categoria recebe a mesma regra.
+
+## Portaria: placa obrigatória (v1.4)
+
+- Ao registrar entrada/saída pelo QR, a **placa do veículo é obrigatória** (vem preenchida com a placa vinculada ao container). Se for **diferente** da vinculada, o **motivo da troca é obrigatório**. A placa nova vai para o container e o motivo fica na etapa e no log.
+
 ## Pontos de parada no trajeto — Ponto Fiscal (v1.2)
 
 - **Cadastro:** Cadastros → Locais, tipo **"Ponto Fiscal"** (função "Parada no trajeto"; dá para criar outros tipos com essa função). Ao escolher o tipo, o formulário pergunta se o ponto fica **antes ou depois do ponto de carregamento** (posição padrão) e o **tempo médio de parada** (padrão 1 h).

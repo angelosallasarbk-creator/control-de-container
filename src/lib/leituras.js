@@ -4,7 +4,7 @@ import { prisma } from "./prisma.js";
 import { erroHttp } from "./asyncHandler.js";
 import { registrarLog } from "./auditoria.js";
 import { sincronizarAlertas } from "./alertas.js";
-import { ehReefer, STATUS_ENCERRADOS } from "./prazos.js";
+import { controlaTemperatura, STATUS_ENCERRADOS } from "./prazos.js";
 
 const FOLGA_FUTURO_MS = 5 * 60 * 1000;
 // Leitura digitada com horário mais de 2h antes do momento em que chegou ao sistema: fica
@@ -20,7 +20,7 @@ export function minutosDeAtraso(leitura) {
  * extras: { etiquetaId, latitude, longitude, precisaoM } (leitura pelo QR).
  */
 export async function registrarLeitura({ container, temperatura, lidaEm, origem, usuarioEmail, extras = {} }, cliente = prisma) {
-  if (!ehReefer(container.tipo)) throw erroHttp(400, "Leitura de temperatura só se aplica a container reefer.");
+  if (!controlaTemperatura(container)) throw erroHttp(400, "Este container não tem controle de temperatura (não é reefer ou o produto é Carga Seca).");
   if (STATUS_ENCERRADOS.includes(container.status)) throw erroHttp(409, "Container encerrado não recebe novas leituras.");
   if (lidaEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "O horário da leitura não pode estar no futuro.");
   const inicio = container.coletadoEm ?? container.criadoEm;

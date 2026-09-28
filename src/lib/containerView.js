@@ -1,4 +1,4 @@
-import { calcularSituacao, semaforo, ehReefer } from "./prazos.js";
+import { calcularSituacao, semaforo, controlaTemperatura } from "./prazos.js";
 import { estimarCiclo } from "./estimativa.js";
 import { configRodagem } from "./previsao.js";
 import { LIMITE_ATRASO_MIN } from "./leituras.js";
@@ -37,7 +37,8 @@ export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = nul
   const { leituras: _l, _count, ...resto } = c;
   return {
     ...decimaisParaNumero(resto),
-    reefer: ehReefer(c.tipo),
+    // "reefer" = controla temperatura (reefer com produto Congelado/Refrigerado); Carga Seca não.
+    reefer: controlaTemperatura(c),
     grupo: c.grupo ? decimaisParaNumero(c.grupo) : undefined,
     armador: c.armador ? decimaisParaNumero(c.armador) : undefined,
     produto: c.produto ? decimaisParaNumero(c.produto) : c.produto,

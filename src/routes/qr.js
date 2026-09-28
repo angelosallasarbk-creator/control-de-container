@@ -7,7 +7,7 @@ import { requirePermissao, tem, ehTransportador, ehPortaria } from "../lib/permi
 import { registrarLog } from "../lib/auditoria.js";
 import { registrarLeitura, sincronizarAlertas } from "../lib/leituras.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
-import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
+import { controlaTemperatura, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { decimal, dataHora, inteiro, id as validarId } from "../lib/validacao.js";
 import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, FLUXO, validarNovoContainer, gravarNovoContainer, validarMomento, prepararRota, validarLocais } from "./containers.js";
 import { estadoDaEtiqueta } from "./etiquetas.js";
@@ -37,7 +37,8 @@ async function resumo(e, req) {
   return {
     etiqueta: { codigo: e.codigo, estado: estadoDaEtiqueta(e), vinculadaEm: e.vinculadaEm, vinculadaPor: e.vinculadaPor, motivoCancelamento: e.motivoCancelamento },
     container: c && {
-      id: c.id, numero: c.numero, tipo: c.tipo, reefer: ehReefer(c.tipo), status: c.status, rotulosEtapa: rotulosDasEtapas(c),
+      id: c.id, numero: c.numero, tipo: c.tipo, reefer: controlaTemperatura(c), status: c.status, rotulosEtapa: rotulosDasEtapas(c),
+      placa: c.placa, motorista: c.motorista,
       cliente: c.grupo.cliente, fabrica: c.grupo.fabrica,
       setpoint: c.setpoint === null ? null : Number(c.setpoint),
       tempMin: c.tempMin === null ? null : Number(c.tempMin),
@@ -105,7 +106,7 @@ qrRouter.post("/:token/vincular", requirePermissao("qr.registrar"), asyncHandler
   if (!container) {
     throw erroHttp(404, `O container ${numero} não está ativo no sistema. Confira o número ou peça para cadastrá-lo antes.`);
   }
-  const reefer = ehReefer(container.tipo);
+  const reefer = controlaTemperatura(container);
   const temperatura = reefer ? decimal(b.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 }) : null;
   const lidaEm = dataHora(b.lidaEm, "Data/hora") ?? new Date();
   const local = lerLocalizacao(b);
@@ -204,7 +205,7 @@ qrRouter.get("/opcoes/coleta", requirePermissao("qr.registrar"), asyncHandler(as
     prisma.local.findMany({ where: { ativo: true, tipo: { funcao: "CARREGAMENTO" } }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cidade: true, uf: true } }),
     prisma.grupoOperacao.findMany({ where: { ativo: true }, orderBy: [{ cliente: "asc" }, { fabrica: "asc" }], select: { id: true, cliente: true, fabrica: true } }),
     prisma.armador.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
-    prisma.produto.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
+    prisma.produto.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true, categoria: true } }),
   ]);
   res.json({ tipos, locais, locaisCarregamento, grupos, armadores, produtos, tiposContainer: TIPOS_CONTAINER });
 }));
@@ -216,10 +217,11 @@ qrRouter.get("/opcoes/container/:numero", requirePermissao("qr.registrar"), asyn
   if (!formatoValido) throw erroHttp(400, "Número do container inválido.");
   const c = await prisma.container.findFirst({
     where: { numero, status: { notIn: STATUS_ENCERRADOS } },
-    select: { numero: true, tipo: true, status: true, portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true },
+    select: { numero: true, tipo: true, status: true, portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true, placa: true, tempMin: true, tempMax: true },
   });
   if (!c) return res.json({ cadastrado: false, numero });
-  res.json({ cadastrado: true, ...c, trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId } });
+  const { tempMin: _min, tempMax: _max, ...resto } = c;
+  res.json({ cadastrado: true, ...resto, controlaTemperatura: controlaTemperatura(c), trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId } });
 }));
 
 async function localDeRetirada(valor) {
@@ -265,7 +267,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
       );
     }
   }
-  const reefer = ehReefer(container?.tipo ?? novo.tipo);
+  const reefer = controlaTemperatura(container ?? novo);
   const temperatura = reefer ? decimal(b.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 }) : null;
   const jaColetado = Boolean(container) && container.status !== "PROGRAMADO";
   if (container && !jaColetado) validarMomento(coletadoEm, container);
@@ -370,7 +372,17 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
     throw erroHttp(409, "A entrada deste container ainda não foi registrada. Registre a ENTRADA primeiro (pode ajustar o horário) e depois a saída.");
   }
   validarMomento(ocorridoEm, container);
-  const reefer = ehReefer(container.tipo);
+  const reefer = controlaTemperatura(container);
+  // Portaria: placa do veículo obrigatória; se já havia outra placa no container, motivo obrigatório.
+  const placa = String(b.placa ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!placa) throw erroHttp(400, "Informe a placa do veículo.");
+  if (!/^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(placa)) throw erroHttp(400, "Placa inválida (ex.: ABC1D23 ou ABC1234).");
+  const trocouPlaca = Boolean(container.placa) && container.placa !== placa;
+  const motivoPlaca = String(b.motivoTrocaPlaca ?? "").trim();
+  if (trocouPlaca && motivoPlaca.length < 3) {
+    throw erroHttp(400, `A placa informada (${placa}) é diferente da vinculada ao container (${container.placa}). Informe o motivo da troca.`, { codigo: "MOTIVO_TROCA_PLACA", placaAnterior: container.placa });
+  }
+  const notaPlaca = trocouPlaca ? ` · placa ${container.placa} → ${placa} (motivo: ${motivoPlaca.slice(0, 200)})` : ` · placa ${placa}`;
   const temperatura = reefer ? decimal(b.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 }) : null;
 
   const anterior = e.status === "LIVRE" ? await prisma.etiquetaQR.findFirst({ where: { containerId: container.id, status: "VINCULADA" } }) : null;
@@ -384,7 +396,7 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
   const completadas = etapas.slice(0, -1);
   const final = await prisma.$transaction(async (tx) => {
     // Condição no WHERE: se outra pessoa avançou o container no meio tempo, nada é gravado.
-    const dados = { status: alvo, ...Object.fromEntries(etapas.map((s) => [CAMPO_DATA[s], ocorridoEm])) };
+    const dados = { status: alvo, placa, ...Object.fromEntries(etapas.map((s) => [CAMPO_DATA[s], ocorridoEm])) };
     const r = await tx.container.updateMany({ where: { id: container.id, status: container.status }, data: dados });
     if (r.count !== 1) throw erroHttp(409, "O container acabou de mudar de etapa. Leia o QR de novo.");
     let de = container.status;
@@ -393,14 +405,14 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
       await tx.eventoContainer.create({
         data: {
           containerId: container.id, statusDe: de, statusPara: s, ocorridoEm, usuarioEmail: email,
-          observacao: completada ? "Etapa completada pela portaria (não registrada pela operação)" : `${movimento === "ENTRADA" ? "Entrada" : "Saída"} registrada pela portaria`,
+          observacao: completada ? "Etapa completada pela portaria (não registrada pela operação)" : `${movimento === "ENTRADA" ? "Entrada" : "Saída"} registrada pela portaria${notaPlaca}`,
         },
       });
       de = s;
     }
     await registrarLog({
       usuarioEmail: email, acao: "AVANCAR", entidade: "Container", entidadeId: container.id,
-      descricao: `Container ${numero}: ${movimento === "ENTRADA" ? "entrada" : "saída"} pela portaria (${nome(alvo)})` +
+      descricao: `Container ${numero}: ${movimento === "ENTRADA" ? "entrada" : "saída"} pela portaria (${nome(alvo)})${notaPlaca}` +
         (completadas.length ? `; etapas completadas: ${completadas.map(nome).join(", ")}` : ""),
     }, tx);
     if (e.status === "LIVRE") {

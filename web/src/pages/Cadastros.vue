@@ -90,20 +90,27 @@ const CONFIG = {
     ],
   },
   produtos: {
-    titulo: "Produtos (faixa de temperatura)",
-    ajuda: "Faixa aceitável para containers reefer. Fora da faixa gera alerta de Atenção na hora e Crítico após a tolerância.",
+    titulo: "Produtos",
+    ajuda:
+      "Congelado e Refrigerado têm faixa de temperatura: em container reefer, a temperatura é pedida no QR e fora da faixa gera alerta " +
+      "(Atenção na hora, Crítico após a tolerância). Carga Seca não tem temperatura: o QR não pede e a ficha não mostra temperatura.",
     colunas: [
       { rotulo: "Produto", valor: (r) => r.nome },
-      { rotulo: "Setpoint", valor: (r) => fmtTemp(r.setpoint) },
-      { rotulo: "Faixa", valor: (r) => `${fmtTemp(r.tempMin)} a ${fmtTemp(r.tempMax)}` },
-      { rotulo: "Tolerância", valor: (r) => `${r.toleranciaMinutos} min` },
+      { rotulo: "Categoria", valor: (r) => ({ CONGELADO: "Congelado", REFRIGERADO: "Refrigerado", CARGA_SECA: "Carga Seca" })[r.categoria] ?? "—" },
+      { rotulo: "Setpoint", valor: (r) => (r.categoria === "CARGA_SECA" ? "—" : fmtTemp(r.setpoint)) },
+      { rotulo: "Faixa", valor: (r) => (r.categoria === "CARGA_SECA" ? "sem temperatura" : `${fmtTemp(r.tempMin)} a ${fmtTemp(r.tempMax)}`) },
+      { rotulo: "Tolerância", valor: (r) => (r.categoria === "CARGA_SECA" ? "—" : `${r.toleranciaMinutos} min`) },
     ],
     campos: [
       { chave: "nome", rotulo: "Nome do produto", tipo: "text", obrigatorio: true },
-      { chave: "setpoint", rotulo: "Setpoint (°C)", tipo: "number", obrigatorio: true, step: "0.1" },
-      { chave: "tempMin", rotulo: "Temperatura mínima (°C)", tipo: "number", obrigatorio: true, step: "0.1" },
-      { chave: "tempMax", rotulo: "Temperatura máxima (°C)", tipo: "number", obrigatorio: true, step: "0.1" },
-      { chave: "toleranciaMinutos", rotulo: "Tolerância fora da faixa (min)", tipo: "number", obrigatorio: true, min: 0, padrao: 30 },
+      {
+        chave: "categoria", rotulo: "Categoria", tipo: "select", obrigatorio: true, padrao: "REFRIGERADO",
+        opcoes: [{ valor: "CONGELADO", rotulo: "Congelado" }, { valor: "REFRIGERADO", rotulo: "Refrigerado" }, { valor: "CARGA_SECA", rotulo: "Carga Seca (sem temperatura)" }],
+      },
+      { chave: "setpoint", rotulo: "Setpoint (°C)", tipo: "number", obrigatorio: true, step: "0.1", mostrarSe: (f) => f.categoria !== "CARGA_SECA" },
+      { chave: "tempMin", rotulo: "Temperatura mínima (°C)", tipo: "number", obrigatorio: true, step: "0.1", mostrarSe: (f) => f.categoria !== "CARGA_SECA" },
+      { chave: "tempMax", rotulo: "Temperatura máxima (°C)", tipo: "number", obrigatorio: true, step: "0.1", mostrarSe: (f) => f.categoria !== "CARGA_SECA" },
+      { chave: "toleranciaMinutos", rotulo: "Tolerância fora da faixa (min)", tipo: "number", obrigatorio: true, min: 0, padrao: 30, mostrarSe: (f) => f.categoria !== "CARGA_SECA" },
     ],
   },
 };
