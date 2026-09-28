@@ -78,10 +78,27 @@ const CADASTROS = {
       if (!parcial || "alertaEstadiaHoras" in b)
         d.alertaEstadiaHoras = inteiro(b.alertaEstadiaHoras ?? 6, "Antecedência do alerta (h)", { obrigatorio: true, min: 0, max: 2000 });
       if ("custoEstadiaPorHora" in b) d.custoEstadiaPorHora = decimal(b.custoEstadiaPorHora, "Custo por hora excedida", { min: 0 });
+      if ("podeSerParada" in b) d.podeSerParada = b.podeSerParada === true || b.podeSerParada === "true" || b.podeSerParada === 1;
+      if ("posicaoParada" in b) {
+        d.posicaoParada = b.posicaoParada ? String(b.posicaoParada) : null;
+        if (d.posicaoParada && !["ANTES_CARREGAMENTO", "APOS_CARREGAMENTO"].includes(d.posicaoParada)) throw erroHttp(400, "Posição no trajeto inválida.");
+      }
+      if ("tempoParadaHoras" in b) d.tempoParadaHoras = decimal(b.tempoParadaHoras, "Tempo médio de parada (h)", { min: 0, max: 72 });
       if ("ativo" in b) d.ativo = Boolean(b.ativo);
       return d;
     },
     antesDeSalvar: async (tx, dados, corpo, antes) => {
+      // Ponto de parada: precisa do local (endereço/coordenadas) e da posição padrão; tempo vazio = 1 h.
+      const parada = "podeSerParada" in dados ? dados.podeSerParada : Boolean(antes?.podeSerParada);
+      if (parada) {
+        if (!("localId" in dados ? dados.localId : antes?.localId)) throw erroHttp(400, "Para ser ponto de parada, informe o local de carregamento (endereço) deste Ponto de Carregamento.");
+        if (!("posicaoParada" in dados ? dados.posicaoParada : antes?.posicaoParada)) throw erroHttp(400, "Informe se, como parada, ele fica antes ou depois do carregamento.");
+        const tempo = "tempoParadaHoras" in dados ? dados.tempoParadaHoras : antes?.tempoParadaHoras;
+        if (tempo === null || tempo === undefined) dados.tempoParadaHoras = 1;
+      } else if ("podeSerParada" in dados) {
+        dados.posicaoParada = null;
+        dados.tempoParadaHoras = null;
+      }
       if (dados.localId) {
         const local = await tx.local.findUnique({ where: { id: dados.localId }, include: { tipo: true } });
         if (!local) throw erroHttp(400, "Local da fábrica não encontrado.");

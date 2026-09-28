@@ -117,6 +117,7 @@ function textoDemurrage(d) {
           <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
           <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Carregamento</ThOrdenavel>
           <ThOrdenavel chave="armador" :ordem="ordem">Armador</ThOrdenavel>
+          <th>Motorista / Placa</th>
           <ThOrdenavel chave="etapa" :ordem="ordem" titulo="Na ordem do processo">Etapa</ThOrdenavel>
           <ThOrdenavel chave="estadia" :ordem="ordem" titulo="Pelo tempo que falta para a meta: mais urgente primeiro no crescente">Estadia</ThOrdenavel>
           <ThOrdenavel chave="demurrage" :ordem="ordem" titulo="Pelos dias livres restantes: vencidos primeiro no crescente">Demurrage</ThOrdenavel>
@@ -132,6 +133,7 @@ function textoDemurrage(d) {
           <td>{{ ROTULO_TIPO[c.tipo] }}</td>
           <td>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</td>
           <td>{{ c.armador.nome }}</td>
+          <td style="white-space: nowrap"><template v-if="c.motorista || c.placa">{{ c.motorista ?? "—" }}<div class="mudo pequeno mono">{{ c.placa ?? "sem placa" }}</div></template><span v-else class="mudo">—</span></td>
           <td><span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span></td>
           <td :class="c.situacao.estadia && `txt-${c.situacao.estadia.situacao}`">
             <template v-if="c.situacao.estadia">{{ fmtHoras(c.situacao.estadia.horasDecorridas) }} / {{ c.situacao.estadia.metaHoras }}h</template>
@@ -156,7 +158,7 @@ function textoDemurrage(d) {
             <span v-else class="mudo">—</span>
           </td>
         </tr>
-        <tr v-if="!lista.length && !carregando"><td colspan="11" class="vazio">Nenhum container encontrado.</td></tr>
+        <tr v-if="!lista.length && !carregando"><td colspan="12" class="vazio">Nenhum container encontrado.</td></tr>
       </tbody>
     </table>
   </div>

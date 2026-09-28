@@ -6,7 +6,7 @@ import { prisma } from "./prisma.js";
 import { erroHttp } from "./asyncHandler.js";
 import { registrarLog } from "./auditoria.js";
 import { STATUS_ENCERRADOS } from "./prazos.js";
-import { ordenarParadas } from "./rotas.js";
+import { ordenarParadas, tempoParadaDoLocal, SELECT_LOCAL_PARADA } from "./rotas.js";
 
 const PAPEIS = ["RETIRADA", "CARREGAMENTO", "ENTREGA", "PARADA"];
 const FUNCAO_DO_PAPEL = { RETIRADA: "RETIRADA_ENTREGA", ENTREGA: "RETIRADA_ENTREGA", CARREGAMENTO: "CARREGAMENTO", PARADA: "PARADA" };
@@ -15,14 +15,16 @@ const FASES_NA_ETAPA = { COLETADO: "ANTES_CARREGAMENTO", SAIU_FABRICA: "APOS_CAR
 
 export const SELECT_PARADA = {
   id: true, localId: true, fase: true, ordem: true, passouEm: true, registradoPor: true, origemRegistro: true,
-  local: { select: { id: true, nome: true, cidade: true, uf: true, tempoParadaHoras: true, tipo: { select: { nome: true } } } },
+  local: { select: SELECT_LOCAL_PARADA },
 };
 
 export const serializarParadas = (paradas = []) =>
   ordenarParadas(paradas).map((p) => ({
     id: p.id, localId: p.localId, fase: p.fase, ordem: p.ordem, passouEm: p.passouEm, registradoPor: p.registradoPor, origemRegistro: p.origemRegistro,
-    nome: p.local?.nome, tipo: p.local?.tipo?.nome, cidade: p.local?.cidade, uf: p.local?.uf,
-    tempoParadaHoras: p.local?.tempoParadaHoras === null || p.local?.tempoParadaHoras === undefined ? 1 : Number(p.local.tempoParadaHoras),
+    nome: p.local?.nome, cidade: p.local?.cidade, uf: p.local?.uf,
+    // Ponto de Carregamento usado como parada aparece com esse rótulo (não "Fábrica"/"Armazém").
+    tipo: p.local?.tipo?.funcao === "PARADA" ? p.local.tipo.nome : "Ponto de Carregamento",
+    tempoParadaHoras: tempoParadaDoLocal(p.local),
   }));
 
 /**
@@ -47,6 +49,10 @@ export async function validarTrajeto(pontos, container) {
     return n;
   });
   const locais = new Map((await prisma.local.findMany({ where: { id: { in: ids } }, include: { tipo: true } })).map((l) => [l.id, l]));
+  // Pontos de Carregamento marcados como "pode ser ponto de parada" (o local deles vale como parada).
+  const locaisDeGrupoParada = new Set((await prisma.grupoOperacao.findMany({
+    where: { podeSerParada: true, ativo: true, localId: { in: ids } }, select: { localId: true },
+  })).map((g) => g.localId));
   const atuais = new Map((container.paradas ?? []).map((p) => [p.id, p]));
   const usados = new Set([container.portoRetiradaId, container.localCarregamentoId, container.portoEntregaId, ...[...atuais.values()].map((p) => p.localId)]);
   const vistosParada = new Set();
@@ -58,13 +64,17 @@ export async function validarTrajeto(pontos, container) {
     const local = locais.get(ids[i]);
     const rotulo = `${NOME_DO_PAPEL[papel]} (posição ${i + 1})`;
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
-    if (local.tipo.funcao !== FUNCAO_DO_PAPEL[papel]) throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome} — não serve como ${NOME_DO_PAPEL[papel].toLowerCase()}.`);
+    const serveComoParada = papel === "PARADA" && locaisDeGrupoParada.has(local.id);
+    if (local.tipo.funcao !== FUNCAO_DO_PAPEL[papel] && !serveComoParada) {
+      throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome} — não serve como ${NOME_DO_PAPEL[papel].toLowerCase()}${papel === "PARADA" ? " (marque \"Pode ser ponto de parada\" no Ponto de Carregamento dele)" : ""}.`);
+    }
     if (!local.ativo && !usados.has(local.id)) throw erroHttp(400, `${rotulo}: o local "${local.nome}" está inativo.`);
     if (papel === "RETIRADA") resultado.portoRetiradaId = local.id;
     else if (papel === "CARREGAMENTO") resultado.localCarregamentoId = local.id;
     else if (papel === "ENTREGA") resultado.portoEntregaId = local.id;
     else {
       if (vistosParada.has(local.id)) throw erroHttp(400, `O ponto "${local.nome}" aparece mais de uma vez no trajeto.`);
+      if (local.id === ids[idxCarregamento]) throw erroHttp(400, `"${local.nome}" já é o local de carregamento deste container — não pode ser também uma parada.`);
       vistosParada.add(local.id);
       const fase = i < idxCarregamento ? "ANTES_CARREGAMENTO" : "APOS_CARREGAMENTO";
       const paradaId = p.paradaId ? Number(p.paradaId) : null;

@@ -3,7 +3,7 @@
 // rotas.garantirDistancias, na gravação do container e no verificador periódico).
 import { prisma } from "./prisma.js";
 import { percentil } from "./estimativa.js";
-import { ordenarParadas } from "./rotas.js";
+import { ordenarParadas, tempoParadaDoLocal, SELECT_LOCAL_PARADA } from "./rotas.js";
 
 const HORA = 60 * 60 * 1000;
 const JANELA_HISTORICO_DIAS = 180;
@@ -47,7 +47,7 @@ async function paradasPorContainer(containerIds) {
   if (!containerIds.length) return new Map();
   const paradas = await prisma.paradaContainer.findMany({
     where: { containerId: { in: containerIds } },
-    select: { id: true, containerId: true, localId: true, fase: true, ordem: true, passouEm: true, local: { select: { nome: true, tempoParadaHoras: true } } },
+    select: { id: true, containerId: true, localId: true, fase: true, ordem: true, passouEm: true, local: { select: SELECT_LOCAL_PARADA } },
   });
   const mapa = new Map();
   for (const p of paradas) {
@@ -69,7 +69,7 @@ function perna(origemId, destinoId, paradas, km) {
     trechos: trechos.map((x) => (x ? { km: x.km, fonte: x.fonte } : null)),
     paradas: paradas.map((p) => ({
       id: p.id, localId: p.localId, nome: p.local.nome, passouEm: p.passouEm,
-      tempoHoras: p.local.tempoParadaHoras === null ? 1 : Number(p.local.tempoParadaHoras),
+      tempoHoras: tempoParadaDoLocal(p.local),
     })),
   };
 }

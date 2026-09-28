@@ -102,6 +102,20 @@ export async function invalidarDistancias(localId) {
   await prisma.distanciaRota.deleteMany({ where: { OR: [{ origemId: localId }, { destinoId: localId }] } });
 }
 
+// Tempo de parada (h) de um local usado como parada: o do cadastro do Ponto Fiscal (função PARADA)
+// ou o do Ponto de Carregamento marcado como "pode ser ponto de parada". Vazio = 1 h.
+// local: { tempoParadaHoras, tipo: { funcao }, grupos: [{ tempoParadaHoras }] }
+export function tempoParadaDoLocal(local) {
+  const valor = local?.tipo?.funcao === "PARADA" ? local.tempoParadaHoras : local?.grupos?.[0]?.tempoParadaHoras;
+  return valor === null || valor === undefined ? 1 : Number(valor);
+}
+// Select do local de uma parada com o necessário para o nome e o tempo de parada.
+export const SELECT_LOCAL_PARADA = {
+  id: true, nome: true, cidade: true, uf: true, tempoParadaHoras: true,
+  tipo: { select: { nome: true, funcao: true } },
+  grupos: { where: { podeSerParada: true, ativo: true }, select: { cliente: true, fabrica: true, tempoParadaHoras: true }, orderBy: { id: "asc" }, take: 1 },
+};
+
 // Paradas do trajeto em ordem: antes do carregamento, depois do carregamento.
 export const ordenarParadas = (paradas = []) => {
   const fase = (p) => (p.fase === "ANTES_CARREGAMENTO" ? 0 : 1);

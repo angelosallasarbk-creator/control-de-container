@@ -4,7 +4,7 @@ import { configRodagem } from "./previsao.js";
 import { LIMITE_ATRASO_MIN } from "./leituras.js";
 import { rotulosDasEtapas } from "./tiposLocal.js";
 
-const CAMPOS_DECIMAIS = ["custoEstadiaPorHora", "valorDiaria", "setpoint", "tempMin", "tempMax"];
+const CAMPOS_DECIMAIS = ["custoEstadiaPorHora", "valorDiaria", "setpoint", "tempMin", "tempMax", "tempoParadaHoras"];
 export const CAMPOS_LOCAL = ["latitude", "longitude", "filaHoras", "tempoParadaHoras"];
 
 // Prisma devolve Decimal, que vira string no JSON; o front trabalha com número.

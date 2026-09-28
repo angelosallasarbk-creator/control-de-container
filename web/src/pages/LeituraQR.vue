@@ -9,10 +9,31 @@ import { conferirNumero } from "../iso6346.js";
 // antes e volta para cá). 1ª leitura: número + temperatura + data/hora; depois, só temperatura.
 // motorista: acesso pelo celular (sem usuário) — mesmas telas, rotas /api/motorista/qr.
 const props = defineProps({ token: { type: String, required: true }, motorista: { type: Object, default: null } });
-const emit = defineEmits(["sair", "sessao-encerrada"]);
+const emit = defineEmits(["sair", "sessao-encerrada", "motorista-atualizado"]);
 const auth = useAuthStore();
 const q = props.motorista ? qrMotorista : api;
 const nomeQuem = computed(() => props.motorista ? `${props.motorista.nome} · ${props.motorista.transportadora?.nome ?? ""}` : auth.usuario?.nome);
+// Placa do caminhão do motorista: confere na tela e troca se mudou de caminhão. O próximo registro
+// pelo QR grava motorista e placa no container.
+const trocandoPlaca = ref(false);
+const novaPlaca = ref("");
+const erroPlaca = ref(null);
+function abrirPlaca() {
+  novaPlaca.value = props.motorista?.placa ?? "";
+  erroPlaca.value = null;
+  trocandoPlaca.value = true;
+}
+async function salvarPlaca() {
+  erroPlaca.value = null;
+  try {
+    const r = await api.motoristaAtualizar({ placa: novaPlaca.value });
+    emit("motorista-atualizado", r.motorista);
+    trocandoPlaca.value = false;
+  } catch (e) {
+    erroPlaca.value = e.message;
+  }
+}
+
 // Sessão do motorista caiu (bloqueado/encerrada): volta para a tela de acesso.
 function tratarErroMotorista(e) {
   if (props.motorista && (e.status === 401 || e.status === 403) && e.codigo && /MOTORISTA/.test(e.codigo)) {
@@ -359,6 +380,29 @@ async function registrarPassagemQr() {
 
       <template v-else>
         <div class="etiqueta-cod">Etiqueta <strong class="mono">{{ info.etiqueta.codigo }}</strong></div>
+
+        <!-- Motorista: placa do caminhão (vai para o container em cada registro) -->
+        <section v-if="motorista" class="cartao placa-motorista">
+          <template v-if="!trocandoPlaca">
+            <div class="linha-entre" style="gap: 10px">
+              <div>
+                <div class="mudo pequeno">Placa do caminhão</div>
+                <div class="mono negrito" style="font-size: 18px">{{ motorista.placa ?? "não informada" }}</div>
+              </div>
+              <button type="button" class="pequeno" @click="abrirPlaca">{{ motorista.placa ? "Trocar" : "Informar" }}</button>
+            </div>
+            <p class="mudo pequeno" style="margin: 6px 0 0">Mudou de caminhão? Troque a placa antes de registrar.</p>
+          </template>
+          <form v-else class="linha" style="gap: 8px; align-items: flex-end; flex-wrap: wrap" @submit.prevent="salvarPlaca">
+            <div class="campo" style="flex: 1; min-width: 140px; margin: 0">
+              <label for="placa-nova">Placa do caminhão</label>
+              <input id="placa-nova" v-model="novaPlaca" class="mono grande-campo" maxlength="8" placeholder="ABC1D23" autocapitalize="characters" style="text-transform: uppercase" required />
+            </div>
+            <button type="submit" class="primario">Salvar</button>
+            <button type="button" @click="trocandoPlaca = false">Cancelar</button>
+            <div v-if="erroPlaca" class="erro" style="width: 100%">{{ erroPlaca }}</div>
+          </form>
+        </section>
 
         <!-- Container no trecho de um ponto de parada ainda não registrado -->
         <section v-if="proximaParada" class="cartao passagem">
