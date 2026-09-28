@@ -7,7 +7,7 @@ import { lerConfiguracao } from "../lib/configuracao.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
 import { montarContainer, serializarLeitura, CONTAGEM_QR } from "../lib/containerView.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
-import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
+import { ehReefer, controlaTemperatura, STATUS_ENCERRADOS, PRODUTO_COM_TEMPERATURA } from "../lib/prazos.js";
 import { texto, inteiro, decimal, dataHora, id as validarId, umDe } from "../lib/validacao.js";
 import { montarContextos } from "../lib/previsao.js";
 import { registrarLeitura } from "../lib/leituras.js";
@@ -306,6 +306,8 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
   if (!armador?.ativo) throw erroHttp(400, "Armador inexistente ou inativo.");
   if (produtoId && !produto?.ativo) throw erroHttp(400, "Produto inexistente ou inativo.");
   if (ehReefer(tipo) && !produto) throw erroHttp(400, "Container reefer precisa de um produto (define a faixa de temperatura).");
+  // Faixa de temperatura só para reefer com produto Congelado/Refrigerado (Carga Seca não tem).
+  const comFaixa = ehReefer(tipo) && Boolean(produto) && PRODUTO_COM_TEMPERATURA.includes(produto.categoria);
 
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta");
   if (coletadoEm && coletadoEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "A coleta não pode estar no futuro.");
@@ -335,10 +337,10 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
     valorDiaria: armador.valorDiaria,
     moeda: armador.moeda,
     alertaDemurrageDias: armador.alertaDemurrageDias,
-    setpoint: ehReefer(tipo) ? produto.setpoint : null,
-    tempMin: ehReefer(tipo) ? produto.tempMin : null,
-    tempMax: ehReefer(tipo) ? produto.tempMax : null,
-    toleranciaMinutos: ehReefer(tipo) ? produto.toleranciaMinutos : null,
+    setpoint: comFaixa ? produto.setpoint : null,
+    tempMin: comFaixa ? produto.tempMin : null,
+    tempMax: comFaixa ? produto.tempMax : null,
+    toleranciaMinutos: comFaixa ? produto.toleranciaMinutos : null,
     status: coletadoEm ? "COLETADO" : "PROGRAMADO",
     coletadoEm,
     criadoPor: usuarioEmail,
@@ -427,7 +429,7 @@ containersRouter.patch("/:id", requirePermissao("containers.operar"), asyncHandl
     if ("metaEstadiaHoras" in b) dados.metaEstadiaHoras = inteiro(b.metaEstadiaHoras, "Meta de estadia (h)", { obrigatorio: true, min: 1, max: 2000 });
     if ("custoEstadiaPorHora" in b) dados.custoEstadiaPorHora = decimal(b.custoEstadiaPorHora, "Custo por hora excedida", { min: 0 });
     if ("freeTimeDias" in b) dados.freeTimeDias = inteiro(b.freeTimeDias, "Free time (dias)", { obrigatorio: true, min: 0, max: 365 });
-    if (ehReefer(antes.tipo)) {
+    if (controlaTemperatura(antes)) {
       for (const [campo, rotulo] of [["setpoint", "Setpoint"], ["tempMin", "Temperatura mínima"], ["tempMax", "Temperatura máxima"]]) {
         if (campo in b) dados[campo] = decimal(b[campo], rotulo, { obrigatorio: true, min: -60, max: 60 });
       }

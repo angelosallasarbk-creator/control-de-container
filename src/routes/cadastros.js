@@ -153,15 +153,28 @@ const CADASTROS = {
     validar: (b, parcial) => {
       const d = {};
       if (!parcial || "nome" in b) d.nome = texto(b.nome, "Nome", { obrigatorio: true, max: 120 });
-      for (const [campo, rotulo] of [["setpoint", "Setpoint"], ["tempMin", "Temperatura mínima"], ["tempMax", "Temperatura máxima"]]) {
-        if (!parcial || campo in b) d[campo] = decimal(b[campo], rotulo, { obrigatorio: true, min: -60, max: 60 });
+      if ("categoria" in b) {
+        d.categoria = String(b.categoria ?? "");
+        if (!["CONGELADO", "REFRIGERADO", "CARGA_SECA"].includes(d.categoria)) throw erroHttp(400, "Categoria: escolha Congelado, Refrigerado ou Carga Seca.");
       }
+      if (d.categoria === "CARGA_SECA") {
+        // Carga Seca não tem temperatura: faixa e tolerância ficam vazias.
+        Object.assign(d, { setpoint: null, tempMin: null, tempMax: null });
+      } else {
+        const exigir = !parcial || "categoria" in b;
+        for (const [campo, rotulo] of [["setpoint", "Setpoint"], ["tempMin", "Temperatura mínima"], ["tempMax", "Temperatura máxima"]]) {
+          if (exigir || campo in b) d[campo] = decimal(b[campo], rotulo, { obrigatorio: true, min: -60, max: 60 });
+        }
+      }
+      // Sem categoria (integração/API antiga): deduz pela faixa, como na migração (≤ -5 °C = Congelado).
+      if (!parcial && !d.categoria) d.categoria = Number(d.setpoint) <= -5 ? "CONGELADO" : "REFRIGERADO";
       if (!parcial || "toleranciaMinutos" in b)
-        d.toleranciaMinutos = inteiro(b.toleranciaMinutos ?? 30, "Tolerância (min)", { obrigatorio: true, min: 0, max: 1440 });
+        d.toleranciaMinutos = inteiro(b.toleranciaMinutos || 30, "Tolerância (min)", { obrigatorio: true, min: 0, max: 1440 });
       if ("ativo" in b) d.ativo = Boolean(b.ativo);
       return d;
     },
     validarConjunto: (r) => {
+      if (r.categoria === "CARGA_SECA" || r.tempMin === null || r.tempMin === undefined) return;
       if (Number(r.tempMin) > Number(r.tempMax)) throw erroHttp(400, "A temperatura mínima não pode ser maior que a máxima.");
       if (Number(r.setpoint) < Number(r.tempMin) || Number(r.setpoint) > Number(r.tempMax))
         throw erroHttp(400, "O setpoint precisa estar dentro da faixa mínima–máxima.");

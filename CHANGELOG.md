@@ -4,6 +4,14 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 1.4.0 — 28/09/2026 (tag `v1.4.0`)
+
+- **Produtos com categoria** (Congelado, Refrigerado, Carga Seca); menu "Produtos". Carga Seca sem
+  temperatura: sem pedido no QR, sem aba/informações de temperatura na ficha, sem alertas de
+  temperatura. Migração `20260929120000_categoria_produto` (acrescenta a categoria, faixa passa a
+  aceitar vazio e classifica os produtos existentes pela faixa). Voltar para a 1.3 não precisa de script.
+- **Portaria:** placa do veículo obrigatória no QR; troca de placa exige motivo (etapa + log).
+
 ## 1.3.0 — 28/09/2026 (tag `v1.3.0`)
 
 - **Ponto de Carregamento como ponto de parada:** checkbox no cadastro (posição padrão e tempo de

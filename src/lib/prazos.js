@@ -31,6 +31,14 @@ export function ehReefer(tipo) {
   return String(tipo).startsWith("REEFER");
 }
 
+// Controle de temperatura (leituras, alertas, aba Temperatura, pedido no QR): container reefer com
+// faixa definida — a faixa vem do produto Congelado/Refrigerado. Carga Seca não tem faixa.
+export function controlaTemperatura(c) {
+  const tem = (v) => v !== null && v !== undefined;
+  return ehReefer(c?.tipo) && tem(c?.tempMin) && tem(c?.tempMax);
+}
+export const PRODUTO_COM_TEMPERATURA = ["CONGELADO", "REFRIGERADO"];
+
 // Estadia na fábrica: da chegada até a saída, comparada à meta do grupo (Ponto de Carregamento).
 export function calcularEstadia(c, agora) {
   if (!c.chegadaFabricaEm) return null;

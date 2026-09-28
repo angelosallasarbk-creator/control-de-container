@@ -282,7 +282,7 @@ function alternarSecao(nome) {
           <router-link to="/locais">Locais</router-link>
           <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
           <router-link to="/cadastros/armadores">Armadores</router-link>
-          <router-link to="/cadastros/produtos">Produtos (temperatura)</router-link>
+          <router-link to="/cadastros/produtos">Produtos</router-link>
           <router-link to="/cadastros/transportadoras">Transportadoras</router-link>
           <router-link v-if="auth.pode('cadastros.editar')" to="/motoristas">Motoristas</router-link>
         </div>

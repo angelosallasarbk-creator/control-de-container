@@ -7,7 +7,7 @@ import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
 import { normalizarNumero } from "../lib/iso6346.js";
-import { ehReefer, STATUS_ENCERRADOS } from "../lib/prazos.js";
+import { controlaTemperatura, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, id as validarId } from "../lib/validacao.js";
 
 const MAX_LEITURAS_POR_ENVIO = 500;
@@ -54,7 +54,7 @@ integracaoPublicaRouter.post("/temperaturas", autenticarToken, asyncHandler(asyn
   const numeros = [...new Set(leituras.map((l) => normalizarNumero(l?.container)))];
   const ativos = await prisma.container.findMany({
     where: { numero: { in: numeros }, status: { notIn: STATUS_ENCERRADOS } },
-    select: { id: true, numero: true, tipo: true },
+    select: { id: true, numero: true, tipo: true, tempMin: true, tempMax: true },
   });
   const porNumero = new Map(ativos.map((c) => [c.numero, c]));
 
@@ -67,7 +67,7 @@ integracaoPublicaRouter.post("/temperaturas", autenticarToken, asyncHandler(asyn
     const lidaEm = new Date(l?.lidaEm);
     let motivo = null;
     if (!container) motivo = "Container não encontrado entre os ativos.";
-    else if (!ehReefer(container.tipo)) motivo = "Container não é reefer.";
+    else if (!controlaTemperatura(container)) motivo = "Container sem controle de temperatura (não é reefer ou o produto é Carga Seca).";
     else if (!Number.isFinite(temperatura) || temperatura < -60 || temperatura > 60) motivo = "Temperatura inválida (esperado entre -60 e 60).";
     else if (Number.isNaN(lidaEm.getTime())) motivo = "lidaEm inválido (use ISO 8601, ex.: 2026-09-24T10:00:00-03:00).";
     else if (lidaEm.getTime() > Date.now() + FOLGA_FUTURO_MS) motivo = "lidaEm está no futuro.";

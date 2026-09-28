@@ -222,15 +222,24 @@ model Armador {
 }
 
 // Produto = faixa de temperatura padrão para reefer.
+// Categoria da carga: Congelado e Refrigerado têm faixa de temperatura (controle no reefer);
+// Carga Seca não tem temperatura (sem leitura no QR, sem aba/alerta de temperatura).
+enum CategoriaProduto {
+  CONGELADO
+  REFRIGERADO
+  CARGA_SECA
+}
+
 model Produto {
-  id                Int         @id @default(autoincrement())
-  nome              String      @unique
-  setpoint          Decimal     @db.Decimal(5, 1)
-  tempMin           Decimal     @db.Decimal(5, 1)
-  tempMax           Decimal     @db.Decimal(5, 1)
-  toleranciaMinutos Int         @default(30) // fora da faixa por mais que isso vira CRÍTICO
-  ativo             Boolean     @default(true)
-  criadoEm          DateTime    @default(now())
+  id                Int              @id @default(autoincrement())
+  nome              String           @unique
+  categoria         CategoriaProduto @default(REFRIGERADO)
+  setpoint          Decimal?         @db.Decimal(5, 1) // vazio em Carga Seca
+  tempMin           Decimal?         @db.Decimal(5, 1)
+  tempMax           Decimal?         @db.Decimal(5, 1)
+  toleranciaMinutos Int              @default(30) // fora da faixa por mais que isso vira CRÍTICO
+  ativo             Boolean          @default(true)
+  criadoEm          DateTime         @default(now())
   containers        Container[]
 }
 

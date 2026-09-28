@@ -49,7 +49,9 @@ const erro = ref(null);
 const enviando = ref(false);
 const sucesso = ref(null); // { temperatura, resultado, numero }
 const confirmarSubstituicao = ref(null); // código da etiqueta anterior
-const f = reactive({ numero: "", temperatura: "", lidaEm: paraInputLocal() });
+const f = reactive({ numero: "", temperatura: "", lidaEm: paraInputLocal(), placa: "", motivoPlaca: "" });
+// Etiqueta nova: programação do container digitado (trajeto, placa e se controla temperatura).
+const programacao = ref(null);
 // Transportador: onde retirou (Tipo > Local) e, se o container não existir, os dados do cadastro.
 const col = reactive({ tipoId: "", localId: "", carregamentoId: "", entregaId: "", tipoContainer: "", grupoId: "", armadorId: "", produtoId: "" });
 // Trajeto (retirada, carregamento, entrega) preenchido com a programação: quem lê só confere.
@@ -111,20 +113,30 @@ async function aplicarTrajeto(t) {
 let buscaProgramacao = null;
 watch(() => conferencia.value?.formatoValido && conferencia.value.numero, (numero) => {
   clearTimeout(buscaProgramacao);
-  if (!numero || !modoColeta.value || estado.value !== "LIVRE") return;
+  programacao.value = null;
+  if (!numero || estado.value !== "LIVRE") return;
   buscaProgramacao = setTimeout(async () => {
     try {
       const p = await q.qrProgramacao(numero);
-      if (p.cadastrado && p.numero === conferencia.value?.numero) await aplicarTrajeto(p.trajeto);
+      if (p.numero !== conferencia.value?.numero) return;
+      programacao.value = p.cadastrado ? p : null;
+      if (p.cadastrado && modoColeta.value) await aplicarTrajeto(p.trajeto);
+      if (p.cadastrado && modoPortaria.value && !f.placa) f.placa = p.placa ?? "";
     } catch {
       // sem a programação, a pessoa preenche à mão
     }
   }, 400);
 });
 const novoReefer = computed(() => col.tipoContainer.startsWith("REEFER"));
+// Container novo (cadastro pelo QR): controla temperatura se reefer E produto Congelado/Refrigerado.
+const produtoNovo = computed(() => (opcoes.value?.produtos ?? []).find((p) => p.id === col.produtoId));
+const novoComTemperatura = computed(() => novoReefer.value && produtoNovo.value?.categoria !== "CARGA_SECA");
+// Etiqueta nova com container já conhecido: segue o que ele é (Carga Seca não pede temperatura).
+const livreSemTemperatura = computed(() => estado.value === "LIVRE" && programacao.value?.controlaTemperatura === false);
+const livreComTemperatura = computed(() => estado.value === "LIVRE" && programacao.value?.controlaTemperatura === true);
 // Temperatura: container conhecido reefer, cadastro novo reefer, ou etiqueta nova (ainda não se sabe).
-const pedeTemperaturaColeta = computed(() => container.value?.reefer || novoReefer.value || (estado.value === "LIVRE" && !precisaCadastro.value));
-const temperaturaObrigatoria = computed(() => container.value?.reefer || novoReefer.value);
+const pedeTemperaturaColeta = computed(() => container.value?.reefer || novoComTemperatura.value || (estado.value === "LIVRE" && !precisaCadastro.value && !livreSemTemperatura.value));
+const temperaturaObrigatoria = computed(() => container.value?.reefer || novoComTemperatura.value || livreComTemperatura.value);
 
 // O campo só tem minutos. Se a pessoa não mexer nele, grava o instante exato do envio (com
 // segundos) — senão duas leituras no mesmo minuto colidiriam como "duplicadas".
@@ -251,6 +263,14 @@ function escolherMovimento(m) {
   erro.value = null;
 }
 
+// Portaria: placa obrigatória; diferente da vinculada ao container → motivo obrigatório.
+const normalizarPlaca = (p) => String(p ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const placaVinculada = computed(() => container.value?.placa ?? programacao.value?.placa ?? null);
+const trocaDePlaca = computed(() => Boolean(placaVinculada.value) && Boolean(normalizarPlaca(f.placa)) && normalizarPlaca(f.placa) !== placaVinculada.value);
+watch(() => [modoPortaria.value, container.value?.placa], () => {
+  if (modoPortaria.value && !f.placa && container.value?.placa) f.placa = container.value.placa;
+}, { immediate: true });
+
 async function registrarPortaria(substituir = false) {
   erro.value = null;
   confirmarSubstituicao.value = null;
@@ -267,6 +287,8 @@ async function registrarPortaria(substituir = false) {
     const dados = {
       numero: f.numero,
       movimento: movimento.value,
+      placa: f.placa,
+      motivoTrocaPlaca: trocaDePlaca.value ? f.motivoPlaca : undefined,
       ocorridoEm: horarioDaLeitura(),
       temperatura: f.temperatura === "" ? undefined : String(f.temperatura).replace(",", "."),
       substituir,
@@ -280,6 +302,7 @@ async function registrarPortaria(substituir = false) {
     };
     f.temperatura = "";
     f.numero = "";
+    f.motivoPlaca = "";
   } catch (e) {
     if (tratarErroMotorista(e)) return;
     if (e.codigo === "ETIQUETA_EXISTENTE") confirmarSubstituicao.value = e.dados.etiquetaAnterior;
@@ -472,11 +495,25 @@ async function registrarPassagemQr() {
             </span>
           </div>
 
-          <div v-if="container?.reefer || estado === 'LIVRE'" class="campo">
-            <label for="temp">Temperatura (°C){{ container?.reefer ? "" : " — obrigatória se for reefer" }}</label>
+          <div class="campo">
+            <label for="placa-portaria">Placa do veículo *</label>
+            <input
+              id="placa-portaria" v-model="f.placa" class="mono grande-campo" required maxlength="8" placeholder="ABC1D23"
+              autocapitalize="characters" autocomplete="off" style="text-transform: uppercase"
+            />
+            <span v-if="placaVinculada" class="dica">Placa vinculada ao container: <strong class="mono">{{ placaVinculada }}</strong></span>
+          </div>
+          <div v-if="trocaDePlaca" class="campo">
+            <label for="motivo-placa">Motivo da troca de placa *</label>
+            <textarea id="motivo-placa" v-model="f.motivoPlaca" rows="2" required maxlength="200" placeholder="Ex.: troca de cavalo mecânico, veículo quebrado…"></textarea>
+            <span class="dica txt-ATENCAO">A placa informada é diferente da vinculada ({{ placaVinculada }}). O motivo fica registrado.</span>
+          </div>
+
+          <div v-if="container?.reefer || (estado === 'LIVRE' && !livreSemTemperatura)" class="campo">
+            <label for="temp">Temperatura (°C){{ container?.reefer || livreComTemperatura ? "" : " — obrigatória se for reefer" }}</label>
             <div class="campo-com-botao botao-antes">
               <button type="button" class="sinal" :aria-label="negativa ? 'Tornar positiva' : 'Tornar negativa'" @click="inverterSinal">±</button>
-              <input id="temp" v-model="f.temperatura" class="grande-campo" inputmode="decimal" placeholder="-18,0" autocomplete="off" :required="Boolean(container?.reefer)" />
+              <input id="temp" v-model="f.temperatura" class="grande-campo" inputmode="decimal" placeholder="-18,0" autocomplete="off" :required="Boolean(container?.reefer) || livreComTemperatura" />
             </div>
             <span class="dica">Temperatura negativa: toque em <strong>±</strong>.</span>
           </div>
@@ -579,7 +616,7 @@ async function registrarPassagemQr() {
               </select>
             </div>
             <div v-if="novoReefer" class="campo">
-              <label for="produto">Produto (faixa de temperatura)</label>
+              <label for="produto">Produto</label>
               <select id="produto" v-model="col.produtoId" class="grande-campo" required>
                 <option value="" disabled>Selecione</option>
                 <option v-for="p in opcoes?.produtos ?? []" :key="p.id" :value="p.id">{{ p.nome }}</option>
@@ -636,13 +673,13 @@ async function registrarPassagemQr() {
             <span v-else-if="conferencia" class="dica txt-OK">✓ {{ conferencia.numero }}</span>
           </div>
 
-          <div class="campo">
-            <label for="temp">Temperatura (°C){{ estado === "LIVRE" ? " — obrigatória se for reefer" : "" }}</label>
+          <div v-if="!livreSemTemperatura" class="campo">
+            <label for="temp">Temperatura (°C){{ estado === "LIVRE" && !livreComTemperatura ? " — obrigatória se for reefer" : "" }}</label>
             <div class="campo-com-botao botao-antes">
               <button type="button" class="sinal" :aria-label="negativa ? 'Tornar positiva' : 'Tornar negativa'" @click="inverterSinal">±</button>
               <input
                 id="temp" v-model="f.temperatura" class="grande-campo" inputmode="decimal" placeholder="-18,0" autocomplete="off"
-                :required="temperaturaExigida && estado !== 'LIVRE'"
+                :required="(temperaturaExigida && estado !== 'LIVRE') || livreComTemperatura"
               />
             </div>
             <span class="dica">Temperatura negativa: toque em <strong>±</strong> (o teclado numérico do celular nem sempre tem o "-").</span>
