@@ -7,6 +7,7 @@
 // (ex.: 05h–22h, horário de Brasília) e faz no máximo `kmPorDia` por dia; fim de semana e
 // feriado rodam normal. Fora da janela ele fica parado e continua no dia seguinte.
 import { inicioDoDiaBrasilia } from "./prazos.js";
+import { temOperacao, CAMPO_DATA_STATUS } from "./fluxo.js";
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
@@ -82,9 +83,10 @@ function nivelRisco(folgaHoras, limiteAtencaoHoras) {
 function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [], nomes, carga, fase, destinoReal, cfg, futuro }) {
   const lista = [];
   const marcos = [];
+  const sufixo = carga ? ` (${carga})` : "";
   if (!paradas.length) {
     const fim = destinoReal ?? futuro(chegadaDoTrecho(inicio, kmTotal, cfg));
-    lista.push({ etapa: `${nomes.origem} → ${nomes.destino} (${carga})`, km: kmTotal, fonte: fonteTotal, inicio, fim, real: Boolean(destinoReal) });
+    lista.push({ etapa: `${nomes.origem} → ${nomes.destino}${sufixo}`, km: kmTotal, fonte: fonteTotal, inicio, fim, real: Boolean(destinoReal) });
     return { fim, trechos: lista, marcos };
   }
   let t = inicio;
@@ -93,7 +95,7 @@ function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [
     const km = trechos[i]?.km ?? null;
     const real = p.passouEm ? new Date(p.passouEm) : null;
     const chegada = km === null ? t : futuro(chegadaDoTrecho(t, km, cfg));
-    lista.push({ etapa: `${origem} → ${p.nome} (${carga})`, km, fonte: trechos[i]?.fonte ?? null, inicio: t, fim: real ?? chegada, real: Boolean(real) });
+    lista.push({ etapa: `${origem} → ${p.nome}${sufixo}`, km, fonte: trechos[i]?.fonte ?? null, inicio: t, fim: real ?? chegada, real: Boolean(real) });
     const saida = real ?? futuro(new Date(chegada.getTime() + p.tempoHoras * HORA));
     lista.push({ etapa: `Parada: ${p.nome}`, horas: p.tempoHoras, inicio: real ?? chegada, fim: saida, real: Boolean(real), parada: true });
     marcos.push({ paradaId: p.id, nome: p.nome, fase, previsao: real || destinoReal ? null : chegada, realizado: real });
@@ -102,7 +104,7 @@ function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [
   });
   const ultimo = trechos[paradas.length] ?? null;
   const fim = destinoReal ?? futuro(chegadaDoTrecho(t, ultimo?.km ?? 0, cfg));
-  lista.push({ etapa: `${origem} → ${nomes.destino} (${carga})`, km: ultimo?.km ?? null, fonte: ultimo?.fonte ?? null, inicio: t, fim, real: Boolean(destinoReal) });
+  lista.push({ etapa: `${origem} → ${nomes.destino}${sufixo}`, km: ultimo?.km ?? null, fonte: ultimo?.fonte ?? null, inicio: t, fim, real: Boolean(destinoReal) });
   return { fim, trechos: lista, marcos };
 }
 
@@ -116,6 +118,9 @@ function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [
  */
 export function estimarCiclo(c, ctx, agora, cfg) {
   if (["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)) return null;
+  if (!temOperacao(c)) return estimarDireto(c, ctx, agora, cfg);
+  // Vazio na ida e cheio na volta só na exportação; nos outros tipos o trecho não diz a carga.
+  const exportacao = !c.fluxo || c.fluxo.padrao;
   const faltando = [];
   if (!c.portoRetiradaId) faltando.push("local de retirada");
   if (!c.localCarregamentoId) faltando.push("local de carregamento");
@@ -133,36 +138,70 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   const coleta = aconteceu(c.coletadoEm) ?? futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
   const ida = percorrerPerna({
     inicio: coleta, kmTotal: ctx.kmIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
-    nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "carregamento" }, carga: "vazio", fase: "ANTES_CARREGAMENTO",
+    nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "carregamento" }, carga: exportacao ? "vazio" : null, fase: "ANTES_CARREGAMENTO",
     destinoReal: aconteceu(c.chegadaFabricaEm), cfg, futuro,
   });
   const chegadaFabrica = ida.fim;
   const saidaFabrica = aconteceu(c.saidaFabricaEm) ?? futuro(new Date(chegadaFabrica.getTime() + ctx.tempoFabricaHoras * HORA));
   const volta = percorrerPerna({
     inicio: saidaFabrica, kmTotal: ctx.kmVolta, fonteTotal: ctx.fonteVolta, paradas: ctx.paradasVolta, trechos: ctx.trechosVolta,
-    nomes: { origem: "Carregamento", origemCurto: "Carregamento", destino: "entrega" }, carga: "cheio", fase: "APOS_CARREGAMENTO",
+    nomes: { origem: "Carregamento", origemCurto: "Carregamento", destino: "entrega" }, carga: exportacao ? "cheio" : null, fase: "APOS_CARREGAMENTO",
     destinoReal: null, cfg, futuro,
   });
   const chegadaPorto = volta.fim;
   const entrega = futuro(new Date(chegadaPorto.getTime() + ctx.filaEntregaHoras * HORA));
+  const trechos = [
+    ...ida.trechos.map((t, i) => (i === 0 ? { ...t, hipotetico } : t)),
+    { etapa: "No local de carregamento", horas: ctx.tempoFabricaHoras, fonte: ctx.fonteTempoFabrica, amostras: ctx.amostrasFabrica, inicio: chegadaFabrica, fim: saidaFabrica, real: Boolean(c.saidaFabricaEm) },
+    ...volta.trechos,
+    { etapa: "Fila / gate na entrega", horas: ctx.filaEntregaHoras, inicio: chegadaPorto, fim: entrega, real: false },
+  ];
+  return resultadoDoCiclo(c, { hipotetico, coleta, chegadaFabrica, saidaFabrica, chegadaPorto, entrega, trechos, marcos: [...ida.marcos, ...volta.marcos] }, cfg);
+}
 
-  // Free time contado como em calcularDemurrage: dia da coleta = dia 1.
-  const diaColeta = inicioDoDiaBrasilia(coleta).getTime();
+// Tipo de Operação sem local de operação (coleta de cheio, transferência): retirada → paradas →
+// entrega, sem tempo de fábrica. Sem estadia; previsões de chegada/saída do carregamento vazias.
+function estimarDireto(c, ctx, agora, cfg) {
+  const faltando = [];
+  if (!c.portoRetiradaId) faltando.push("local de retirada");
+  if (!c.portoEntregaId) faltando.push("local de entrega");
+  if (!faltando.length && (ctx?.kmDireto === null || ctx?.kmDireto === undefined)) faltando.push("distância retirada → entrega (confira as coordenadas)");
+  if (faltando.length) return { disponivel: false, faltando };
+  const hipotetico = !c.coletadoEm;
+  const futuro = (d) => maisTarde(d, agora);
+  const coleta = c.coletadoEm ? new Date(c.coletadoEm) : futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
+  const perna = percorrerPerna({
+    inicio: coleta, kmTotal: ctx.kmDireto, fonteTotal: ctx.fonteDireto, paradas: ctx.paradasDireto, trechos: ctx.trechosDireto,
+    nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "entrega" }, carga: null, fase: "ANTES_CARREGAMENTO",
+    destinoReal: null, cfg, futuro,
+  });
+  const chegadaPorto = perna.fim;
+  const entrega = futuro(new Date(chegadaPorto.getTime() + ctx.filaEntregaHoras * HORA));
+  const trechos = [
+    ...perna.trechos.map((t, i) => (i === 0 ? { ...t, hipotetico } : t)),
+    { etapa: "Fila / gate na entrega", horas: ctx.filaEntregaHoras, inicio: chegadaPorto, fim: entrega, real: false },
+  ];
+  return resultadoDoCiclo(c, { hipotetico, coleta, chegadaFabrica: null, saidaFabrica: null, chegadaPorto, entrega, trechos, marcos: perna.marcos }, cfg);
+}
+
+function resultadoDoCiclo(c, { hipotetico, coleta, chegadaFabrica, saidaFabrica, chegadaPorto, entrega, trechos: lista, marcos }, cfg) {
+  // Free time contado como em calcularDemurrage: dia do início = dia 1. Início e fim seguem as
+  // etapas do Tipo de Operação (padrão: coleta → entrega), com o horário real ou o previsto.
+  const previsto = { COLETADO: coleta, NA_FABRICA: chegadaFabrica, EM_OPERACAO: chegadaFabrica, LIBERADO: saidaFabrica, SAIU_FABRICA: saidaFabrica, ENTREGUE_PORTO: entrega };
+  const quando = (status) => (c[CAMPO_DATA_STATUS[status]] ? new Date(c[CAMPO_DATA_STATUS[status]]) : previsto[status] ?? null);
+  const inicioFt = quando(c.fluxo?.freeTimeInicio ?? "COLETADO") ?? coleta;
+  const fimFt = quando(c.fluxo?.freeTimeFim ?? "ENTREGUE_PORTO") ?? entrega;
+  const diaColeta = inicioDoDiaBrasilia(inicioFt).getTime();
   const vencimento = new Date(diaColeta + c.freeTimeDias * DIA - 1);
-  const folgaHoras = (vencimento - entrega) / HORA;
-  const diasUsados = Math.floor((inicioDoDiaBrasilia(entrega).getTime() - diaColeta) / DIA) + 1;
+  const folgaHoras = (vencimento - fimFt) / HORA;
+  const diasUsados = Math.floor((inicioDoDiaBrasilia(fimFt).getTime() - diaColeta) / DIA) + 1;
   const diasDemurragePrevistos = Math.max(0, diasUsados - c.freeTimeDias);
 
   const deadline = c.deadline ? new Date(c.deadline) : null;
   const folgaDeadlineHoras = deadline ? (deadline - entrega) / HORA : null;
   const cicloHoras = (entrega - coleta) / HORA;
 
-  const trechos = [
-    ...ida.trechos.map((t, i) => (i === 0 ? { ...t, hipotetico } : t)),
-    { etapa: "No local de carregamento", horas: ctx.tempoFabricaHoras, fonte: ctx.fonteTempoFabrica, amostras: ctx.amostrasFabrica, inicio: chegadaFabrica, fim: saidaFabrica, real: Boolean(c.saidaFabricaEm) },
-    ...volta.trechos,
-    { etapa: "Fila / gate na entrega", horas: ctx.filaEntregaHoras, inicio: chegadaPorto, fim: entrega, real: false },
-  ].map((t) => ({ ...t, km: arred(t.km), horas: arred(t.horas ?? (t.fim - t.inicio) / HORA), duracaoHoras: arred((t.fim - t.inicio) / HORA) }));
+  const trechos = lista.map((t) => ({ ...t, km: arred(t.km), horas: arred(t.horas ?? (t.fim - t.inicio) / HORA), duracaoHoras: arred((t.fim - t.inicio) / HORA) }));
 
   return {
     disponivel: true,
@@ -171,7 +210,7 @@ export function estimarCiclo(c, ctx, agora, cfg) {
     coletaSimulada: hipotetico ? coleta : null,
     trechos,
     // Passagem pelas paradas do trajeto (ex.: Ponto Fiscal): previsão ou horário real.
-    paradas: [...ida.marcos, ...volta.marcos],
+    paradas: marcos,
     previsaoChegadaFabrica: chegadaFabrica,
     previsaoSaidaFabrica: saidaFabrica,
     previsaoChegadaPorto: chegadaPorto,

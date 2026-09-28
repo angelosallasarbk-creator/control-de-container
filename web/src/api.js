@@ -154,6 +154,10 @@ export const api = {
   criarTipoLocal: (dados) => request("/tipos-local", { method: "POST", body: dados }),
   atualizarTipoLocal: (id, dados) => request(`/tipos-local/${id}`, { method: "PATCH", body: dados }),
   excluirTipoLocal: (id) => request(`/tipos-local/${id}`, { method: "DELETE" }),
+  tiposOperacao: (params) => request(`/tipos-operacao${qs(params)}`),
+  criarTipoOperacao: (dados) => request("/tipos-operacao", { method: "POST", body: dados }),
+  atualizarTipoOperacao: (id, dados) => request(`/tipos-operacao/${id}`, { method: "PATCH", body: dados }),
+  excluirTipoOperacao: (id) => request(`/tipos-operacao/${id}`, { method: "DELETE" }),
   geocodificar: (q) => request(`/locais/geocodificar${qs({ q })}`),
   estimarRota: (params) => request(`/rotas/estimar${qs(params)}`),
 

@@ -3,6 +3,7 @@
 // - estadia: cada hora além da meta cai no dia em que passou, × custo/h do Ponto de Carregamento.
 // Mesmas regras de src/lib/prazos.js — a soma dos dias bate com calcularEstadia/calcularDemurrage.
 import { inicioDoDiaBrasilia } from "./prazos.js";
+import { camposFreeTime } from "./fluxo.js";
 
 const HORA = 60 * 60 * 1000;
 const DIA = 24 * HORA;
@@ -46,9 +47,10 @@ export function custosDiarios(c, agora) {
     }
   }
 
-  if (c.coletadoEm) {
-    const diaColeta = inicioDoDiaBrasilia(new Date(c.coletadoEm)).getTime();
-    const fim = c.entreguePortoEm ? new Date(c.entreguePortoEm) : agora;
+  const ft = camposFreeTime(c);
+  if (c[ft.inicio]) {
+    const diaColeta = inicioDoDiaBrasilia(new Date(c[ft.inicio])).getTime();
+    const fim = c[ft.fim] ? new Date(c[ft.fim]) : agora;
     const diasUsados = Math.floor((inicioDoDiaBrasilia(fim).getTime() - diaColeta) / DIA) + 1;
     // Dia k do processo (1 = dia da coleta); a partir de freeTime+1 cada dia é uma diária.
     for (let k = c.freeTimeDias + 1; k <= diasUsados; k++) {

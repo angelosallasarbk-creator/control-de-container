@@ -1,5 +1,6 @@
 // Regras de prazo (estadia, demurrage, deadline) e de temperatura.
 // Funções puras: recebem o container (com os prazos já copiados nele) e o "agora", sem acessar banco.
+import { camposFreeTime } from "./fluxo.js";
 
 const HORA = 60 * 60 * 1000;
 const DIA = 24 * HORA;
@@ -70,14 +71,15 @@ export function calcularEstadia(c, agora) {
   };
 }
 
-// Demurrage: da coleta no porto até a entrega no terminal.
+// Demurrage: da coleta até a entrega (ou as etapas definidas no Tipo de Operação).
 // Contagem por dia de calendário (Brasília): o dia da coleta é o dia 1 do free time; a partir
 // do dia (freeTime + 1) cada dia iniciado é uma diária cobrada, inclusive o dia da entrega.
 export function calcularDemurrage(c, agora) {
-  if (!c.coletadoEm) return null;
-  const inicio = new Date(c.coletadoEm);
-  const encerrada = Boolean(c.entreguePortoEm);
-  const fim = encerrada ? new Date(c.entreguePortoEm) : agora;
+  const campos = camposFreeTime(c);
+  if (!c[campos.inicio]) return null;
+  const inicio = new Date(c[campos.inicio]);
+  const encerrada = Boolean(c[campos.fim]);
+  const fim = encerrada ? new Date(c[campos.fim]) : agora;
 
   const diaColeta = inicioDoDiaBrasilia(inicio);
   const diasUsados = Math.floor((inicioDoDiaBrasilia(fim) - diaColeta) / DIA) + 1;

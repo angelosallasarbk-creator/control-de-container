@@ -7,6 +7,7 @@ import { lerConfiguracao } from "../lib/configuracao.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
 import { decimaisParaNumero, CAMPOS_LOCAL } from "../lib/containerView.js";
 import { geocodificar, invalidarDistancias, obterDistancia, orsConfigurado } from "../lib/rotas.js";
+import { fluxoDoTipo, SELECT_TIPO_OPERACAO } from "../lib/fluxo.js";
 import { estimarCiclo } from "../lib/estimativa.js";
 import { configRodagem, montarContextos } from "../lib/previsao.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
@@ -170,8 +171,12 @@ export const rotasRouter = Router();
 
 rotasRouter.get("/estimar", asyncHandler(async (req, res) => {
   const q = req.query;
+  // Tipo de Operação (opcional): fluxo sem local de operação vai direto da retirada à entrega.
+  const tipoOp = q.tipoOperacaoId ? await prisma.tipoOperacao.findUnique({ where: { id: validarId(q.tipoOperacaoId, "Tipo de operação") }, ...SELECT_TIPO_OPERACAO }) : null;
+  const fluxo = tipoOp ? fluxoDoTipo(tipoOp) : null;
+  const comCarregamento = !fluxo || fluxo.etapas.includes("NA_FABRICA");
   const portoRetiradaId = validarId(q.portoRetiradaId, "Local de retirada");
-  const localCarregamentoId = validarId(q.localCarregamentoId, "Local de carregamento");
+  const localCarregamentoId = comCarregamento ? validarId(q.localCarregamentoId, "Local de carregamento") : null;
   const portoEntregaId = validarId(q.portoEntregaId, "Local de entrega");
   const [grupo, armador, config] = await Promise.all([
     q.grupoId ? prisma.grupoOperacao.findUnique({ where: { id: validarId(q.grupoId, "Ponto de Carregamento") } }) : null,
@@ -180,10 +185,14 @@ rotasRouter.get("/estimar", asyncHandler(async (req, res) => {
   ]);
   // Calcula/guarda as distâncias (pode chamar o serviço de rota) e usa o mesmo contexto da
   // previsão real — inclusive o tempo histórico no local de carregamento, quando houver.
-  await obterDistancia(portoRetiradaId, localCarregamentoId);
-  await obterDistancia(localCarregamentoId, portoEntregaId);
+  if (comCarregamento) {
+    await obterDistancia(portoRetiradaId, localCarregamentoId);
+    await obterDistancia(localCarregamentoId, portoEntregaId);
+  } else {
+    await obterDistancia(portoRetiradaId, portoEntregaId);
+  }
   const simulado = {
-    id: 0, status: "PROGRAMADO", portoRetiradaId, localCarregamentoId, portoEntregaId,
+    id: 0, status: "PROGRAMADO", portoRetiradaId, localCarregamentoId, portoEntregaId, fluxo,
     metaEstadiaHoras: grupo?.metaEstadiaHoras ?? 24,
     freeTimeDias: armador?.freeTimeDias ?? 0, valorDiaria: armador?.valorDiaria ?? 0, moeda: armador?.moeda ?? "USD",
     deadline: dataHora(q.deadline, "Deadline"),

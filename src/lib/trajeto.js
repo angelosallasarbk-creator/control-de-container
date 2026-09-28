@@ -7,9 +7,10 @@ import { erroHttp } from "./asyncHandler.js";
 import { registrarLog } from "./auditoria.js";
 import { STATUS_ENCERRADOS } from "./prazos.js";
 import { ordenarParadas, tempoParadaDoLocal, SELECT_LOCAL_PARADA } from "./rotas.js";
+import { regrasDeLocal, motivoLocalForaDaRegra } from "./fluxo.js";
 
 const PAPEIS = ["RETIRADA", "CARREGAMENTO", "ENTREGA", "PARADA"];
-const FUNCAO_DO_PAPEL = { RETIRADA: "RETIRADA_ENTREGA", ENTREGA: "RETIRADA_ENTREGA", CARREGAMENTO: "CARREGAMENTO", PARADA: "PARADA" };
+const CAMPO_DO_PAPEL = { RETIRADA: "portoRetiradaId", CARREGAMENTO: "localCarregamentoId", ENTREGA: "portoEntregaId" };
 const NOME_DO_PAPEL = { RETIRADA: "Local de retirada", CARREGAMENTO: "Local de carregamento", ENTREGA: "Local de entrega", PARADA: "Ponto de parada" };
 const FASES_NA_ETAPA = { COLETADO: "ANTES_CARREGAMENTO", SAIU_FABRICA: "APOS_CARREGAMENTO" };
 
@@ -32,16 +33,29 @@ export const serializarParadas = (paradas = []) =>
  * pontos: [{ papel, localId, paradaId? }] na ordem do trajeto.
  */
 export async function validarTrajeto(pontos, container) {
-  if (!Array.isArray(pontos) || pontos.length < 3) throw erroHttp(400, "O trajeto precisa de retirada, carregamento e entrega.");
+  // Tipo de local exigido em cada papel vem do fluxo do Tipo de Operação; sem local de operação,
+  // o trajeto não tem carregamento (retirada → paradas → entrega).
+  const regras = regrasDeLocal(container);
+  const comCarregamento = regras.localCarregamentoId !== null;
+  const minimo = comCarregamento ? 3 : 2;
+  if (!Array.isArray(pontos) || pontos.length < minimo) throw erroHttp(400, comCarregamento ? "O trajeto precisa de retirada, carregamento e entrega." : "O trajeto precisa de retirada e entrega.");
   if (pontos.length > 30) throw erroHttp(400, "Trajeto com pontos demais (máximo 30).");
   const papeis = pontos.map((p) => String(p?.papel ?? "").toUpperCase());
   if (papeis.some((p) => !PAPEIS.includes(p))) throw erroHttp(400, "Ponto do trajeto com papel inválido.");
   if (papeis[0] !== "RETIRADA") throw erroHttp(400, "O trajeto começa pelo local de retirada.");
   if (papeis.at(-1) !== "ENTREGA") throw erroHttp(400, "O trajeto termina no local de entrega.");
   for (const fixo of ["RETIRADA", "CARREGAMENTO", "ENTREGA"]) {
+    if (fixo === "CARREGAMENTO" && !comCarregamento) {
+      if (papeis.includes(fixo)) throw erroHttp(400, "Este tipo de operação não tem local de carregamento.");
+      continue;
+    }
     if (papeis.filter((p) => p === fixo).length !== 1) throw erroHttp(400, `O trajeto precisa de um único ${NOME_DO_PAPEL[fixo].toLowerCase()}.`);
   }
-  const idxCarregamento = papeis.indexOf("CARREGAMENTO");
+  // Sem carregamento, todas as paradas ficam "antes" (uma perna só, da retirada à entrega).
+  const idxCarregamento = comCarregamento ? papeis.indexOf("CARREGAMENTO") : pontos.length;
+  const tiposExigidos = new Map((await prisma.tipoLocal.findMany({
+    where: { id: { in: Object.values(regras).map((r) => r?.tipoLocalId).filter(Boolean) } }, select: { id: true, nome: true },
+  })).map((t) => [t.id, t.nome]));
 
   const ids = pontos.map((p, i) => {
     const n = Number(p?.localId);
@@ -64,9 +78,14 @@ export async function validarTrajeto(pontos, container) {
     const local = locais.get(ids[i]);
     const rotulo = `${NOME_DO_PAPEL[papel]} (posição ${i + 1})`;
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
-    const serveComoParada = papel === "PARADA" && locaisDeGrupoParada.has(local.id);
-    if (local.tipo.funcao !== FUNCAO_DO_PAPEL[papel] && !serveComoParada) {
-      throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome} — não serve como ${NOME_DO_PAPEL[papel].toLowerCase()}${papel === "PARADA" ? " (marque \"Pode ser ponto de parada\" no Ponto de Carregamento dele)" : ""}.`);
+    if (papel === "PARADA") {
+      if (local.tipo.funcao !== "PARADA" && !locaisDeGrupoParada.has(local.id)) {
+        throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome} — não serve como ponto de parada (marque "Pode ser ponto de parada" no Ponto de Carregamento dele).`);
+      }
+    } else {
+      const regra = regras[CAMPO_DO_PAPEL[papel]];
+      const motivo = motivoLocalForaDaRegra(local, regra, tiposExigidos.get(regra?.tipoLocalId));
+      if (motivo) throw erroHttp(400, `${rotulo}: ${motivo} — não serve como ${NOME_DO_PAPEL[papel].toLowerCase()}.`);
     }
     if (!local.ativo && !usados.has(local.id)) throw erroHttp(400, `${rotulo}: o local "${local.nome}" está inativo.`);
     if (papel === "RETIRADA") resultado.portoRetiradaId = local.id;
@@ -74,7 +93,7 @@ export async function validarTrajeto(pontos, container) {
     else if (papel === "ENTREGA") resultado.portoEntregaId = local.id;
     else {
       if (vistosParada.has(local.id)) throw erroHttp(400, `O ponto "${local.nome}" aparece mais de uma vez no trajeto.`);
-      if (local.id === ids[idxCarregamento]) throw erroHttp(400, `"${local.nome}" já é o local de carregamento deste container — não pode ser também uma parada.`);
+      if (comCarregamento && local.id === ids[idxCarregamento]) throw erroHttp(400, `"${local.nome}" já é o local de carregamento deste container — não pode ser também uma parada.`);
       vistosParada.add(local.id);
       const fase = i < idxCarregamento ? "ANTES_CARREGAMENTO" : "APOS_CARREGAMENTO";
       const paradaId = p.paradaId ? Number(p.paradaId) : null;
@@ -103,13 +122,13 @@ export async function gravarTrajeto(tx, container, t, usuarioEmail) {
   };
   const seqDe = (c, paradas) => {
     const ord = ordenarParadas(paradas);
-    return [c.portoRetiradaId, ...ord.filter((p) => p.fase === "ANTES_CARREGAMENTO").map((p) => p.localId), c.localCarregamentoId, ...ord.filter((p) => p.fase === "APOS_CARREGAMENTO").map((p) => p.localId), c.portoEntregaId];
+    return [c.portoRetiradaId, ...ord.filter((p) => p.fase === "ANTES_CARREGAMENTO").map((p) => p.localId), ...(c.localCarregamentoId ? [c.localCarregamentoId] : []), ...ord.filter((p) => p.fase === "APOS_CARREGAMENTO").map((p) => p.localId), c.portoEntregaId];
   };
   const antes = descreverTrajeto(await nomes(seqDe(container, container.paradas ?? [])));
 
   await tx.container.update({
     where: { id: container.id },
-    data: { portoRetiradaId: t.portoRetiradaId, localCarregamentoId: t.localCarregamentoId, portoEntregaId: t.portoEntregaId },
+    data: { portoRetiradaId: t.portoRetiradaId, localCarregamentoId: t.localCarregamentoId ?? null, portoEntregaId: t.portoEntregaId },
   });
   const manter = t.paradas.filter((p) => p.id).map((p) => p.id);
   await tx.paradaContainer.deleteMany({ where: { containerId: container.id, id: { notIn: manter } } });

@@ -9,11 +9,12 @@ import { registrarLeitura, sincronizarAlertas } from "../lib/leituras.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
 import { controlaTemperatura, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { decimal, dataHora, inteiro, id as validarId } from "../lib/validacao.js";
-import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, FLUXO, validarNovoContainer, gravarNovoContainer, validarMomento, prepararRota, validarLocais } from "./containers.js";
+import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, validarNovoContainer, gravarNovoContainer, validarMomento, prepararRota, validarLocais } from "./containers.js";
 import { estadoDaEtiqueta } from "./etiquetas.js";
 import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { assumirRastreio } from "../lib/rastreamento.js";
 import { SELECT_PARADA, serializarParadas, proximaParada, registrarPassagem } from "../lib/trajeto.js";
+import { etapasDoContainer, temOperacao } from "../lib/fluxo.js";
 
 export const qrRouter = Router();
 
@@ -38,6 +39,7 @@ async function resumo(e, req) {
     etiqueta: { codigo: e.codigo, estado: estadoDaEtiqueta(e), vinculadaEm: e.vinculadaEm, vinculadaPor: e.vinculadaPor, motivoCancelamento: e.motivoCancelamento },
     container: c && {
       id: c.id, numero: c.numero, tipo: c.tipo, reefer: controlaTemperatura(c), status: c.status, rotulosEtapa: rotulosDasEtapas(c),
+      fluxo: etapasDoContainer(c), temOperacao: temOperacao(c),
       placa: c.placa, motorista: c.motorista,
       cliente: c.grupo.cliente, fabrica: c.grupo.fabrica,
       setpoint: c.setpoint === null ? null : Number(c.setpoint),
@@ -362,13 +364,16 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
     if (!container) throw erroHttp(404, `O container ${conferido.numero} não está cadastrado no sistema. Avise a operação.`);
   }
   const numero = container.numero;
-  const posAtual = FLUXO.indexOf(container.status);
-  const posAlvo = FLUXO.indexOf(alvo);
+  // Etapas do Tipo de Operação do container; sem local de operação não há entrada/saída.
+  const fluxo = etapasDoContainer(container);
+  if (!temOperacao(container)) throw erroHttp(409, `O container ${numero} é de um tipo de operação sem entrada/saída em local de operação.`);
+  const posAtual = fluxo.indexOf(container.status);
+  const posAlvo = fluxo.indexOf(alvo);
   const nome = (s) => rotulosDasEtapas(container)[s] ?? ROTULO_ETAPA[s];
   if (posAtual >= posAlvo) {
     throw erroHttp(409, `${movimento === "ENTRADA" ? "Entrada" : "Saída"} já registrada: o container está em "${nome(container.status)}".`);
   }
-  if (movimento === "SAIDA" && posAtual < FLUXO.indexOf("NA_FABRICA")) {
+  if (movimento === "SAIDA" && posAtual < fluxo.indexOf("NA_FABRICA")) {
     throw erroHttp(409, "A entrada deste container ainda não foi registrada. Registre a ENTRADA primeiro (pode ajustar o horário) e depois a saída.");
   }
   validarMomento(ocorridoEm, container);
@@ -392,7 +397,7 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
     });
   }
 
-  const etapas = FLUXO.slice(posAtual + 1, posAlvo + 1); // da próxima até o alvo
+  const etapas = fluxo.slice(posAtual + 1, posAlvo + 1); // da próxima até o alvo
   const completadas = etapas.slice(0, -1);
   const final = await prisma.$transaction(async (tx) => {
     // Condição no WHERE: se outra pessoa avançou o container no meio tempo, nada é gravado.

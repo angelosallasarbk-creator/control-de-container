@@ -4,6 +4,26 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 2.0.0 — em desenvolvimento (branch `versao-2.0`)
+
+**2.0-A (pronto no branch):**
+
+- **Tipo de Operação** (menu Cadastros): fluxo de etapas personalizável por tipo (arrastar), com nome
+  livre, tipo de local exigido e local sugerido por etapa, passagens (pontos de parada) e etapas de
+  início/fim do free time. Tipos iniciais: Exportação padrão, Coleta de cheio, Importação, Transferência.
+- **Container segue o fluxo do tipo:** etapas, próxima etapa, avançar, aba Etapas, validação dos
+  locais, estadia só com local de operação, demurrage pelas etapas do tipo, previsão/ETA sem local de
+  operação (retirada → paradas → entrega), passagens do fluxo viram paradas do trajeto.
+- Migração `20261001090000_tipo_operacao`: só acréscimos (enum AcaoEtapa, tabelas TipoOperacao e
+  EtapaFluxo, Container.tipoOperacaoId e Container.fluxo); cadastra os 4 tipos e liga os containers
+  existentes à Exportação padrão (fluxo vazio = o de sempre).
+- **Voltar para a 1.4 não precisa de script** (testado: a 1.4 sobe sobre o banco da 2.0 e todas as
+  telas respondem). Atenção: na 1.4, containers de tipos sem local de operação voltam a seguir o fluxo
+  de exportação (as etapas deles não são perdidas, mas a 1.4 pediria chegada/saída).
+
+**2.0-B (a fazer):** QR do transportador e portaria seguindo o fluxo; coluna "Tipo de Operação" na
+planilha; seções da Home genéricas.
+
 ## 1.4.0 — 28/09/2026 (tag `v1.4.0`)
 
 - **Produtos com categoria** (Congelado, Refrigerado, Carga Seca); menu "Produtos". Carga Seca sem

@@ -16,6 +16,7 @@ const routes = [
   { path: "/p/:codigo", name: "enviar-posicao", component: () => import("./pages/EnviarPosicao.vue"), props: true, meta: { titulo: "Enviar posição", layout: "simples", publica: true } },
   // QR da etiqueta: equipe (login) ou motorista (celular + código SMS, sem usuário) — PaginaQR decide.
   { path: "/q/:token", name: "leitura-qr", component: () => import("./pages/PaginaQR.vue"), props: true, meta: { titulo: "Registrar leitura", layout: "simples", publica: true } },
+  { path: "/tipos-operacao", name: "tipos-operacao", component: () => import("./pages/TiposOperacao.vue"), meta: { titulo: "Tipos de Operação" } },
   { path: "/locais", name: "locais", component: () => import("./pages/Locais.vue"), meta: { titulo: "Locais" } },
   { path: "/cadastros/:recurso", name: "cadastros", component: () => import("./pages/Cadastros.vue"), props: true, meta: { titulo: "Cadastros" } },
   { path: "/motoristas", name: "motoristas", component: () => import("./pages/Motoristas.vue"), meta: { titulo: "Motoristas" } },

@@ -6,7 +6,7 @@
 // do cadastro e pode ser arrastado. Ao salvar, o servidor recalcula distâncias, ciclo e ETA.
 import { computed, onMounted, ref } from "vue";
 import { api } from "../api.js";
-import { ROTULO_POSICAO_PARADA } from "../formato.js";
+import { ROTULO_POSICAO_PARADA, atendeRegraLocal } from "../formato.js";
 
 const props = defineProps({ container: { type: Object, required: true } });
 const emit = defineEmits(["fechar", "salvo"]);
@@ -20,12 +20,14 @@ const linha = (papel, localId, extra = {}) => ({ uid: ++seq, papel, localId: loc
 
 // Monta a lista inicial a partir do container.
 const c = props.container;
+// Tipo de Operação sem local de operação: retirada → paradas → entrega (sem carregamento).
+const comCarregamento = c.temOperacao !== false;
 const antes = (c.paradas ?? []).filter((p) => p.fase === "ANTES_CARREGAMENTO");
 const depois = (c.paradas ?? []).filter((p) => p.fase === "APOS_CARREGAMENTO");
 const pontos = ref([
   linha("RETIRADA", c.portoRetiradaId),
   ...antes.map((p) => linha("PARADA", p.localId, { paradaId: p.id, passouEm: p.passouEm })),
-  linha("CARREGAMENTO", c.localCarregamentoId),
+  ...(comCarregamento ? [linha("CARREGAMENTO", c.localCarregamentoId)] : []),
   ...depois.map((p) => linha("PARADA", p.localId, { paradaId: p.id, passouEm: p.passouEm })),
   linha("ENTREGA", c.portoEntregaId),
 ]);
@@ -55,12 +57,12 @@ const opcoesParada = computed(() => {
 });
 const opcoes = (p) => {
   if (p.papel === "PARADA") return incluiAtual(opcoesParada.value, p.localId);
-  const funcao = p.papel === "CARREGAMENTO" ? "CARREGAMENTO" : "RETIRADA_ENTREGA";
-  return incluiAtual(locais.value.filter((l) => l.tipo.funcao === funcao), p.localId);
+  const campo = { RETIRADA: "portoRetiradaId", CARREGAMENTO: "localCarregamentoId", ENTREGA: "portoEntregaId" }[p.papel];
+  return incluiAtual(locais.value.filter((l) => atendeRegraLocal(l, c.regrasLocal?.[campo])), p.localId);
 };
 const ROTULO = { RETIRADA: "Retirada", CARREGAMENTO: "Carregamento", ENTREGA: "Entrega", PARADA: "Ponto de parada" };
 const idx = (papel) => pontos.value.findIndex((p) => p.papel === papel);
-const faseDe = (i) => (i < idx("CARREGAMENTO") ? "ANTES_CARREGAMENTO" : "APOS_CARREGAMENTO");
+const faseDe = (i) => (!comCarregamento || i < idx("CARREGAMENTO") ? "ANTES_CARREGAMENTO" : "APOS_CARREGAMENTO");
 const foraDoLugar = (i) => pontos.value[i].papel === "PARADA" && (i < idx("RETIRADA") || i > idx("ENTREGA"));
 
 // ----- mover -----
@@ -105,7 +107,7 @@ function escolheu(p) {
   p.nova = false;
   const local = opcoesParada.value.find((l) => l.id === p.localId);
   const i = pontos.value.indexOf(p);
-  const destino = local?.posicaoParada === "ANTES_CARREGAMENTO" ? idx("CARREGAMENTO") : idx("ENTREGA");
+  const destino = comCarregamento && local?.posicaoParada === "ANTES_CARREGAMENTO" ? idx("CARREGAMENTO") : idx("ENTREGA");
   mover(i, destino > i ? destino - 1 : destino);
 }
 function remover(i) {
@@ -138,8 +140,8 @@ async function salvar() {
     <form class="modal editar-trajeto" @submit.prevent="salvar">
       <h2>Editar trajeto · {{ container.numero }}</h2>
       <p class="mudo pequeno" style="margin-top: 0">
-        Retirada, carregamento e entrega ficam nessa ordem (troque só o local). <strong>Arraste os pontos de parada</strong> (ou use ↑ ↓) para a posição
-        desejada — antes ou depois do carregamento. Ao salvar, distâncias, ciclo e ETA são recalculados{{ container.status === "PROGRAMADO" ? " e o Planejado é refeito" : "" }}.
+        {{ comCarregamento ? "Retirada, carregamento e entrega" : "Retirada e entrega" }} ficam nessa ordem (troque só o local). <strong>Arraste os pontos de parada</strong> (ou use ↑ ↓) para a posição
+        desejada{{ comCarregamento ? " — antes ou depois do carregamento" : "" }}. Ao salvar, distâncias, ciclo e ETA são recalculados{{ container.status === "PROGRAMADO" ? " e o Planejado é refeito" : "" }}.
       </p>
       <div v-if="erro" class="erro" role="alert">{{ erro }}</div>
 
@@ -154,7 +156,7 @@ async function salvar() {
           <div class="corpo">
             <div class="rotulo">
               {{ ROTULO[p.papel] }}
-              <span v-if="p.papel === 'PARADA' && !foraDoLugar(i) && !p.nova" class="chip pequeno">{{ faseDe(i) === "ANTES_CARREGAMENTO" ? "antes do carregamento" : "depois do carregamento" }}</span>
+              <span v-if="comCarregamento && p.papel === 'PARADA' && !foraDoLugar(i) && !p.nova" class="chip pequeno">{{ faseDe(i) === "ANTES_CARREGAMENTO" ? "antes do carregamento" : "depois do carregamento" }}</span>
               <span v-if="p.passouEm" class="chip verde pequeno">passagem registrada</span>
             </div>
             <select v-model="p.localId" :aria-label="ROTULO[p.papel]" required @change="escolheu(p)">
