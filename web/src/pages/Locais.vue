@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { ROTULO_FUNCAO_LOCAL } from "../formato.js";
+import { ROTULO_FUNCAO_LOCAL, ROTULO_POSICAO_PARADA } from "../formato.js";
 
 const auth = useAuthStore();
 const lista = ref([]);
@@ -14,7 +14,7 @@ const filtroTipo = ref("");
 const busca = ref("");
 
 const editando = ref(null); // null | {} (novo) | registro
-const f = reactive({ nome: "", tipoId: "", endereco: "", cidade: "", uf: "", latitude: "", longitude: "", filaHoras: "" });
+const f = reactive({ nome: "", tipoId: "", endereco: "", cidade: "", uf: "", latitude: "", longitude: "", filaHoras: "", posicaoParada: "", tempoParadaHoras: "" });
 const enviando = ref(false);
 
 // Busca de endereço
@@ -45,6 +45,8 @@ const semCoordenadas = computed(() => lista.value.filter((l) => l.ativo && !l.te
 const NOVO_TIPO = "__novo";
 const tipoDoForm = computed(() => tipos.value.find((t) => t.id === f.tipoId) ?? null);
 const retiradaEntrega = computed(() => tipoDoForm.value?.funcao === "RETIRADA_ENTREGA");
+// Ponto de parada (ex.: Ponto Fiscal): pergunta antes/depois do carregamento e o tempo parado.
+const ehParada = computed(() => tipoDoForm.value?.funcao === "PARADA");
 // Opções do formulário: tipos ativos (+ o atual, mesmo inativo). Local já usado em containers
 // só pode trocar por tipo da mesma função (o servidor também confere).
 const opcoesTipo = computed(() => {
@@ -64,6 +66,7 @@ function abrir(l) {
   Object.assign(f, {
     nome: l?.nome ?? "", tipoId: l?.tipoId ?? (filtroTipo.value || tipos.value.find((t) => t.ativo)?.id || ""), endereco: l?.endereco ?? "", cidade: l?.cidade ?? "", uf: l?.uf ?? "",
     latitude: l?.latitude ?? "", longitude: l?.longitude ?? "", filaHoras: l?.filaHoras ?? "",
+    posicaoParada: l?.posicaoParada ?? "", tempoParadaHoras: l?.tempoParadaHoras ?? "",
   });
   termo.value = l ? [l.nome, l.cidade, l.uf].filter(Boolean).join(", ") : "";
   resultados.value = [];
@@ -113,8 +116,9 @@ async function salvar() {
   erro.value = null;
   try {
     const dados = { ...f };
-    for (const k of ["latitude", "longitude", "filaHoras"]) if (dados[k] === "") dados[k] = null;
+    for (const k of ["latitude", "longitude", "filaHoras", "posicaoParada", "tempoParadaHoras"]) if (dados[k] === "") dados[k] = null;
     if (!retiradaEntrega.value) dados.filaHoras = null;
+    if (!ehParada.value) Object.assign(dados, { posicaoParada: null, tempoParadaHoras: null });
     if (editando.value.id) await api.atualizarLocal(editando.value.id, dados);
     else await api.criarLocal(dados);
     aviso.value = `Local "${dados.nome}" salvo.${editando.value.id ? " Se as coordenadas mudaram, as distâncias e previsões foram recalculadas." : ""}`;
@@ -156,6 +160,7 @@ const erroTipo = ref(null);
 // Sugestão dos nomes das etapas a partir do nome do tipo; a pessoa ajusta (no/na, do/da…).
 function sugestoes() {
   const n = ft.nome.trim().toLowerCase() || "local";
+  if (ft.funcao === "PARADA") return {}; // parada não tem nome de etapa (é um marco de passagem)
   return ft.funcao === "RETIRADA_ENTREGA"
     ? { rotuloColeta: `Coleta no ${n}`, rotuloEntrega: `Entrega no ${n}` }
     : { rotuloChegada: `Chegada no ${n}`, rotuloSaida: `Saída do ${n}` };
@@ -215,7 +220,7 @@ async function excluirTipo(t) {
     erro.value = e.message;
   }
 }
-const etapasDoTipo = (t) => (t.funcao === "RETIRADA_ENTREGA" ? [t.rotuloColeta, t.rotuloEntrega] : [t.rotuloChegada, t.rotuloSaida]).join(" · ");
+const etapasDoTipo = (t) => (t.funcao === "PARADA" ? "passagem registrada no trajeto" : (t.funcao === "RETIRADA_ENTREGA" ? [t.rotuloColeta, t.rotuloEntrega] : [t.rotuloChegada, t.rotuloSaida]).join(" · "));
 
 const TIPO_RESULTADO = { venue: "terminal/empresa", address: "endereço", street: "rua", neighbourhood: "bairro", locality: "cidade", localadmin: "município", county: "município", region: "estado" };
 const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.longitude}#map=15/${l.latitude}/${l.longitude}`;
@@ -266,6 +271,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
             </td>
             <td>
               <template v-if="l.tipo.funcao === 'RETIRADA_ENTREGA'">{{ l.filaHoras ?? config?.filaPortoHorasPadrao }}h<span v-if="l.filaHoras === null" class="mudo pequeno"> (padrão)</span></template>
+              <span v-else-if="l.tipo.funcao === 'PARADA'" class="pequeno">parada {{ l.tempoParadaHoras ?? 1 }}h · {{ l.posicaoParada === "APOS_CARREGAMENTO" ? "depois" : "antes" }} do carregamento</span>
               <span v-else class="mudo">—</span>
             </td>
             <td>{{ l.emUso }}</td>
@@ -376,6 +382,22 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
         <span class="dica">Tempo médio até o gate-in de entrega. Vazio = padrão das Configurações.</span>
       </div>
 
+      <div v-if="ehParada" class="grade-form">
+        <div class="campo">
+          <label for="posicao-parada">Fica antes ou depois do ponto de carregamento? *</label>
+          <select id="posicao-parada" v-model="f.posicaoParada" required>
+            <option value="" disabled>Escolha…</option>
+            <option v-for="(r, v) in ROTULO_POSICAO_PARADA" :key="v" :value="v">{{ r }}</option>
+          </select>
+          <span class="dica">Posição em que ele entra no trajeto do container (dá para arrastar no "Editar trajeto").</span>
+        </div>
+        <div class="campo">
+          <label for="tempo-parada">Tempo médio de parada (horas)</label>
+          <input id="tempo-parada" v-model="f.tempoParadaHoras" type="number" min="0" max="72" step="0.5" placeholder="padrão: 1h" />
+          <span class="dica">Entra no cálculo do ciclo e do ETA.</span>
+        </div>
+      </div>
+
       <div class="modal-acoes">
         <button type="button" @click="editando = null">Cancelar</button>
         <button type="submit" class="primario" :disabled="enviando || f.tipoId === NOVO_TIPO">Salvar</button>
@@ -395,10 +417,12 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
           <select v-model="ft.funcao" :disabled="tipoEditando.locais > 0">
             <option value="RETIRADA_ENTREGA">{{ ROTULO_FUNCAO_LOCAL.RETIRADA_ENTREGA }}</option>
             <option value="CARREGAMENTO">{{ ROTULO_FUNCAO_LOCAL.CARREGAMENTO }}</option>
+            <option value="PARADA">{{ ROTULO_FUNCAO_LOCAL.PARADA }}</option>
           </select>
-          <span class="dica">{{ ft.funcao === "RETIRADA_ENTREGA" ? "Onde o vazio é retirado e o cheio é entregue (ex.: porto, terminal ferroviário)." : "Onde o container é carregado/ovado (ex.: fábrica, armazém)." }}</span>
+          <span class="dica">{{ ft.funcao === "RETIRADA_ENTREGA" ? "Onde o vazio é retirado e o cheio é entregue (ex.: porto, terminal ferroviário)." : ft.funcao === "PARADA" ? "Ponto no meio do trajeto (ex.: Ponto Fiscal): tempo de parada no ETA e passagem registrada." : "Onde o container é carregado/ovado (ex.: fábrica, armazém)." }}</span>
         </div>
       </div>
+      <template v-if="ft.funcao !== 'PARADA'">
       <h3 style="margin-top: 6px">Nomes das etapas neste tipo de local</h3>
       <div class="grade-form">
         <template v-if="ft.funcao === 'RETIRADA_ENTREGA'">
@@ -411,6 +435,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
         </template>
       </div>
       <div class="dica pequeno mudo">Sugestão preenchida a partir do nome — ajuste o texto se precisar (ex.: "na fábrica", "ferroviária").</div>
+      </template>
       <div class="modal-acoes">
         <button type="button" @click="fecharTipo">Cancelar</button>
         <button type="submit" class="primario">Salvar tipo</button>

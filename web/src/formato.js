@@ -49,7 +49,12 @@ export function acaoEtapa(c, status) {
   return r ? `Registrar ${r.charAt(0).toLowerCase()}${r.slice(1)}` : ACAO_ETAPA[status];
 }
 
-export const ROTULO_FUNCAO_LOCAL = { RETIRADA_ENTREGA: "Retirada/entrega do container", CARREGAMENTO: "Carregamento (ovação)" };
+export const ROTULO_FUNCAO_LOCAL = {
+  RETIRADA_ENTREGA: "Retirada/entrega do container",
+  CARREGAMENTO: "Carregamento (ovação)",
+  PARADA: "Parada no trajeto (ex.: Ponto Fiscal)",
+};
+export const ROTULO_POSICAO_PARADA = { ANTES_CARREGAMENTO: "Antes do ponto de carregamento", APOS_CARREGAMENTO: "Depois do ponto de carregamento" };
 export const ehRetiradaEntrega = (l) => l?.tipo?.funcao === "RETIRADA_ENTREGA";
 
 // Minutos desde 00:00 ↔ "HH:MM" (janela de rodagem nas Configurações).

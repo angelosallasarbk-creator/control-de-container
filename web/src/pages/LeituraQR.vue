@@ -274,6 +274,23 @@ function novaLeitura() {
   sucesso.value = null;
   agora();
 }
+
+// Passagem por ponto de parada (ex.: Ponto Fiscal) lida no próprio ponto: horário de agora + GPS.
+const proximaParada = computed(() => (info.value?.podeRegistrar ? container.value?.proximaParada ?? null : null));
+async function registrarPassagemQr() {
+  erro.value = null;
+  enviando.value = true;
+  try {
+    const r = await q.qrPassagem(props.token, { paradaId: proximaParada.value.id, ...(await obterLocalizacao()) });
+    info.value = r;
+    sucesso.value = { passagem: r.passagem, numero: r.container?.numero };
+  } catch (e) {
+    if (tratarErroMotorista(e)) return;
+    erro.value = e.message;
+  } finally {
+    enviando.value = false;
+  }
+}
 </script>
 
 <template>
@@ -319,6 +336,15 @@ function novaLeitura() {
         <p v-else-if="sucesso.resultado === 'ABAIXO'" class="aviso-forte">Temperatura ABAIXO da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
       </section>
 
+      <!-- Sucesso da passagem por ponto de parada -->
+      <section v-else-if="sucesso?.passagem" class="cartao resultado bom">
+        <div class="icone" aria-hidden="true">✓</div>
+        <h1>Passagem registrada</h1>
+        <div class="mono numero">{{ sucesso.numero }}</div>
+        <p class="mudo" style="margin: 0">{{ sucesso.passagem }}</p>
+        <button class="bloco" @click="novaLeitura">Voltar</button>
+      </section>
+
       <!-- Sucesso -->
       <section v-else-if="sucesso" class="cartao resultado" :class="sucesso.resultado && sucesso.resultado !== 'OK' ? 'ruim' : 'bom'">
         <div class="icone" aria-hidden="true">{{ sucesso.resultado && sucesso.resultado !== "OK" ? "⚠" : "✓" }}</div>
@@ -333,6 +359,15 @@ function novaLeitura() {
 
       <template v-else>
         <div class="etiqueta-cod">Etiqueta <strong class="mono">{{ info.etiqueta.codigo }}</strong></div>
+
+        <!-- Container no trecho de um ponto de parada ainda não registrado -->
+        <section v-if="proximaParada" class="cartao passagem">
+          <div class="mudo pequeno">Ponto de parada no trajeto</div>
+          <div class="negrito" style="font-size: 18px">{{ proximaParada.nome }}</div>
+          <p class="mudo pequeno" style="margin: 4px 0 10px">Está passando por este ponto agora? Registre a passagem (horário de agora{{ enviarLocalizacao ? " + sua localização" : "" }}).</p>
+          <div v-if="erro" class="erro">{{ erro }}</div>
+          <button type="button" class="primario bloco" :disabled="enviando" @click="registrarPassagemQr">{{ enviando ? "Registrando…" : "Registrar passagem" }}</button>
+        </section>
 
         <!-- Container já ligado -->
         <section v-if="container" class="cartao">
@@ -628,4 +663,5 @@ button.bloco { width: 100%; justify-content: center; font-size: 18px; padding: 1
 .resultado.ruim .icone { color: var(--vermelho); }
 .resultado .temp { font-size: 40px; font-weight: 800; }
 .aviso-forte { background: var(--vermelho-fundo); color: var(--vermelho); font-weight: 700; padding: 12px; border-radius: 8px; margin: 0; }
+.passagem { border: 2px solid var(--primaria); }
 </style>

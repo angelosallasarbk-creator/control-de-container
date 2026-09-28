@@ -8,7 +8,7 @@ import { garantirDistancias, paresDoContainer } from "./rotas.js";
 async function completarDistancias() {
   const ativos = await prisma.container.findMany({
     where: { status: { notIn: STATUS_ENCERRADOS } },
-    select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true },
+    select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true, paradas: { select: { id: true, localId: true, fase: true, ordem: true } } },
   });
   await garantirDistancias(ativos.flatMap(paresDoContainer));
 }

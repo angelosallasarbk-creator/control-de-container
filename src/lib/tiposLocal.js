@@ -1,11 +1,17 @@
 // Tipos de local (cadastro) e os nomes das etapas do container conforme o tipo do local.
-export const FUNCOES = ["RETIRADA_ENTREGA", "CARREGAMENTO"];
-export const ROTULO_FUNCAO = { RETIRADA_ENTREGA: "Retirada/entrega do container", CARREGAMENTO: "Carregamento (ovação)" };
+export const FUNCOES = ["RETIRADA_ENTREGA", "CARREGAMENTO", "PARADA"];
+export const ROTULO_FUNCAO = {
+  RETIRADA_ENTREGA: "Retirada/entrega do container",
+  CARREGAMENTO: "Carregamento (ovação)",
+  PARADA: "Parada no trajeto (ex.: Ponto Fiscal)",
+};
+export const POSICOES_PARADA = ["ANTES_CARREGAMENTO", "APOS_CARREGAMENTO"];
 
 // Rótulos exigidos por função (os da outra função ficam vazios).
 export const ROTULOS_DA_FUNCAO = {
   RETIRADA_ENTREGA: { rotuloColeta: "Nome da etapa de coleta", rotuloEntrega: "Nome da etapa de entrega" },
   CARREGAMENTO: { rotuloChegada: "Nome da etapa de chegada", rotuloSaida: "Nome da etapa de saída" },
+  PARADA: {}, // parada não vira etapa do container (é um marco de passagem)
 };
 
 export const SELECT_TIPO = {

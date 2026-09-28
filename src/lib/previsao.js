@@ -3,6 +3,7 @@
 // rotas.garantirDistancias, na gravação do container e no verificador periódico).
 import { prisma } from "./prisma.js";
 import { percentil } from "./estimativa.js";
+import { ordenarParadas } from "./rotas.js";
 
 const HORA = 60 * 60 * 1000;
 const JANELA_HISTORICO_DIAS = 180;
@@ -41,11 +42,48 @@ async function tempoNaFabricaPorLocal(localIds) {
   return resultado;
 }
 
+// Paradas (ex.: Ponto Fiscal) dos containers, com nome e tempo de parada do local. Uma consulta só.
+async function paradasPorContainer(containerIds) {
+  if (!containerIds.length) return new Map();
+  const paradas = await prisma.paradaContainer.findMany({
+    where: { containerId: { in: containerIds } },
+    select: { id: true, containerId: true, localId: true, fase: true, ordem: true, passouEm: true, local: { select: { nome: true, tempoParadaHoras: true } } },
+  });
+  const mapa = new Map();
+  for (const p of paradas) {
+    if (!mapa.has(p.containerId)) mapa.set(p.containerId, []);
+    mapa.get(p.containerId).push(p);
+  }
+  for (const [id, lista] of mapa) mapa.set(id, ordenarParadas(lista));
+  return mapa;
+}
+
+// Trechos de uma perna (ida ou volta) passando pelas paradas: km de cada trecho + total.
+function perna(origemId, destinoId, paradas, km) {
+  const seq = [origemId, ...paradas.map((p) => p.localId), destinoId];
+  const trechos = seq.slice(1).map((d, i) => km.get(chavePar(seq[i], d)) ?? null);
+  const completo = trechos.every(Boolean);
+  return {
+    km: completo ? trechos.reduce((s, x) => s + x.km, 0) : null,
+    fonte: completo ? (trechos.some((x) => x.fonte === "ESTIMADA") ? "ESTIMADA" : trechos[0]?.fonte ?? null) : null,
+    trechos: trechos.map((x) => (x ? { km: x.km, fonte: x.fonte } : null)),
+    paradas: paradas.map((p) => ({
+      id: p.id, localId: p.localId, nome: p.local.nome, passouEm: p.passouEm,
+      tempoHoras: p.local.tempoParadaHoras === null ? 1 : Number(p.local.tempoParadaHoras),
+    })),
+  };
+}
+
 // containers: precisam de id, portoRetiradaId, localCarregamentoId, portoEntregaId, metaEstadiaHoras.
+// As paradas do trajeto (ParadaContainer) são lidas aqui mesmo.
 export async function montarContextos(containers, config) {
   const comTrajeto = containers.filter((c) => c.portoRetiradaId && c.localCarregamentoId && c.portoEntregaId);
+  const paradas = await paradasPorContainer(comTrajeto.map((c) => c.id));
   const ids = new Set();
-  for (const c of comTrajeto) [c.portoRetiradaId, c.localCarregamentoId, c.portoEntregaId].forEach((i) => ids.add(i));
+  for (const c of comTrajeto) {
+    [c.portoRetiradaId, c.localCarregamentoId, c.portoEntregaId].forEach((i) => ids.add(i));
+    (paradas.get(c.id) ?? []).forEach((p) => ids.add(p.localId));
+  }
   const listaIds = [...ids];
 
   const [distancias, portos, tempos] = await Promise.all([
@@ -61,14 +99,22 @@ export async function montarContextos(containers, config) {
 
   const contextos = new Map();
   for (const c of containers) {
-    const ida = c.portoRetiradaId && c.localCarregamentoId ? km.get(chavePar(c.portoRetiradaId, c.localCarregamentoId)) : null;
-    const volta = c.localCarregamentoId && c.portoEntregaId ? km.get(chavePar(c.localCarregamentoId, c.portoEntregaId)) : null;
+    const lista = paradas.get(c.id) ?? [];
+    const ida = c.portoRetiradaId && c.localCarregamentoId
+      ? perna(c.portoRetiradaId, c.localCarregamentoId, lista.filter((p) => p.fase === "ANTES_CARREGAMENTO"), km) : null;
+    const volta = c.localCarregamentoId && c.portoEntregaId
+      ? perna(c.localCarregamentoId, c.portoEntregaId, lista.filter((p) => p.fase === "APOS_CARREGAMENTO"), km) : null;
     const historico = tempos.get(c.localCarregamentoId);
     contextos.set(c.id, {
       kmIda: ida?.km ?? null,
       fonteIda: ida?.fonte ?? null,
       kmVolta: volta?.km ?? null,
       fonteVolta: volta?.fonte ?? null,
+      // Paradas (ex.: Ponto Fiscal) e o km de cada trecho entre elas (vazio = sem paradas).
+      paradasIda: ida?.paradas ?? [],
+      trechosIda: ida?.trechos ?? [],
+      paradasVolta: volta?.paradas ?? [],
+      trechosVolta: volta?.trechos ?? [],
       filaEntregaHoras: fila.get(c.portoEntregaId) ?? config.filaPortoHorasPadrao,
       tempoFabricaHoras: historico?.horas ?? c.metaEstadiaHoras,
       fonteTempoFabrica: historico ? "HISTORICO" : "META",

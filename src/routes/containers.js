@@ -15,6 +15,8 @@ import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
 import { resumoRastreamento, solicitarPosicaoManual } from "../lib/rastreamento.js";
 import { gerarModelo, lerPlanilha } from "../lib/importacaoContainers.js";
 import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
+import { SELECT_PARADA, serializarParadas, validarTrajeto, gravarTrajeto, registrarPassagem } from "../lib/trajeto.js";
+import { Prisma } from "@prisma/client";
 
 export const containersRouter = Router();
 
@@ -89,7 +91,10 @@ export async function validarLocais(corpo, atual = {}, cache = null) {
 
 // Depois de gravar: calcula/guarda as distâncias do trajeto (pode chamar o serviço de rota).
 export async function prepararRota(containerId) {
-  const c = await prisma.container.findUnique({ where: { id: containerId }, select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true } });
+  const c = await prisma.container.findUnique({
+    where: { id: containerId },
+    select: { portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true, paradas: { select: { id: true, localId: true, fase: true, ordem: true } } },
+  });
   if (c) await garantirDistancias(paresDoContainer(c));
 }
 
@@ -110,6 +115,7 @@ async function detalhe(containerId) {
         eventos: { orderBy: { id: "asc" } },
         alertas: { orderBy: { abertoEm: "desc" } },
         etiquetas: { select: { id: true, codigo: true, status: true, vinculadaEm: true, vinculadaPor: true, canceladaEm: true, motivoCancelamento: true }, orderBy: { id: "asc" } },
+        paradas: { select: SELECT_PARADA },
       },
     }),
     lerConfiguracao(),
@@ -119,7 +125,7 @@ async function detalhe(containerId) {
     prisma.leituraTemperatura.findMany({ where: { containerId }, orderBy: { lidaEm: "asc" }, include: { etiqueta: { select: { codigo: true } } } }),
     montarContextos([c], config),
   ]);
-  return { ...montarContainer(c, leituras, new Date(), config, contextos.get(c.id)), leituras: leituras.map(serializarLeitura) };
+  return { ...montarContainer(c, leituras, new Date(), config, contextos.get(c.id)), leituras: leituras.map(serializarLeitura), paradas: serializarParadas(c.paradas) };
 }
 
 function ultimaDataDoProcesso(c) {
@@ -448,6 +454,54 @@ containersRouter.patch("/:id", requirePermissao("containers.operar"), asyncHandl
 }));
 
 // ---------- Etapas ----------
+
+// ---------- Trajeto com pontos de parada (Editar trajeto) ----------
+// Corpo: { pontos: [{ papel: RETIRADA|PARADA|CARREGAMENTO|ENTREGA, localId, paradaId? }] } na ordem.
+// Recalcula distâncias, ciclo, ETA e alertas; container ainda Programado refaz o Planejado.
+containersRouter.put("/:id/trajeto", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
+  const containerId = validarId(req.params.id);
+  const c = await prisma.container.findUnique({ where: { id: containerId }, include: { paradas: true } });
+  if (!c) throw erroHttp(404, "Container não encontrado.");
+  if (STATUS_ENCERRADOS.includes(c.status)) throw erroHttp(409, "Container encerrado: o trajeto não pode mais ser alterado.");
+  const trajeto = await validarTrajeto(req.body?.pontos, c);
+  const refazPlano = c.status === "PROGRAMADO";
+  await prisma.$transaction(async (tx) => {
+    await gravarTrajeto(tx, c, trajeto, req.usuario.email);
+    if (refazPlano) await tx.container.update({ where: { id: c.id }, data: { planejamento: Prisma.DbNull } });
+  });
+  await prepararRota(containerId);
+  await sincronizarAlertas(containerId); // refaz o Planejado (se foi limpo), previsão e alertas
+  res.json(await detalhe(containerId));
+}));
+
+async function paradaDoContainer(req) {
+  const containerId = validarId(req.params.id);
+  const paradaId = validarId(req.params.paradaId, "Parada");
+  const c = await prisma.container.findUnique({ where: { id: containerId } });
+  if (!c) throw erroHttp(404, "Container não encontrado.");
+  const parada = await prisma.paradaContainer.findFirst({ where: { id: paradaId, containerId }, include: { local: true } });
+  if (!parada) throw erroHttp(404, "Parada não encontrada neste container.");
+  return { c, parada };
+}
+
+// Passagem pela parada registrada pela ficha (horário informado ou agora).
+containersRouter.post("/:id/paradas/:paradaId/passagem", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
+  const { c, parada } = await paradaDoContainer(req);
+  const passouEm = dataHora(req.body?.passouEm, "Data/hora da passagem") ?? new Date();
+  await registrarPassagem({ container: c, parada, passouEm, quem: req.usuario.email, origem: "FICHA" });
+  await sincronizarAlertas(c.id);
+  res.status(201).json(await detalhe(c.id));
+}));
+
+// Desfazer passagem (registrada por engano).
+containersRouter.delete("/:id/paradas/:paradaId/passagem", requirePermissao("containers.corrigir"), asyncHandler(async (req, res) => {
+  const { c, parada } = await paradaDoContainer(req);
+  if (!parada.passouEm) throw erroHttp(409, "Esta parada não tem passagem registrada.");
+  await prisma.paradaContainer.update({ where: { id: parada.id }, data: { passouEm: null, registradoPor: null, origemRegistro: null, latitude: null, longitude: null, precisaoM: null } });
+  await registrarLog({ usuarioEmail: req.usuario.email, acao: "DESFAZER", entidade: "Container", entidadeId: c.id, descricao: `Container ${c.numero}: passagem por ${parada.local.nome} desfeita` });
+  await sincronizarAlertas(c.id);
+  res.json(await detalhe(c.id));
+}));
 
 containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);

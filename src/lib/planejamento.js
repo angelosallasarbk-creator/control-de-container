@@ -17,6 +17,8 @@ export function planoDaPrevisao(previsao, agora = new Date(), c = {}) {
     NA_FABRICA: new Date(previsao.previsaoChegadaFabrica).toISOString(),
     SAIU_FABRICA: new Date(previsao.previsaoSaidaFabrica).toISOString(),
     ENTREGUE_PORTO: new Date(previsao.previsaoEntrega).toISOString(),
+    // Passagem planejada por cada parada do trajeto (ex.: Ponto Fiscal), por id da parada.
+    PARADAS: Object.fromEntries((previsao.paradas ?? []).filter((m) => m.previsao).map((m) => [m.paradaId, new Date(m.previsao).toISOString()])),
   };
 }
 
