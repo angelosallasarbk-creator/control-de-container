@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 1.4.0 — em desenvolvimento (branch `versao-1.4`)
+## 1.4.0 — 28/09/2026 (tag `v1.4.0`)
 
 - **Produtos com categoria** (Congelado, Refrigerado, Carga Seca); menu "Produtos". Carga Seca sem
   temperatura: sem pedido no QR, sem aba/informações de temperatura na ficha, sem alertas de
