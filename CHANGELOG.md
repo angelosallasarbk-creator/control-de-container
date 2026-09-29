@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 2.0.0 — em desenvolvimento (branch `versao-2.0`)
+## 2.0.0 — 28/09/2026 (tag `v2.0.0`)
 
 **2.0-A:**
 
