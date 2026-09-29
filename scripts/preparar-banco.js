@@ -19,13 +19,18 @@ export async function prepararBanco({ url = process.env.DATABASE_URL, senha = pr
     const existe = await db.$queryRaw`SELECT 1 FROM pg_roles WHERE rolname = ${USUARIO_APP}`;
     // Senha como literal SQL (CREATE/ALTER ROLE não aceitam parâmetro): aspas escapadas.
     const literal = `'${senha.replace(/'/g, "''")}'`;
-    if (!existe.length) await db.$executeRawUnsafe(`CREATE ROLE ${USUARIO_APP} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD ${literal}`);
-    else await db.$executeRawUnsafe(`ALTER ROLE ${USUARIO_APP} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE PASSWORD ${literal}`);
+    // Só LOGIN + senha: os atributos padrão de um usuário novo já são os seguros (sem SUPERUSER,
+    // sem BYPASSRLS, sem CREATEDB/CREATEROLE). No Supabase (PostgreSQL 17) o usuário das migrações
+    // não é superusuário e NÃO pode sequer citar SUPERUSER/NOSUPERUSER num ALTER ROLE (erro 42501 no
+    // deploy da v3.0.0) — a conferência abaixo garante que o ccs_app não ignora o RLS.
+    if (!existe.length) await db.$executeRawUnsafe(`CREATE ROLE ${USUARIO_APP} WITH LOGIN PASSWORD ${literal}`);
+    else await db.$executeRawUnsafe(`ALTER ROLE ${USUARIO_APP} WITH LOGIN PASSWORD ${literal}`);
     await db.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO ${USUARIO_APP}`);
     await db.$executeRawUnsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${USUARIO_APP}`);
     await db.$executeRawUnsafe(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${USUARIO_APP}`);
     // A tabela de controle das migrações fica fora do alcance do sistema.
-    await db.$executeRawUnsafe(`REVOKE ALL ON "_prisma_migrations" FROM ${USUARIO_APP}`);
+    // (num banco novo ela só existe depois da 1ª migração)
+    await db.$executeRawUnsafe(`DO $$ BEGIN IF to_regclass('public."_prisma_migrations"') IS NOT NULL THEN REVOKE ALL ON "_prisma_migrations" FROM ${USUARIO_APP}; END IF; END $$`);
     // Tabelas/sequências criadas por migrações futuras já nascem com as mesmas permissões.
     await db.$executeRawUnsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${USUARIO_APP}`);
     await db.$executeRawUnsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${USUARIO_APP}`);
@@ -37,8 +42,8 @@ export async function prepararBanco({ url = process.env.DATABASE_URL, senha = pr
   // Supabase). No build roda ANTES das migrações: se falhar, o deploy para sem mexer no banco.
   const app = new PrismaClient({ datasourceUrl: urlDaAplicacao({ DATABASE_URL: url, APP_DB_ROLE_PASSWORD: senha }) });
   try {
-    const [{ usuario, ignora_rls: ignoraRls }] = await app.$queryRaw`SELECT current_user AS usuario, (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS ignora_rls`;
-    if (usuario !== USUARIO_APP || ignoraRls) throw new Error(`conexão do sistema ficou como ${usuario} (ignora RLS: ${ignoraRls}).`);
+    const [{ usuario, ignora_rls: ignoraRls, super: ehSuper }] = await app.$queryRaw`SELECT current_user AS usuario, r.rolbypassrls AS ignora_rls, r.rolsuper AS super FROM pg_roles r WHERE r.rolname = current_user`;
+    if (usuario !== USUARIO_APP || ignoraRls || ehSuper) throw new Error(`conexão do sistema ficou como ${usuario} (ignora RLS: ${ignoraRls}, superusuário: ${ehSuper}).`);
     console.log(`preparar-banco: conexão do sistema conferida (${usuario}, sem ignorar o RLS).`);
   } finally {
     await app.$disconnect();

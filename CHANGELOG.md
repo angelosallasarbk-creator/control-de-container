@@ -4,7 +4,18 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.0.0 — 29/09/2026 (tag `v3.0.0`)
+## 3.0.1 — em desenvolvimento (branch `versao-3.0`)
+
+- **Correção do deploy da 3.0.0** (o build falhou depois das migrações e a 3.0.0 nunca entrou no ar):
+  no Supabase (PostgreSQL 17) o usuário das migrações não é superusuário e não pode nem citar
+  `NOSUPERUSER` num `ALTER ROLE`. `scripts/preparar-banco.js` passa a criar/atualizar o `ccs_app`
+  só com LOGIN + senha (os atributos padrão já são os seguros) e a conferência final exige que ele
+  não seja superusuário nem ignore o RLS. Também funciona num banco vazio (instalação nova).
+- Enquanto a 3.0.0 não subiu, a produção ficou na 2.1 com `scripts/rollback-3.0-antes.sql`
+  aplicado (plano B); ao entrar a 3.0.1 roda-se `scripts/rollback-3.0-desfazer.sql`.
+- Testado simulando o build inteiro com um usuário não superusuário igual ao do Supabase.
+
+## 3.0.0 — 29/09/2026 (tag `v3.0.0`) — não entrou no ar (ver 3.0.1)
 
 **Multi-tenant: vários clientes na mesma plataforma, cada um vendo só a própria organização.**
 
