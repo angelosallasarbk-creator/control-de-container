@@ -10,6 +10,7 @@ import { tem, ehGestorTransportadora } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { id as validarId } from "../lib/validacao.js";
 import { celularValido, validarDadosMotorista } from "../lib/acessoMotorista.js";
+import { mascararCelular } from "../lib/rastreamento.js";
 import { normalizar } from "../lib/importacaoContainers.js";
 
 export const motoristasRouter = Router();
@@ -30,7 +31,11 @@ const INCLUDE = {
   transportadora: { select: { id: true, nome: true, ativo: true } },
   _count: { select: { sessoes: { where: { revogadaEm: null } } } },
 };
-const serializar = ({ _count, ...m }) => ({ ...m, sessoesAtivas: _count?.sessoes ?? 0 });
+// Listas e respostas: celular mascarado (4 últimos dígitos). Completo só em GET /:id (editar) e na criação.
+const serializar = ({ _count, celular, ...m }, { completo = false } = {}) => ({
+  ...m, sessoesAtivas: _count?.sessoes ?? 0,
+  celular: completo ? celular : mascararCelular(celular), celularFinal: String(celular ?? "").slice(-4),
+});
 
 async function buscarNoEscopo(req, id) {
   const m = await prisma.motorista.findUnique({ where: { id }, include: { transportadora: true } });
@@ -72,10 +77,16 @@ motoristasRouter.post("/", asyncHandler(async (req, res) => {
     throw err;
   });
   await registrarLog({ usuarioEmail: req.usuario.email, acao: "CRIAR", entidade: "Motorista", entidadeId: m.id, descricao: `Motorista pré-cadastrado: ${m.nome} (${t.nome})` });
-  res.status(201).json(serializar(m));
+  res.status(201).json(serializar(m, { completo: true }));
 }));
 
-// Bloquear/desbloquear, corrigir nome e placa.
+// Editar: dados do motorista com o celular completo (só aqui e na criação).
+motoristasRouter.get("/:id(\\d+)", asyncHandler(async (req, res) => {
+  const m = await buscarNoEscopo(req, validarId(req.params.id));
+  res.json(serializar(await prisma.motorista.findUnique({ where: { id: m.id }, include: INCLUDE }), { completo: true }));
+}));
+
+// Bloquear/desbloquear, corrigir nome, placa e celular.
 motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
   const antes = await buscarNoEscopo(req, validarId(req.params.id));
   const b = req.body ?? {};
@@ -85,6 +96,11 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
     dados.nome = v.nome;
     dados.placa = v.placa;
   }
+  // Celular novo: o acesso pelo número antigo cai (sessões encerradas) e ele entra de novo pelo código SMS.
+  if ("celular" in b) {
+    const celular = celularValido(b.celular);
+    if (celular !== antes.celular) dados.celular = celular;
+  }
   const agora = new Date();
   if ("bloqueado" in b) {
     dados.bloqueado = Boolean(b.bloqueado);
@@ -92,9 +108,12 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
     dados.bloqueadoPor = dados.bloqueado ? req.usuario.email : null;
   }
   const m = await prisma.$transaction(async (tx) => {
-    const m = await tx.motorista.update({ where: { id: antes.id }, data: dados, include: INCLUDE });
-    // Bloqueio derruba o acesso na hora.
-    if (dados.bloqueado && !antes.bloqueado) {
+    const m = await tx.motorista.update({ where: { id: antes.id }, data: dados, include: INCLUDE }).catch((err) => {
+      if (err.code === "P2002") throw erroHttp(409, "Já existe um motorista com esse celular.");
+      throw err;
+    });
+    // Bloqueio ou troca de celular derrubam o acesso na hora.
+    if ((dados.bloqueado && !antes.bloqueado) || dados.celular) {
       await tx.sessaoMotorista.updateMany({ where: { motoristaId: m.id, revogadaEm: null }, data: { revogadaEm: agora, revogadaPor: req.usuario.email } });
     }
     return m;
@@ -102,7 +121,7 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
   const acao = "bloqueado" in b && dados.bloqueado !== antes.bloqueado ? (dados.bloqueado ? "bloqueado" : "desbloqueado") : "alterado";
   await registrarLog({
     usuarioEmail: req.usuario.email, acao: acao === "alterado" ? "ALTERAR" : acao === "bloqueado" ? "BLOQUEAR" : "DESBLOQUEAR", entidade: "Motorista", entidadeId: m.id,
-    descricao: `Motorista ${m.nome} (${m.transportadora.nome}) ${acao}`,
+    descricao: `Motorista ${m.nome} (${m.transportadora.nome}) ${acao}${dados.celular ? ` · celular trocado (final ${dados.celular.slice(-4)})` : ""}`,
   });
   res.json(serializar(m));
 }));

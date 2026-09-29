@@ -1360,7 +1360,7 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   const doLink = r.posicoes.find((p) => p.origem === "LINK_SMS");
   assert.equal(doLink.latitude, -22.5);
   assert.equal(doLink.precisaoM, 5);
-  assert.ok(r.mensagens.some((m) => m.telefone === "+55 11 9****-4321"));
+  assert.ok(r.mensagens.some((m) => m.telefone === "(••) •••••-4321"));
   assert.ok(!JSON.stringify(r).includes("98765-4321") && !JSON.stringify(r).includes("5511987654321"), "celular completo não vaza");
 
   // 8) Rastreamento desligado: nada sai; container encerrado: nada sai.
@@ -2213,4 +2213,23 @@ test("v2.1: mudanças no trajeto ficam no Histórico (antes/depois, após o plan
   assert.equal(rast.posicoes.length, 60);
   assert.ok(new Date(rast.posicoes[0].registradaEm) > new Date(rast.posicoes[1].registradaEm), "mais recente primeiro (destacada no mapa)");
   await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste v2.1" });
+});
+
+test("v2.1: celular do motorista só com os 4 últimos dígitos; completo ao criar/editar", async () => {
+  const t = (await agentes.ADMIN.get("/api/transportadoras?ativos=1")).body[0];
+  const criado = await agentes.SUPERVISOR.post("/api/motoristas").send({ nome: "Privacidade V21", celular: "(11) 91234-5678", transportadoraId: t.id });
+  assert.equal(criado.status, 201, JSON.stringify(criado.body));
+  assert.equal(criado.body.celular, "+5511912345678", "criação devolve o número completo");
+  const lista = (await agentes.SUPERVISOR.get("/api/motoristas")).body;
+  const m = lista.find((x) => x.id === criado.body.id);
+  assert.equal(m.celular, "(••) •••••-5678");
+  assert.equal(m.celularFinal, "5678");
+  assert.ok(!JSON.stringify(lista).includes("912345678"), "lista não expõe nenhum número completo");
+  const det = await agentes.SUPERVISOR.get(`/api/motoristas/${m.id}`);
+  assert.equal(det.body.celular, "+5511912345678", `editar mostra completo: ${det.status} ${JSON.stringify(det.body)}`);
+  const ed = await agentes.SUPERVISOR.patch(`/api/motoristas/${m.id}`).send({ celular: "11 98888-7777" });
+  assert.equal(ed.status, 200);
+  assert.equal(ed.body.celular, "(••) •••••-7777");
+  assert.equal((await prisma.motorista.findUnique({ where: { id: m.id } })).celular, "+5511988887777");
+  assert.equal((await agentes.OPERADOR.get(`/api/motoristas/${m.id}`)).status, 403, "sem permissão de cadastro não vê");
 });

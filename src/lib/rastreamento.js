@@ -33,10 +33,10 @@ const hashDoCodigo = (codigo) => crypto.createHash("sha256").update(String(codig
 
 
 // Mostra só o começo e o fim do número (dado pessoal) — ex.: +55 11 9****-4321.
+// Celular exibido só com os 4 últimos dígitos (o número completo aparece apenas ao criar/editar).
 export function mascararCelular(celular) {
   if (!celular) return null;
-  const m = /^\+55(\d{2})(\d)\d{4}(\d{4})$/.exec(celular);
-  return m ? `+55 ${m[1]} ${m[2]}****-${m[3]}` : `${celular.slice(0, 4)}****${celular.slice(-4)}`;
+  return `(••) •••••-${String(celular).replace(/\D/g, "").slice(-4)}`;
 }
 
 async function registrarSms(dados) {

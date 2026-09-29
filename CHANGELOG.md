@@ -18,6 +18,9 @@ Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno e
 - **Histórico da ficha** mostra as mudanças no trajeto (retirada, carregamento, entrega, paradas)
   com antes/depois, quem e por onde (edição, Editar trajeto, QR), marcando as feitas após o
   Planejado. Migração `20261002090000_mudanca_trajeto` (só acréscimo; voltar para a 2.0 sem script).
+- **Privacidade do celular do motorista:** listas, rastreamento e SMS mostram só os 4 últimos
+  dígitos ("(••) •••••-4321"); o número completo aparece apenas ao criar e no novo **Editar**
+  motorista (nome, celular, placa — trocar o celular encerra os acessos atuais).
 
 ## 2.0.0 — 28/09/2026 (tag `v2.0.0`)
 
