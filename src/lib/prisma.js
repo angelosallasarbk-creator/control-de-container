@@ -5,6 +5,7 @@
 // políticas de Row-Level Security do PostgreSQL só liberam as linhas daquela organização.
 import { Prisma, PrismaClient } from "@prisma/client";
 import { contextoAtual, dentroDaTransacao } from "./tenant.js";
+import { urlDaAplicacao } from "../../scripts/preparar-banco.js";
 
 // Tabelas de cliente (têm organizacaoId). Motorista, Transportadora e afins são globais.
 export const MODELOS_DA_ORGANIZACAO = new Set([
@@ -28,16 +29,31 @@ export class SemOrganizacaoError extends Error {
   }
 }
 
-const base = new PrismaClient();
+// Conexão com o usuário restrito ccs_app (RLS valendo) quando APP_DB_ROLE_PASSWORD existe.
+const base = new PrismaClient({ datasourceUrl: urlDaAplicacao() });
+if (process.env.NODE_ENV === "production" && !process.env.APP_DB_ROLE_PASSWORD) {
+  console.warn("ATENÇÃO: APP_DB_ROLE_PASSWORD não definida — o sistema conecta com o usuário das migrações e o RLS não se aplica.");
+}
 
 // Valores do contexto para o banco (RLS): organização e modo sistema.
 function variaveisDoBanco(ctx) {
-  return { org: ctx?.sistema || ctx?.organizacaoId === null || ctx?.organizacaoId === undefined ? "" : String(ctx.organizacaoId), sistema: ctx?.sistema ? "on" : "off" };
+  const org = ctx && !ctx.sistema && Number.isInteger(ctx.organizacaoId) ? String(ctx.organizacaoId) : "";
+  return { org, sistema: ctx?.sistema ? "on" : "off", plataforma: ctx && !ctx.sistema && ctx.organizacaoId === null ? "on" : "off" };
 }
 export const definirContextoNoBanco = (cliente, ctx) => {
   const v = variaveisDoBanco(ctx);
-  return cliente.$executeRaw`SELECT set_config('app.org_id', ${v.org}, true), set_config('app.sistema', ${v.sistema}, true)`;
+  return cliente.$executeRaw`SELECT set_config('app.org_id', ${v.org}, true), set_config('app.sistema', ${v.sistema}, true), set_config('app.plataforma', ${v.plataforma}, true)`;
 };
+
+// SQL direto ($queryRaw etc.) também roda com o contexto definido (senão o RLS não mostra nada).
+const RAW = new Set(["$queryRaw", "$queryRawUnsafe", "$executeRaw", "$executeRawUnsafe"]);
+function rawComContexto(nome) {
+  return (...args) => {
+    const ctx = contextoAtual();
+    if (ctx?.emTransacao) return base[nome](...args);
+    return base.$transaction([definirContextoNoBanco(base, ctx), base[nome](...args)]).then(([, r]) => r);
+  };
+}
 
 function comOrganizacaoNosDados(dados, org) {
   if (Array.isArray(dados)) return dados.map((d) => ({ ...d, organizacaoId: org }));
@@ -71,20 +87,33 @@ const estendido = base.$extends({
   },
 });
 
-// Transação interativa: define o contexto do banco na abertura e marca o contexto da aplicação
-// (as consultas dentro dela não abrem outra transação).
+// Consultas feitas PELO objeto da transação (tx.modelo.x) não abrem outra transação: o contexto do
+// banco já foi definido na abertura. Consultas pelo cliente de fora (prisma.x) dentro do callback
+// rodam em outra conexão — continuam abrindo a própria transação com o contexto.
+const txNoContexto = (tx) => new Proxy(tx, {
+  get(alvo, prop) {
+    const v = alvo[prop];
+    if (typeof prop === "string" && !prop.startsWith("$") && v && typeof v === "object") {
+      return new Proxy(v, { get: (m, metodo) => (typeof m[metodo] === "function" ? (...a) => dentroDaTransacao(() => m[metodo](...a)) : m[metodo]) });
+    }
+    return v;
+  },
+});
+
+// Transação interativa: define o contexto do banco na abertura.
 async function transacao(arg, opcoes) {
   if (Array.isArray(arg)) return estendido.$transaction(arg, opcoes); // lote: só tabelas globais
   const ctx = contextoAtual();
   return estendido.$transaction(async (tx) => {
     await definirContextoNoBanco(tx, ctx);
-    return dentroDaTransacao(() => arg(tx));
+    return arg(txNoContexto(tx));
   }, opcoes);
 }
 
 export const prisma = new Proxy(estendido, {
   get(alvo, prop, receptor) {
     if (prop === "$transaction") return transacao;
+    if (RAW.has(prop)) return rawComContexto(prop);
     return Reflect.get(alvo, prop, receptor);
   },
 });

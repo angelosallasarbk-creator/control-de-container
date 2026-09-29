@@ -43,6 +43,10 @@ async function logar(email) {
 
 before(async () => {
   execSync("npx prisma migrate reset --force --skip-seed", { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL }, stdio: "ignore" });
+  // RLS de verdade: o sistema conecta com o usuário restrito ccs_app (criado/atualizado aqui).
+  process.env.APP_DB_ROLE_PASSWORD ??= "senha-teste-app-rls-123456";
+  const { prepararBanco } = await import("../scripts/preparar-banco.js");
+  await prepararBanco({ url: TEST_DATABASE_URL, senha: process.env.APP_DB_ROLE_PASSWORD });
   ({ comOrganizacao } = await import("./lib/tenant.js"));
   prisma = naOrgPrisma((await import("./lib/prisma.js")).prisma);
   sincronizarTodos = naOrg((await import("./lib/alertas.js")).sincronizarTodos);
@@ -2294,6 +2298,15 @@ test("v3.0 multi-tenant: usuário da organização B não enxerga nem altera dad
   const [etqA] = (await a.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
   assert.equal((await b.get(`/api/qr/${etqA.token}`)).status, 404);
   assert.deepEqual((await b.get("/api/etiquetas")).body.etiquetas ?? (await b.get("/api/etiquetas")).body, []);
+  // 2ª barreira (banco): conexão do sistema é o usuário restrito e o RLS filtra até SQL direto.
+  const { comoPlataforma } = await import("./lib/tenant.js");
+  assert.equal((await comOrganizacao(orgB.id, () => bruto.$queryRaw`SELECT current_user AS u`))[0].u, "ccs_app");
+  const contar = () => bruto.$queryRaw`SELECT count(*)::int AS n FROM "Container"`;
+  assert.equal((await comOrganizacao(orgB.id, contar))[0].n, 0, "RLS: B não conta containers da A nem em SQL direto");
+  assert.ok((await comOrganizacao(ORG_TESTE, contar))[0].n > 0, "RLS: A vê os seus");
+  assert.equal((await comoPlataforma(contar))[0].n, 0, "RLS: plataforma não vê containers");
+  assert.equal((await bruto.$queryRaw`SELECT count(*)::int AS n FROM "Container"`)[0].n, 0, "RLS: sem contexto nenhuma linha");
+  await assert.rejects(comOrganizacao(orgB.id, () => bruto.$executeRaw`UPDATE "Container" SET booking = 'X' WHERE id = ${ids.reefer}`).then((n) => { if (n === 0) throw new Error("0 linhas"); }), /0 linhas/, "RLS: B não altera linha da A");
   // Configurações: cada uma com as suas.
   const cfgB = (await b.get("/api/configuracao")).body;
   assert.equal((await b.put("/api/configuracao").send({ ...cfgB, kmPorDia: 777 })).status, 200);
