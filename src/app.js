@@ -5,6 +5,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { requireAuth } from "./lib/auth.js";
 import { carregarUsuarioAtual, restringirPerfisDeCampo } from "./lib/permissoes.js";
+import { contextoDaRequisicao } from "./lib/tenant.js";
 import { authRouter } from "./routes/auth.js";
 import { cadastrosRouter } from "./routes/cadastros.js";
 import { containersRouter } from "./routes/containers.js";
@@ -21,6 +22,7 @@ import { motoristasRouter } from "./routes/motoristas.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
+import { organizacoesRouter } from "./routes/organizacoes.js";
 
 const VERSAO = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
@@ -47,7 +49,8 @@ export function criarApp() {
 
   // Tudo em /api daqui para baixo exige sessão válida — e relê o usuário no banco (conta
   // desativada ou permissão alterada vale na hora, sem esperar a sessão expirar).
-  app.use("/api", requireAuth, carregarUsuarioAtual, restringirPerfisDeCampo);
+  // Daqui para baixo, toda consulta roda na organização do usuário (lib/tenant.js).
+  app.use("/api", requireAuth, carregarUsuarioAtual, contextoDaRequisicao, restringirPerfisDeCampo);
   app.use("/api", cadastrosRouter);
   app.use("/api/containers", containersRouter);
   app.use("/api/painel", painelRouter);
@@ -64,6 +67,7 @@ export function criarApp() {
   app.use("/api/motoristas", motoristasRouter);
   app.use("/api/configuracao", configuracaoRouter);
   app.use("/api/logs", logsRouter);
+  app.use("/api/organizacoes", organizacoesRouter);
   app.use("/api", (_req, res) => res.status(404).json({ erro: "Rota não encontrada." }));
 
   const webDist = path.resolve("web/dist");

@@ -11,6 +11,10 @@ services:
         value: production
       - key: DATABASE_URL
         sync: false
+      # v3.0 (multi-tenant): senha do usuário de banco restrito "ccs_app" (RLS). Gerar no painel do
+      # Render (valor aleatório, 16+ caracteres). O build cria/atualiza o usuário; o sistema conecta com ele.
+      - key: APP_DB_ROLE_PASSWORD
+        sync: false
       - key: JWT_SECRET
         generateValue: true
       - key: ORS_API_KEY

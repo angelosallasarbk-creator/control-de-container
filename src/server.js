@@ -3,9 +3,10 @@ import { criarApp } from "./app.js";
 import { purgarLogsExpirados } from "./lib/auditoria.js";
 import { iniciarVerificador } from "./lib/verificador.js";
 import { iniciarRastreamento, purgarDadosAntigos } from "./lib/rastreamento.js";
-import { criarAdminInicialSeNecessario } from "./lib/adminInicial.js";
+import { criarAdminInicialSeNecessario, criarAdminPlataformaSeNecessario } from "./lib/adminInicial.js";
 
 await criarAdminInicialSeNecessario().catch((err) => console.error("Falha ao criar admin inicial:", err));
+await criarAdminPlataformaSeNecessario().catch((err) => console.error("Falha ao criar admin da plataforma:", err));
 
 const app = criarApp();
 const port = process.env.PORT || 3000;

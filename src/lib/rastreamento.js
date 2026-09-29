@@ -14,6 +14,8 @@
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
+import { comoSistema, organizacaoAtual } from "./tenant.js";
+import { paraCadaOrganizacao, vincularMotorista } from "./organizacoes.js";
 import { registrarLog } from "./auditoria.js";
 import { erroHttp } from "./asyncHandler.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -102,8 +104,12 @@ export async function assumirRastreio({ containerId, usuarioId = null, motorista
       select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, motorista: true, placa: true },
     });
     if (!c) return { trocou: false };
-    // Motorista (acesso pelo celular): nome e placa atuais dele vão para o container a cada registro.
-    if (motoristaId) await atualizarMotoristaDoContainer(c, motoristaId);
+    // Motorista (acesso pelo celular): nome e placa atuais dele vão para o container a cada registro,
+    // e ele (com a transportadora) passa a ser visível para esta organização.
+    if (motoristaId) {
+      await atualizarMotoristaDoContainer(c, motoristaId);
+      await vincularMotorista(motoristaId, organizacaoAtual());
+    }
     const temPosicao = posicao.latitude !== undefined && posicao.latitude !== null;
     if (temPosicao) {
       await prisma.posicaoContainer.create({
@@ -356,13 +362,14 @@ export const INTERVALO_MANUAL_MIN = 5;
  * pedido de posição a cada 5 min por container, contando os automáticos). Lança erroHttp.
  */
 export async function solicitarPosicaoManual({ containerId, solicitante, agora = new Date() }) {
-  const config = await lerConfiguracao();
-  if (!config.rastreioSmsAtivo) throw erroHttp(409, "O envio de SMS de rastreamento está desligado (Configurações → Rastreamento).");
+  // Primeiro o container (de outra organização = não existe), depois a configuração.
   const c = await prisma.container.findUnique({
     where: { id: containerId },
     select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, rastreioUltimoEnvioEm: true },
   });
   if (!c) throw erroHttp(404, "Container não encontrado.");
+  const config = await lerConfiguracao();
+  if (!config.rastreioSmsAtivo) throw erroHttp(409, "O envio de SMS de rastreamento está desligado (Configurações → Rastreamento).");
   if (STATUS_ENCERRADOS.includes(c.status)) throw erroHttp(409, `O container ${c.numero} já foi encerrado.`);
   if (!destinoDoContainer(c)) throw erroHttp(409, "Ninguém registrou este container pelo QR ainda — não há para quem pedir a posição.");
   const ultimo = await prisma.mensagemSms.findFirst({
@@ -411,6 +418,13 @@ async function pedidoDoCodigo(codigo, agora) {
     return { erro: `O rastreamento do container ${p.container.numero} passou para outra pessoa; este link não vale mais.` };
   }
   return { pedido: p };
+}
+
+// Organização dona do link (o link público chega sem login): consulta em modo sistema.
+export async function organizacaoDoCodigo(codigo) {
+  if (!codigo || !/^[A-Za-z0-9_-]{16,64}$/.test(String(codigo))) return null;
+  const p = await comoSistema(() => prisma.solicitacaoPosicao.findUnique({ where: { tokenHash: hashDoCodigo(codigo) }, select: { organizacaoId: true } }));
+  return p?.organizacaoId ?? null;
 }
 
 export async function conferirPedido(codigo, agora = new Date()) {
@@ -500,15 +514,19 @@ export async function resumoRastreamento(containerId) {
  * Só apaga pelo critério de data, nada mais (posições recentes e sessões válidas ficam).
  */
 export async function purgarDadosAntigos(agora = new Date()) {
-  const config = await lerConfiguracao();
   const dias = (n) => new Date(agora.getTime() - n * 24 * 60 * MIN);
-  const [posicoes, codigos, sessoes] = await Promise.all([
-    prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } }),
+  // Posições: pela retenção configurada em cada organização.
+  const porOrg = await paraCadaOrganizacao(async () => {
+    const config = await lerConfiguracao();
+    return prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } });
+  }, "Retenção");
+  const posicoes = { count: porOrg.reduce((s, x) => s + (x?.count ?? 0), 0) };
+  const [codigos, sessoes] = await Promise.all([
     prisma.codigoAcessoMotorista.deleteMany({ where: { criadoEm: { lt: dias(1) } } }),
     prisma.sessaoMotorista.deleteMany({ where: { OR: [{ expiraEm: { lt: dias(30) } }, { revogadaEm: { lt: dias(30) } }] } }),
   ]);
   if (posicoes.count || codigos.count || sessoes.count) {
-    console.log(`Retenção: ${posicoes.count} posição(ões) com mais de ${config.retencaoPosicoesDias} dias, ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
+    console.log(`Retenção: ${posicoes.count} posição(ões) antiga(s), ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
   }
   return { posicoes: posicoes.count, codigos: codigos.count, sessoes: sessoes.count };
 }
@@ -520,7 +538,8 @@ export async function rodadaRastreamento() {
   if (rodando) return null;
   rodando = true;
   try {
-    const r = await executarRastreamento();
+    const porOrg = await paraCadaOrganizacao(() => executarRastreamento(), "Rastreamento");
+    const r = { enviados: porOrg.reduce((s, x) => s + (x?.enviados ?? 0), 0) };
     if (r.enviados) console.log(`Rastreamento: ${r.enviados} pedido(s) de posição enviado(s).`);
     return r;
   } catch (err) {

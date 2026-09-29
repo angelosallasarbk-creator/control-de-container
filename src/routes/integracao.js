@@ -9,6 +9,7 @@ import { sincronizarAlertas } from "../lib/alertas.js";
 import { normalizarNumero } from "../lib/iso6346.js";
 import { controlaTemperatura, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, id as validarId } from "../lib/validacao.js";
+import { comOrganizacao, comoSistema } from "../lib/tenant.js";
 
 const MAX_LEITURAS_POR_ENVIO = 500;
 const FOLGA_FUTURO_MS = 5 * 60 * 1000;
@@ -35,10 +36,11 @@ async function autenticarToken(req, _res, next) {
     const cabecalho = req.get("authorization") ?? "";
     const token = cabecalho.startsWith("Bearer ") ? cabecalho.slice(7).trim() : "";
     if (!token) throw erroHttp(401, "Token de integração ausente (cabeçalho Authorization: Bearer <token>).");
-    const registro = await prisma.tokenIntegracao.findUnique({ where: { tokenHash: hashToken(token) } });
+    // O token identifica a organização: a leitura toda roda nela.
+    const registro = await comoSistema(() => prisma.tokenIntegracao.findUnique({ where: { tokenHash: hashToken(token) } }));
     if (!registro?.ativo) throw erroHttp(401, "Token de integração inválido ou revogado.");
     req.tokenIntegracao = registro;
-    next();
+    comOrganizacao(registro.organizacaoId, next);
   } catch (err) {
     next(err);
   }

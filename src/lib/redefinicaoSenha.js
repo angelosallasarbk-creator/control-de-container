@@ -76,12 +76,14 @@ export async function solicitarRedefinicao({ email, baseUrl, solicitante, agora 
     // registra o motivo no log de auditoria (visível em Configurações → Log).
     await prisma.usuario.update({ where: { id: usuario.id }, data: { resetTokenHash: null, resetExpiraEm: null, resetSolicitadoEm: null } });
     await registrarLog({
+      organizacaoId: usuario.organizacaoId,
       usuarioEmail: solicitante ?? usuario.email, acao: "RESET_SENHA_FALHA_ENVIO", entidade: "Usuario", entidadeId: usuario.id,
       descricao: `Falha ao enviar o link de redefinição de senha para ${usuario.email}${quem}: ${String(err.message).slice(0, 300)}`,
     });
     throw err;
   }
   await registrarLog({
+    organizacaoId: usuario.organizacaoId,
     usuarioEmail: solicitante ?? usuario.email, acao: "RESET_SENHA_SOLICITADO", entidade: "Usuario", entidadeId: usuario.id,
     descricao: envio?.simulado
       ? `Link de redefinição de senha gerado para ${usuario.email}${quem} (envio simulado — chave do Brevo não configurada, o e-mail não saiu)`
@@ -113,6 +115,6 @@ export async function redefinirComCodigo({ codigo, senha, agora = new Date() }) 
     data: { senhaHash: await bcrypt.hash(nova, 10), resetTokenHash: null, resetExpiraEm: null, resetSolicitadoEm: null, sessoesValidasApos: agora },
   });
   if (r.count !== 1) throw erroHttp(400, "Este link já foi usado. Peça um novo em \"Esqueci minha senha\".");
-  await registrarLog({ usuarioEmail: u.email, acao: "RESET_SENHA", entidade: "Usuario", entidadeId: u.id, descricao: `Senha redefinida pelo link enviado para ${u.email}` });
+  await registrarLog({ organizacaoId: u.organizacaoId, usuarioEmail: u.email, acao: "RESET_SENHA", entidade: "Usuario", entidadeId: u.id, descricao: `Senha redefinida pelo link enviado para ${u.email}` });
   return { email: u.email };
 }

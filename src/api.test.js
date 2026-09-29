@@ -12,6 +12,21 @@ if (!/_test(\?|$)/.test(TEST_DATABASE_URL)) {
   throw new Error("TEST_DATABASE_URL precisa apontar para um banco cujo nome termina em _test (o teste apaga tudo).");
 }
 process.env.DATABASE_URL = TEST_DATABASE_URL;
+// Multi-tenant: as consultas DIRETAS deste arquivo (fora de uma requisição) rodam na organização da
+// migração (AS TECH LOG, id 1) por meio de naOrg/naOrgPrisma. O código do sistema não tem atalho de
+// teste: rota sem contexto de organização falha aqui também.
+const ORG_TESTE = 1;
+let comOrganizacao;
+const naOrg = (fn) => (...args) => comOrganizacao(ORG_TESTE, () => fn(...args));
+const naOrgPrisma = (cliente) => new Proxy(cliente, {
+  get(alvo, prop) {
+    const v = alvo[prop];
+    if (typeof prop === "string" && !prop.startsWith("$") && v && typeof v === "object") {
+      return new Proxy(v, { get: (m, metodo) => (typeof m[metodo] === "function" ? naOrg(m[metodo].bind(m)) : m[metodo]) });
+    }
+    return v;
+  },
+});
 process.env.JWT_SECRET ??= "segredo-apenas-para-teste";
 // Testes nunca chamam o serviço de rota externo: sem chave, distância = linha reta × fator.
 process.env.ORS_API_KEY = "";
@@ -28,8 +43,13 @@ async function logar(email) {
 
 before(async () => {
   execSync("npx prisma migrate reset --force --skip-seed", { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL }, stdio: "ignore" });
-  ({ prisma } = await import("./lib/prisma.js"));
-  ({ sincronizarTodos } = await import("./lib/alertas.js"));
+  // RLS de verdade: o sistema conecta com o usuário restrito ccs_app (criado/atualizado aqui).
+  process.env.APP_DB_ROLE_PASSWORD ??= "senha-teste-app-rls-123456";
+  const { prepararBanco } = await import("../scripts/preparar-banco.js");
+  await prepararBanco({ url: TEST_DATABASE_URL, senha: process.env.APP_DB_ROLE_PASSWORD });
+  ({ comOrganizacao } = await import("./lib/tenant.js"));
+  prisma = naOrgPrisma((await import("./lib/prisma.js")).prisma);
+  sincronizarTodos = naOrg((await import("./lib/alertas.js")).sincronizarTodos);
   const { criarApp } = await import("./app.js");
   app = criarApp();
 
@@ -905,7 +925,7 @@ test("atraso na coleta programada: alerta abre, escala para crítico e encerra n
   const cfgAtual = (await agentes.ADMIN.get("/api/configuracao")).body;
   assert.equal(cfgAtual.atrasoColetaCriticoHoras, 4);
   await agentes.ADMIN.put("/api/configuracao").send({ ...cfgAtual, atrasoColetaCriticoHoras: 10 });
-  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  const sincronizarAlertas = naOrg((await import("./lib/alertas.js")).sincronizarAlertas);
   await sincronizarAlertas(atrasado.body.id);
   assert.equal((await aberto())?.nivel, "ATENCAO");
   await agentes.ADMIN.put("/api/configuracao").send({ ...cfgAtual });
@@ -931,7 +951,7 @@ test("mensagem do alerta aberto acompanha o tempo (não fica congelada no texto 
   const aberto = () => prisma.alerta.findFirst({ where: { containerId: c.body.id, tipo: "ATRASO_COLETA", chaveAberta: { not: null } } });
   const antes = await aberto();
   await prisma.alerta.update({ where: { id: antes.id }, data: { mensagem: "texto antigo: atrasada há 6 min" } });
-  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  const sincronizarAlertas = naOrg((await import("./lib/alertas.js")).sincronizarAlertas);
   await sincronizarAlertas(c.body.id);
   const depois = await aberto();
   assert.equal(depois.id, antes.id, "mesmo alerta (não reabre)");
@@ -1037,7 +1057,7 @@ test("login: 'lembrar' = cookie persistente de 30 dias; sem lembrar = cookie de 
 
 test("esqueci minha senha: link por e-mail, uso único, expira, resposta não revela a conta", async () => {
   const { caixaDeSaida } = await import("./lib/email.js");
-  const { prisma: db } = await import("./lib/prisma.js");
+  const db = prisma;
   await agentes.ADMIN.post("/api/usuarios").send({ email: "reset@teste.local", nome: "Pessoa Reset", perfil: "OPERADOR", senha: "senha-antiga-123" });
   const sessaoAntiga = request.agent(app);
   assert.equal((await sessaoAntiga.post("/api/auth/login").send({ email: "reset@teste.local", senha: "senha-antiga-123", lembrar: true })).status, 200);
@@ -1096,7 +1116,7 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
 });
 
 test("reset de senha: log diz quando o envio é simulado e registra falha do Brevo (e libera novo pedido)", async () => {
-  const { prisma: db } = await import("./lib/prisma.js");
+  const db = prisma;
   await agentes.ADMIN.post("/api/usuarios").send({ email: "falha-envio@teste.local", nome: "Falha Envio", perfil: "OPERADOR", senha: "senha-teste-123" });
 
   // IP próprio para este cenário: o limite de 5 pedidos/15 min por IP já foi usado nos testes anteriores.
@@ -1235,7 +1255,7 @@ test("planilha de containers: modelo com listas, prévia sem gravar, confirma s�
 });
 
 test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de responsável, intervalos, link de posição", async () => {
-  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const { caixaDeSaidaSms } = await import("./lib/sms.js");
   const MIN = 60e3;
   const smsPara = (tel) => caixaDeSaidaSms.filter((s) => s.para === tel);
@@ -1377,7 +1397,7 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
 });
 
 test("rastreamento em trechos críticos: previsão estourada, risco de prazo, parado, sem posição e pedido manual", async () => {
-  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const MIN = 60e3, H = 60 * MIN;
   const T = new Date();
   const at = (ms) => new Date(T.getTime() + ms);
@@ -1482,7 +1502,8 @@ test("rastreamento em trechos críticos: previsão estourada, risco de prazo, pa
 
 test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor da transportadora e retenção", async () => {
   const { caixaDeSaidaSms } = await import("./lib/sms.js");
-  const { executarRastreamento, purgarDadosAntigos } = await import("./lib/rastreamento.js");
+  const { purgarDadosAntigos } = await import("./lib/rastreamento.js");
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const XFF = { "X-Forwarded-For": "198.51.100.20" };
   const codigoDe = (tel) => /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
   const pedir = (ag, celular) => ag.post("/api/motorista/codigo").set(XFF).send({ celular });
@@ -1835,7 +1856,7 @@ test("v1.2 trajeto com Ponto Fiscal: cadastro, editar trajeto, recálculo, Plane
 });
 
 test("v1.3: Ponto de Carregamento como parada (checkbox) e motorista/placa do QR no container", async () => {
-  const { assumirRastreio } = await import("./lib/rastreamento.js");
+  const assumirRastreio = naOrg((await import("./lib/rastreamento.js")).assumirRastreio);
   // Ponto de Carregamento marcado como possível ponto de parada.
   const g = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Parada SA", fabrica: "Fábrica Parada", metaEstadiaHoras: 12 });
   assert.equal(g.status, 201);
@@ -2232,4 +2253,269 @@ test("v2.1: celular do motorista só com os 4 últimos dígitos; completo ao cri
   assert.equal(ed.body.celular, "(••) •••••-7777");
   assert.equal((await prisma.motorista.findUnique({ where: { id: m.id } })).celular, "+5511988887777");
   assert.equal((await agentes.OPERADOR.get(`/api/motoristas/${m.id}`)).status, 403, "sem permissão de cadastro não vê");
+});
+
+test("v3.0 multi-tenant: usuário da organização B não enxerga nem altera dados da A", async () => {
+  const { comoSistema } = await import("./lib/tenant.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const orgB = await comoSistema(() => bruto.organizacao.create({ data: { nome: "Cliente B Teste" } }));
+  const senhaHash = await bcrypt.hash("senha-teste-123", 4);
+  await comOrganizacao(orgB.id, () => bruto.usuario.create({ data: { email: "admin@clienteb.local", nome: "Admin B", perfil: "ADMIN", senhaHash } }));
+  const b = await logar("admin@clienteb.local");
+  const a = agentes.ADMIN;
+
+  // Leituras: nada da A aparece para a B.
+  assert.deepEqual((await b.get("/api/containers?situacao=todos")).body, [], "containers");
+  assert.equal((await b.get(`/api/containers/${ids.reefer}`)).status, 404, "ficha de outra organização");
+  assert.deepEqual((await b.get("/api/locais")).body, [], "locais");
+  assert.deepEqual((await b.get("/api/grupos")).body, [], "pontos de carregamento");
+  assert.deepEqual((await b.get("/api/alertas")).body, [], "alertas");
+  assert.deepEqual((await b.get("/api/usuarios")).body.map((u) => u.email), ["admin@clienteb.local"], "usuários");
+  assert.ok((await b.get("/api/logs")).body.every((l) => !l.descricao.includes("TGHU")), "log");
+  const painel = (await b.get("/api/painel")).body;
+  assert.equal(painel.totais.ativos, 0, "painel");
+
+  // Escritas na A pela B: 404 (não existe para ela) e nada muda.
+  const antes = await prisma.container.findUnique({ where: { id: ids.reefer } });
+  assert.equal((await b.patch(`/api/containers/${ids.reefer}`).send({ booking: "INVADIDO" })).status, 404);
+  assert.equal((await b.post(`/api/containers/${ids.reefer}/avancar`).send({})).status, 404);
+  assert.equal((await b.post(`/api/containers/${ids.reefer}/cancelar`).send({ motivo: "x" })).status, 404);
+  assert.equal((await b.patch(`/api/locais/${ids.santos}`).send({ nome: "Invadido" })).status, 404);
+  const depois = await prisma.container.findUnique({ where: { id: ids.reefer } });
+  assert.equal(depois.booking, antes.booking);
+  assert.equal(depois.status, antes.status);
+
+  // Mesmo nome em organizações diferentes: permitido (únicos por organização).
+  const tipoB = await comOrganizacao(orgB.id, () => bruto.tipoLocal.create({ data: { nome: "Porto / Terminal", funcao: "RETIRADA_ENTREGA", rotuloColeta: "Coleta", rotuloEntrega: "Entrega" } }));
+  const localB = await b.post("/api/locais").send({ nome: "Porto de Santos", tipoId: tipoB.id });
+  assert.equal(localB.status, 201, JSON.stringify(localB.body));
+  assert.ok(!(await a.get("/api/locais")).body.some((l) => l.id === localB.body.id), "A não vê o local da B");
+  // B não usa o tipo de local da A.
+  const tipoA = (await a.get("/api/tipos-local")).body[0];
+  assert.equal((await b.post("/api/locais").send({ nome: "Outro", tipoId: tipoA.id })).status, 400);
+
+  // QR e etiquetas da A: invisíveis para a B.
+  const [etqA] = (await a.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  assert.equal((await b.get(`/api/qr/${etqA.token}`)).status, 404);
+  assert.deepEqual((await b.get("/api/etiquetas")).body.etiquetas ?? (await b.get("/api/etiquetas")).body, []);
+  // 2ª barreira (banco): conexão do sistema é o usuário restrito e o RLS filtra até SQL direto.
+  const { comoPlataforma } = await import("./lib/tenant.js");
+  assert.equal((await comOrganizacao(orgB.id, () => bruto.$queryRaw`SELECT current_user AS u`))[0].u, "ccs_app");
+  const contar = () => bruto.$queryRaw`SELECT count(*)::int AS n FROM "Container"`;
+  assert.equal((await comOrganizacao(orgB.id, contar))[0].n, 0, "RLS: B não conta containers da A nem em SQL direto");
+  assert.ok((await comOrganizacao(ORG_TESTE, contar))[0].n > 0, "RLS: A vê os seus");
+  assert.equal((await comoPlataforma(contar))[0].n, 0, "RLS: plataforma não vê containers");
+  assert.equal((await bruto.$queryRaw`SELECT count(*)::int AS n FROM "Container"`)[0].n, 0, "RLS: sem contexto nenhuma linha");
+  await assert.rejects(comOrganizacao(orgB.id, () => bruto.$executeRaw`UPDATE "Container" SET booking = 'X' WHERE id = ${ids.reefer}`).then((n) => { if (n === 0) throw new Error("0 linhas"); }), /0 linhas/, "RLS: B não altera linha da A");
+  // Configurações: cada uma com as suas.
+  const cfgB = (await b.get("/api/configuracao")).body;
+  assert.equal((await b.put("/api/configuracao").send({ ...cfgB, kmPorDia: 777 })).status, 200);
+  assert.equal((await b.get("/api/configuracao")).body.kmPorDia, 777);
+  assert.notEqual((await a.get("/api/configuracao")).body.kmPorDia, 777);
+});
+
+test("v3.0: admin da plataforma cria organizações (com cadastros padrão) e não vê dados dos clientes", async () => {
+  const { criarAdminPlataformaSeNecessario } = await import("./lib/adminInicial.js");
+  const env = { PLATAFORMA_ADMIN_EMAIL: "plataforma@teste.local", PLATAFORMA_ADMIN_SENHA: "senha-plataforma-123", PLATAFORMA_ADMIN_NOME: "Dono da Plataforma" };
+  assert.equal(await criarAdminPlataformaSeNecessario({ ...env, PLATAFORMA_ADMIN_SENHA: "curta" }), null, "senha curta não cria");
+  assert.equal((await criarAdminPlataformaSeNecessario(env))?.perfil, "PLATAFORMA");
+  assert.equal(await criarAdminPlataformaSeNecessario({ ...env, PLATAFORMA_ADMIN_EMAIL: "outro@teste.local" }), null, "só um, depois ignora");
+  const pl = request.agent(app);
+  assert.equal((await pl.post("/api/auth/login").send({ email: "plataforma@teste.local", senha: "senha-plataforma-123" })).status, 200);
+
+  // Não enxerga nada operacional.
+  for (const rota of ["/api/containers", "/api/usuarios", "/api/locais", "/api/painel", "/api/logs", "/api/motoristas"]) {
+    assert.equal((await pl.get(rota)).status, 403, rota);
+  }
+  assert.equal((await agentes.ADMIN.get("/api/organizacoes")).status, 403, "admin de cliente não gerencia organizações");
+
+  const lista = (await pl.get("/api/organizacoes")).body;
+  assert.ok(lista.some((o) => o.nome === "AS TECH LOG" && o.containers > 0), "vê só contagens");
+  assert.ok(!JSON.stringify(lista).includes("TGHU"), "nenhum dado de container");
+
+  // Nova organização: validações, cadastros padrão e 1º admin.
+  assert.equal((await pl.post("/api/organizacoes").send({ nome: "Cliente C", adminNome: "Admin C", adminEmail: "admin@teste.local", adminSenha: "senha-c-12345" })).status, 409, "e-mail já usado");
+  assert.equal((await pl.post("/api/organizacoes").send({ nome: "AS TECH LOG", adminNome: "X", adminEmail: "x@c.local", adminSenha: "senha-c-12345" })).status, 409, "nome repetido");
+  const criada = await pl.post("/api/organizacoes").send({ nome: "Cliente C", adminNome: "Admin C", adminEmail: "admin@clientec.local", adminSenha: "senha-c-12345" });
+  assert.equal(criada.status, 201, JSON.stringify(criada.body));
+  assert.equal(criada.body.usuarios, 1);
+  const c = request.agent(app);
+  const login = await c.post("/api/auth/login").send({ email: "admin@clientec.local", senha: "senha-c-12345" });
+  assert.equal(login.body.organizacao, "Cliente C");
+  assert.deepEqual((await c.get("/api/tipos-local")).body.map((t) => t.nome).sort(), ["Armazém", "Fábrica", "Ponto Fiscal", "Porto / Terminal", "Terminal Ferroviário"]);
+  const tiposOp = (await c.get("/api/tipos-operacao")).body;
+  assert.deepEqual(tiposOp.map((t) => t.nome), ["Exportação padrão", "Coleta de cheio", "Importação", "Transferência"]);
+  assert.equal(tiposOp[0].etapas.length, 6);
+  assert.deepEqual((await c.get("/api/containers?situacao=todos")).body, []);
+
+  // Motoristas e transportadoras da plataforma: invisíveis até registrarem algo para a C.
+  assert.deepEqual((await c.get("/api/motoristas")).body, [], "não vê a lista geral de motoristas");
+  assert.deepEqual((await c.get("/api/transportadoras")).body, [], "nem de transportadoras");
+  const m = await prisma.motorista.findFirst({ include: { transportadora: true } });
+  const t = await c.post("/api/transportadoras").send({ nome: "Transportadora da C" });
+  assert.equal(t.status, 201);
+  const dup = await c.post("/api/motoristas").send({ nome: "Qualquer", celular: m.celular, transportadoraId: t.body.id });
+  assert.equal(dup.status, 409);
+  assert.ok(!dup.body.erro.includes(m.nome), "não revela quem é o motorista");
+  assert.equal((await c.patch(`/api/motoristas/${m.id}`).send({ nome: "Invadido" })).status, 404, "não mexe em motorista não vinculado");
+  // Motorista registra pelo QR uma carga da C → passa a aparecer (celular mascarado), com a transportadora.
+  const orgC = (await pl.get("/api/organizacoes")).body.find((o) => o.nome === "Cliente C");
+  const { assumirRastreio: assumir } = await import("./lib/rastreamento.js");
+  const armadorC = await c.post("/api/armadores").send({ nome: "Armador C", freeTimeDias: 7, valorDiaria: 100 });
+  const grupoC = await c.post("/api/grupos").send({ cliente: "Cliente C", fabrica: "Fábrica C", metaEstadiaHoras: 24 });
+  const contC = await c.post("/api/containers").send({ numero: "CCCU1234560", confirmarDigito: true, tipo: "DRY_40", grupoId: grupoC.body.id, armadorId: armadorC.body.id });
+  assert.equal(contC.status, 201, JSON.stringify(contC.body));
+  await comOrganizacao(orgC.id, () => assumir({ containerId: contC.body.id, motoristaId: m.id }));
+  const visiveis = (await c.get("/api/motoristas")).body;
+  assert.deepEqual(visiveis.map((x) => x.id), [m.id]);
+  assert.match(visiveis[0].celular, /^\(••\) •••••-\d{4}$/);
+  assert.ok((await c.get("/api/transportadoras")).body.some((x) => x.id === m.transportadoraId), "transportadora dele também");
+  // Transportadora compartilhada (A e C): C não altera nem exclui.
+  assert.equal((await c.patch(`/api/transportadoras/${m.transportadoraId}`).send({ nome: "Renomeada" })).status, 409);
+  assert.equal((await c.patch(`/api/transportadoras/${t.body.id}`).send({ nome: "Transportadora da C Ltda" })).status, 200, "a exclusiva dela pode");
+
+  // Organização desativada: ninguém dela entra, nem com sessão aberta.
+  assert.equal((await pl.patch(`/api/organizacoes/${orgC.id}`).send({ ativo: false })).status, 200);
+  assert.equal((await c.get("/api/containers")).status, 401, "sessão aberta cai");
+  assert.equal((await request(app).post("/api/auth/login").send({ email: "admin@clientec.local", senha: "senha-c-12345" })).status, 401);
+  assert.equal((await pl.patch(`/api/organizacoes/${orgC.id}`).send({ ativo: true })).status, 200);
+});
+
+test("v3.0: invasão — organização B ataca TODAS as rotas com identificador da A e nada muda", async () => {
+  const fs = await import("node:fs");
+  const b = await logar("admin@clienteb.local");
+  const A = (fn) => comOrganizacao(ORG_TESTE, fn);
+  const { prisma: bruto } = await import("./lib/prisma.js");
+
+  // Recursos da A usados no ataque.
+  const cont = await prisma.container.findFirst({ where: { id: ids.reefer } });
+  const parada = await prisma.paradaContainer.findFirst();
+  const alerta = await prisma.alerta.findFirst();
+  const etiqueta = await prisma.etiquetaQR.findFirst();
+  const local = await prisma.local.findFirst();
+  const tipoLocal = await prisma.tipoLocal.findFirst();
+  const tipoOp = await prisma.tipoOperacao.findFirst();
+  const usuarioA = await prisma.usuario.findFirst({ where: { email: "operador@teste.local" } });
+  const token = await prisma.tokenIntegracao.findFirst();
+  const regiao = await prisma.regiao.findFirst();
+  const grupo = await prisma.grupoOperacao.findFirst();
+  const armador = await prisma.armador.findFirst();
+  const produto = await prisma.produto.findFirst();
+  const motoristaSoDaA = await bruto.motorista.findFirst({ where: { organizacoes: { some: {}, every: { organizacaoId: ORG_TESTE } } } });
+  const transpSoDaA = await bruto.transportadora.findFirst({ where: { organizacoes: { some: {}, every: { organizacaoId: ORG_TESTE } } } });
+  for (const [nome, v] of Object.entries({ cont, parada, alerta, etiqueta, local, tipoLocal, tipoOp, usuarioA, token, regiao, grupo, armador, produto, motoristaSoDaA, transpSoDaA })) {
+    assert.ok(v, `recurso da A para o teste: ${nome}`);
+  }
+
+  // Foto dos dados da A (antes/depois).
+  const foto = () => A(async () => JSON.stringify(await Promise.all([
+    prisma.container.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true, booking: true, placa: true, portoEntregaId: true, atualizadoEm: true } }),
+    prisma.paradaContainer.findMany({ orderBy: { id: "asc" }, select: { id: true, passouEm: true, localId: true } }),
+    prisma.alerta.findMany({ orderBy: { id: "asc" }, select: { id: true, reconhecidoEm: true } }),
+    prisma.etiquetaQR.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true, vezesImpressa: true, containerId: true } }),
+    prisma.local.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, ativo: true } }),
+    prisma.tipoLocal.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, ativo: true } }),
+    prisma.tipoOperacao.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, ativo: true } }),
+    prisma.usuario.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, perfil: true, ativo: true, permissoes: true, resetTokenHash: true } }),
+    prisma.tokenIntegracao.findMany({ orderBy: { id: "asc" }, select: { id: true, ativo: true } }),
+    prisma.regiao.findMany({ orderBy: { id: "asc" } }), prisma.grupoOperacao.findMany({ orderBy: { id: "asc" } }),
+    prisma.armador.findMany({ orderBy: { id: "asc" } }), prisma.produto.findMany({ orderBy: { id: "asc" } }),
+    prisma.leituraTemperatura.count(), prisma.posicaoContainer.count(), prisma.solicitacaoPosicao.count(), prisma.mensagemSms.count(),
+    bruto.motorista.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, celular: true, placa: true, bloqueado: true } }),
+    bruto.transportadora.findMany({ orderBy: { id: "asc" } }), bruto.sessaoMotorista.count({ where: { revogadaEm: null } }),
+    bruto.organizacao.findMany({ orderBy: { id: "asc" } }),
+  ])));
+  const antes = await foto();
+
+  const c = cont.id;
+  const CASOS = [
+    ["POST /api/alertas/:id/reconhecer", () => b.post(`/api/alertas/${alerta.id}/reconhecer`).send({ acaoTomada: "invasão de teste com texto longo" })],
+    ["GET /api/containers/:id", () => b.get(`/api/containers/${c}`)],
+    ["PATCH /api/containers/:id", () => b.patch(`/api/containers/${c}`).send({ booking: "X", portoEntregaId: local.id })],
+    ["GET /api/containers/:id/rastreamento", () => b.get(`/api/containers/${c}/rastreamento`)],
+    ["POST /api/containers/:id/avancar", () => b.post(`/api/containers/${c}/avancar`).send({})],
+    ["POST /api/containers/:id/desfazer", () => b.post(`/api/containers/${c}/desfazer`).send({})],
+    ["POST /api/containers/:id/cancelar", () => b.post(`/api/containers/${c}/cancelar`).send({ motivo: "x" })],
+    ["POST /api/containers/:id/leituras", () => b.post(`/api/containers/${c}/leituras`).send({ temperatura: -18 })],
+    ["POST /api/containers/:id/solicitar-posicao", () => b.post(`/api/containers/${c}/solicitar-posicao`).send({})],
+    ["PUT /api/containers/:id/trajeto", () => b.put(`/api/containers/${c}/trajeto`).send({ pontos: [] })],
+    ["POST /api/containers/:id/paradas/:paradaId/passagem", () => b.post(`/api/containers/${parada.containerId}/paradas/${parada.id}/passagem`).send({})],
+    ["DELETE /api/containers/:id/paradas/:paradaId/passagem", () => b.delete(`/api/containers/${parada.containerId}/paradas/${parada.id}/passagem`)],
+    ["POST /api/etiquetas/:id/cancelar", () => b.post(`/api/etiquetas/${etiqueta.id}/cancelar`).send({ motivo: "x" })],
+    ["PATCH /api/locais/:id", () => b.patch(`/api/locais/${local.id}`).send({ nome: "X" })],
+    ["DELETE /api/locais/:id", () => b.delete(`/api/locais/${local.id}`)],
+    ["PATCH /api/tipos-local/:id", () => b.patch(`/api/tipos-local/${tipoLocal.id}`).send({ nome: "X" })],
+    ["DELETE /api/tipos-local/:id", () => b.delete(`/api/tipos-local/${tipoLocal.id}`)],
+    ["PATCH /api/tipos-operacao/:id", () => b.patch(`/api/tipos-operacao/${tipoOp.id}`).send({ nome: "X" })],
+    ["DELETE /api/tipos-operacao/:id", () => b.delete(`/api/tipos-operacao/${tipoOp.id}`)],
+    ["GET /api/motoristas/:id", () => b.get(`/api/motoristas/${motoristaSoDaA.id}`)],
+    ["GET /api/motoristas/:id/sessoes", () => b.get(`/api/motoristas/${motoristaSoDaA.id}/sessoes`)],
+    ["PATCH /api/motoristas/:id", () => b.patch(`/api/motoristas/${motoristaSoDaA.id}`).send({ bloqueado: true })],
+    ["POST /api/motoristas/:id/encerrar-sessoes", () => b.post(`/api/motoristas/${motoristaSoDaA.id}/encerrar-sessoes`).send({})],
+    ["PATCH /api/organizacoes/:id", () => b.patch(`/api/organizacoes/${ORG_TESTE}`).send({ ativo: false })],
+    ["GET /api/qr/:token", () => b.get(`/api/qr/${etiqueta.token}`)],
+    ["GET /api/qr/codigo/:codigo", () => b.get(`/api/qr/codigo/${etiqueta.codigo}`)],
+    ["POST /api/qr/:token/coleta", () => b.post(`/api/qr/${etiqueta.token}/coleta`).send({ numero: cont.numero, portoRetiradaId: local.id })],
+    ["POST /api/qr/:token/leituras", () => b.post(`/api/qr/${etiqueta.token}/leituras`).send({ temperatura: -18 })],
+    ["POST /api/qr/:token/passagem", () => b.post(`/api/qr/${etiqueta.token}/passagem`).send({})],
+    ["POST /api/qr/:token/portaria", () => b.post(`/api/qr/${etiqueta.token}/portaria`).send({ movimento: "ENTRADA", placa: "ABC1D23" })],
+    ["POST /api/qr/:token/vincular", () => b.post(`/api/qr/${etiqueta.token}/vincular`).send({ numero: cont.numero, temperatura: -18 })],
+    ["POST /api/tokens/:id/revogar", () => b.post(`/api/tokens/${token.id}/revogar`).send({})],
+    ["PATCH /api/usuarios/:id", () => b.patch(`/api/usuarios/${usuarioA.id}`).send({ ativo: false, perfil: "ADMIN" })],
+    ["POST /api/usuarios/:id/enviar-redefinicao", () => b.post(`/api/usuarios/${usuarioA.id}/enviar-redefinicao`).send({})],
+    ["PUT /api/usuarios/:id/permissoes", () => b.put(`/api/usuarios/${usuarioA.id}/permissoes`).send({ permissoes: [] })],
+    ["PATCH /api/regioes/:id", () => b.patch(`/api/regioes/${regiao.id}`).send({ nome: "X" })],
+    ["DELETE /api/regioes/:id", () => b.delete(`/api/regioes/${regiao.id}`)],
+    ["PATCH /api/grupos/:id", () => b.patch(`/api/grupos/${grupo.id}`).send({ metaEstadiaHoras: 1 })],
+    ["DELETE /api/grupos/:id", () => b.delete(`/api/grupos/${grupo.id}`)],
+    ["PATCH /api/armadores/:id", () => b.patch(`/api/armadores/${armador.id}`).send({ freeTimeDias: 1 })],
+    ["DELETE /api/armadores/:id", () => b.delete(`/api/armadores/${armador.id}`)],
+    ["PATCH /api/produtos/:id", () => b.patch(`/api/produtos/${produto.id}`).send({ nome: "X" })],
+    ["DELETE /api/produtos/:id", () => b.delete(`/api/produtos/${produto.id}`)],
+    ["PATCH /api/transportadoras/:id", () => b.patch(`/api/transportadoras/${transpSoDaA.id}`).send({ nome: "X" })],
+    ["DELETE /api/transportadoras/:id", () => b.delete(`/api/transportadoras/${transpSoDaA.id}`)],
+  ];
+  for (const [nome, fazer] of CASOS) {
+    const r = await fazer();
+    assert.ok([400, 403, 404].includes(r.status), `${nome} → ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
+  }
+  // Rotas cujo código identifica a própria organização (o atacante não escolhe a organização).
+  const FORA = new Set(["GET /api/auth/redefinir-senha/:codigo", "GET /api/posicao/:codigo", "POST /api/posicao/:codigo", "GET /api/qr/opcoes/container/:numero"]);
+
+  // Ids da A no CORPO / na busca.
+  assert.equal((await b.post("/api/containers").send({ numero: "INVU1234567", confirmarDigito: true, tipo: "DRY_40", grupoId: grupo.id, armadorId: armador.id })).status, 400, "container com cadastros da A");
+  assert.equal((await b.get(`/api/qr/opcoes/container/${cont.numero}`)).body.cadastrado, false, "número de container da A");
+  assert.ok([400, 404].includes((await b.get(`/api/rotas/estimar?portoRetiradaId=${local.id}&localCarregamentoId=${local.id}&portoEntregaId=${local.id}`)).status), "estimar com locais da A");
+  const imp = await b.post("/api/etiquetas/impressas").send({ ids: [etiqueta.id] });
+  assert.ok(imp.status >= 400 || !JSON.stringify(imp.body).includes(etiqueta.codigo), "marcar impressa etiqueta da A");
+  const excl = await b.post("/api/etiquetas/excluir").send({ ids: [etiqueta.id] });
+  assert.ok(excl.status >= 400 || !JSON.stringify(excl.body).includes(etiqueta.codigo), "excluir etiqueta da A");
+  const zpl = await b.post("/api/etiquetas/zpl").send({ ids: [etiqueta.id] });
+  assert.ok(zpl.status >= 400 || !String(zpl.text).includes(etiqueta.codigo), "ZPL de etiqueta da A");
+  assert.ok(!(await b.get(`/api/custos?grupo=${grupo.id}`)).text.includes(cont.numero), "custos com grupo da A");
+  // Integração: token da B enviando número de container da A.
+  const tokB = await b.post("/api/tokens").send({ nome: "Sensor B" });
+  assert.equal(tokB.status, 201, JSON.stringify(tokB.body));
+  const integ = await request(app).post("/api/integracao/temperaturas").set("Authorization", `Bearer ${tokB.body.token}`).send({ leituras: [{ container: cont.numero, temperatura: -18, lidaEm: new Date().toISOString() }] });
+  assert.ok(!JSON.stringify(integ.body).match(/"gravadas":[1-9]/), `integração da B no container da A → ${integ.status} ${JSON.stringify(integ.body).slice(0, 160)}`);
+
+  assert.equal(await foto(), antes, "NENHUM dado da organização A mudou");
+
+  // Cobertura: toda rota com parâmetro nos arquivos de rotas tem caso de ataque (ou está em FORA).
+  const MONTAGEM = { alertas: "/api/alertas", containers: "/api/containers", etiquetas: "/api/etiquetas", locais: "/api/locais", tiposLocal: "/api/tipos-local", tiposOperacao: "/api/tipos-operacao", motoristas: "/api/motoristas", organizacoes: "/api/organizacoes", posicao: "/api/posicao", qr: "/api/qr", tokens: "/api/tokens", usuarios: "/api/usuarios", auth: "/api/auth" };
+  const cobertas = new Set([...CASOS.map(([n]) => n), ...FORA]);
+  const faltando = [];
+  for (const arq of fs.readdirSync(new URL("./routes/", import.meta.url))) {
+    const txt = fs.readFileSync(new URL(`./routes/${arq}`, import.meta.url), "utf8");
+    for (const m of txt.matchAll(/^(\w+)Router\.(get|post|put|patch|delete)\("([^"]*:[^"]*)"/gm)) {
+      const nome = `${m[2].toUpperCase()} ${MONTAGEM[m[1]] ?? "?"}${m[3].replace(/\(.*?\)/g, "")}`;
+      if (!cobertas.has(nome)) faltando.push(nome);
+    }
+    if (arq === "cadastros.js") {
+      for (const rota of ["regioes", "grupos", "armadores", "produtos", "transportadoras"]) {
+        for (const met of ["PATCH", "DELETE"]) if (!cobertas.has(`${met} /api/${rota}/:id`)) faltando.push(`${met} /api/${rota}/:id`);
+      }
+    }
+  }
+  assert.deepEqual(faltando, [], "rota com identificador sem teste de invasão");
 });

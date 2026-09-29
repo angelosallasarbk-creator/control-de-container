@@ -23,11 +23,14 @@ const TELAS_DO_PERFIL = {
   PORTARIA: { telas: ["painel", "leitura-qr", "leitura-codigo"], inicio: "/" },
   // Gestor da transportadora: só a gestão dos motoristas da transportadora dele.
   GESTOR_TRANSPORTADORA: { telas: ["motoristas"], inicio: "/motoristas" },
+  // Administrador da plataforma: só a gestão de organizações (nunca os dados dos clientes).
+  PLATAFORMA: { telas: ["organizacoes"], inicio: "/organizacoes" },
 };
 const restricao = computed(() => TELAS_DO_PERFIL[auth.usuario?.perfil] ?? null);
 const ehTransportador = computed(() => auth.usuario?.perfil === "TRANSPORTADOR");
 const ehPortaria = computed(() => auth.usuario?.perfil === "PORTARIA");
 const ehGestor = computed(() => auth.usuario?.perfil === "GESTOR_TRANSPORTADORA");
+const ehPlataforma = computed(() => auth.usuario?.perfil === "PLATAFORMA");
 // Só decide com a rota já resolvida: na carga inicial (ex.: QR aberto já logado) route.name ainda
 // é indefinido e redirecionaria a leitura do QR por engano.
 const foraDoPerfil = computed(() => Boolean(restricao.value && route.name && !route.meta.publica && !restricao.value.telas.includes(route.name)));
@@ -167,7 +170,7 @@ function bipar() {
 }
 
 async function atualizarAlertas() {
-  if (ehTransportador.value || ehGestor.value) return; // sem acesso a alertas
+  if (ehTransportador.value || ehGestor.value || ehPlataforma.value) return; // sem acesso a alertas
   try {
     const r = await api.resumoAlertas();
     const ids = new Set(r.criticosNaoReconhecidos.map((a) => a.id));
@@ -262,10 +265,11 @@ function alternarSecao(nome) {
         <button v-else-if="menuFlutuante" class="fechar-menu" title="Manter menu aberto" aria-label="Manter menu aberto" @click="fixarMenu">📌</button>
       </div>
       <nav>
-        <router-link v-if="ehGestor" to="/motoristas" title="Motoristas"><Icone nome="pessoa" :tamanho="19" /><span class="rotulo-menu">Motoristas</span></router-link>
+        <router-link v-if="ehPlataforma" to="/organizacoes" title="Organizações"><Icone nome="predio" :tamanho="19" /><span class="rotulo-menu">Organizações</span></router-link>
+        <router-link v-else-if="ehGestor" to="/motoristas" title="Motoristas"><Icone nome="pessoa" :tamanho="19" /><span class="rotulo-menu">Motoristas</span></router-link>
         <router-link v-else to="/" title="Home"><Icone nome="casa" :tamanho="19" /><span class="rotulo-menu">Home</span></router-link>
         <router-link v-if="ehPortaria" to="/leitura" title="Registrar pelo código"><Icone nome="teclado" :tamanho="19" /><span class="rotulo-menu">Registrar pelo código</span></router-link>
-        <template v-else-if="!ehGestor">
+        <template v-else-if="!ehGestor && !ehPlataforma">
         <router-link to="/containers" :class="{ ativo: route.path.startsWith('/containers') }" title="Containers"><Icone nome="container" :tamanho="19" /><span class="rotulo-menu">Containers</span></router-link>
         <router-link to="/alertas" title="Alertas" class="com-contagem">
           <Icone nome="sino" :tamanho="19" /><span class="rotulo-menu">Alertas</span>
@@ -308,6 +312,7 @@ function alternarSecao(nome) {
       <div class="lateral-rodape">
         <div class="rotulo-menu negrito" style="color: #fff">{{ auth.usuario.nome }}</div>
         <div class="rotulo-menu">{{ ROTULO_PERFIL[auth.usuario.perfil] }}</div>
+        <div v-if="auth.usuario.organizacao" class="rotulo-menu organizacao-menu" title="Organização">{{ auth.usuario.organizacao }}</div>
         <button class="pequeno sair-menu" :title="faixaIcones ? `Sair (${auth.usuario.nome})` : 'Sair'" @click="auth.logout()"><Icone nome="sair" :tamanho="16" /><span class="rotulo-menu">Sair</span></button>
         <div class="versao" title="Versão do sistema">v{{ VERSAO }}</div>
       </div>
@@ -335,7 +340,7 @@ function alternarSecao(nome) {
           </div>
           <FiltrosContainers v-if="['containers', 'ficha'].includes(route.name)" />
         </div>
-        <router-link v-if="!ehPortaria && !ehGestor" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
+        <router-link v-if="!ehPortaria && !ehGestor && !ehPlataforma" to="/alertas" class="sino" title="Alertas abertos" aria-label="Alertas">
           <span class="btn pequeno" aria-hidden="true">🔔</span>
           <span v-if="resumo?.naoReconhecidos" class="badge">{{ resumo.naoReconhecidos }}</span>
         </router-link>

@@ -25,10 +25,11 @@ const rotasQr = (prefixo) => ({
   qrVincular: (token, dados) => request(`${prefixo}/${token}/vincular`, { method: "POST", body: dados }),
   qrLeitura: (token, dados) => request(`${prefixo}/${token}/leituras`, { method: "POST", body: dados }),
   // Transportador/motorista: coleta pelo QR (Tipo > Local de retirada; cadastra o container se preciso).
-  qrOpcoesColeta: () => request(`${prefixo}/opcoes/coleta`),
+  // etiqueta: token da etiqueta lida — no acesso do motorista, é por ela que o servidor sabe o cliente.
+  qrOpcoesColeta: (etiqueta) => request(`${prefixo}/opcoes/coleta${etiqueta ? `?etiqueta=${encodeURIComponent(etiqueta)}` : ""}`),
   // Programação (trajeto) do container pelo número — preenche a coleta em etiqueta nova.
   qrPassagem: (token, dados) => request(`${prefixo}/${token}/passagem`, { method: "POST", body: dados }),
-  qrProgramacao: (numero) => request(`${prefixo}/opcoes/container/${encodeURIComponent(numero)}`),
+  qrProgramacao: (numero, etiqueta) => request(`${prefixo}/opcoes/container/${encodeURIComponent(numero)}${etiqueta ? `?etiqueta=${encodeURIComponent(etiqueta)}` : ""}`),
   qrColeta: (token, dados) => request(`${prefixo}/${token}/coleta`, { method: "POST", body: dados }),
   // Portaria: entrada/saída no ponto de carregamento.
   qrPortaria: (token, dados) => request(`${prefixo}/${token}/portaria`, { method: "POST", body: dados }),
@@ -137,6 +138,11 @@ export const api = {
   motoristaEu: () => request("/motorista/eu"),
   motoristaAtualizar: (dados) => request("/motorista/eu", { method: "PATCH", body: dados }),
   motoristaSair: () => request("/motorista/sair", { method: "POST" }),
+  // Organizações (só o administrador da plataforma).
+  organizacoes: () => request("/organizacoes"),
+  criarOrganizacao: (dados) => request("/organizacoes", { method: "POST", body: dados }),
+  atualizarOrganizacao: (id, dados) => request(`/organizacoes/${id}`, { method: "PATCH", body: dados }),
+
   // Gestão dos motoristas (gestor da transportadora / administração).
   motoristas: (params) => request(`/motoristas${qs(params)}`),
   criarMotorista: (dados) => request("/motoristas", { method: "POST", body: dados }),

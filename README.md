@@ -42,6 +42,31 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos da Home.
 
+## Multi-tenant: organizações (v3.0)
+
+- **Organização** = cliente da plataforma. Cada usuário pertence a uma organização e só enxerga os dados dela (containers,
+  cadastros, etiquetas, alertas, configurações, log, usuários). Os dados existentes antes da v3.0 são da **AS TECH LOG**.
+- **Isolamento em duas camadas:**
+  1. *Aplicação* (`src/lib/tenant.js` + `src/lib/prisma.js`): a organização da requisição fica num contexto e o Prisma
+     acrescenta o filtro `organizacaoId` em toda consulta e o preenche em toda criação. Sem contexto, a consulta **falha**.
+     Rotinas automáticas rodam organização por organização (`paraCadaOrganizacao`).
+  2. *Banco* (Row-Level Security): cada consulta roda com `app.org_id` definido; as políticas só liberam linhas daquela
+     organização. O sistema conecta pelo usuário `ccs_app` (criado no build por `scripts/preparar-banco.js`), que não
+     ignora o RLS e não é dono das tabelas. As migrações usam o usuário dono (não sujeito ao RLS).
+- **Administrador da plataforma** (menu **Organizações**): cria clientes com os cadastros padrão e o primeiro admin,
+  renomeia e desativa. Não vê dados dos clientes.
+- **Motoristas e transportadoras**: cadastro único na plataforma; o cliente só vê os que registraram pelo QR uma carga dele
+  (ou que ele cadastrou). Celular sempre mascarado; completo só ao criar/editar.
+- **Atenção para migrações futuras:** o Supabase liga o RLS automaticamente em toda tabela nova (gatilho `ensure_rls`).
+  Toda tabela nova precisa de uma política — de organização (com `organizacaoId`) ou `tabela_global` — senão nasce
+  bloqueada para o sistema.
+
+### Variáveis de ambiente novas (Render)
+| Variável | Para quê |
+|---|---|
+| `APP_DB_ROLE_PASSWORD` | Senha do usuário restrito `ccs_app` (16+ caracteres; gerar no Render). Sem ela o sistema usa o usuário das migrações e o RLS não se aplica. |
+| `PLATAFORMA_ADMIN_EMAIL`, `PLATAFORMA_ADMIN_SENHA`, `PLATAFORMA_ADMIN_NOME` | Cria o administrador da plataforma na subida (só se não existir; e-mail diferente das contas dos clientes; senha 10+). Remover depois. |
+
 ## Melhorias de navegação (v2.1)
 
 - **Mapa das posições** na aba Rastreamento da ficha: pontos de cada posição, caminho percorrido, última posição destacada e
@@ -321,7 +346,7 @@ São 33 testes: regras de prazo/temperatura (puras) e API completa contra o banc
 **Rollback (voltar para a versão anterior):**
 1. **Mais rápido:** no Render → serviço → *Events/Deploys* → no deploy da versão anterior, **Rollback**. Volta o código em segundos, sem build. Atenção: o próximo push na `main` publica de novo o que estiver lá — faça o passo 2 em seguida.
 2. **Definitivo (Git):** criar na `main` um commit que desfaz a versão (`git revert` do merge, ex.: `git revert -m 1 <merge>`) e dar push. Não usar `git push --force`.
-3. **Banco:** normalmente nada a fazer (migração só com acréscimos). **Voltando da 1.1 para a 1.0:** antes, rode `scripts/rollback-1.0-antes.sql` no banco (a 1.0 não conhece o perfil Gestor da transportadora: os gestores viram Visualização e ficam desativados, mantendo o vínculo com a transportadora). Ao republicar a 1.1, rode `scripts/rollback-1.0-desfazer.sql`. Testado: a 1.0 funciona sobre o banco da 1.1 com esse passo. Links de posição enviados a motoristas deixam de valer na 1.0. **Voltando da 1.2 para a 1.1:** antes, rode `scripts/rollback-1.2-antes.sql` (a 1.1 não conhece a função Parada: os tipos "Ponto Fiscal" ficam como carregamento inativo, marcados, e os locais de parada inativos; as paradas dos containers ficam guardadas). Ao republicar a 1.2, rode `scripts/rollback-1.2-desfazer.sql`. Testado: sem o script a 1.1 quebra em Locais/Tipos; com ele, funciona 100%. Antes de publicar qualquer migração que altere/remova dados, fazer **backup** do banco (pg_dump) e planejar o retorno.
+3. **Banco:** normalmente nada a fazer (migração só com acréscimos). **Voltando da 1.1 para a 1.0:** antes, rode `scripts/rollback-1.0-antes.sql` no banco (a 1.0 não conhece o perfil Gestor da transportadora: os gestores viram Visualização e ficam desativados, mantendo o vínculo com a transportadora). Ao republicar a 1.1, rode `scripts/rollback-1.0-desfazer.sql`. Testado: a 1.0 funciona sobre o banco da 1.1 com esse passo. Links de posição enviados a motoristas deixam de valer na 1.0. **Voltando da 1.2 para a 1.1:** antes, rode `scripts/rollback-1.2-antes.sql` (a 1.1 não conhece a função Parada: os tipos "Ponto Fiscal" ficam como carregamento inativo, marcados, e os locais de parada inativos; as paradas dos containers ficam guardadas). Ao republicar a 1.2, rode `scripts/rollback-1.2-desfazer.sql`. Testado: sem o script a 1.1 quebra em Locais/Tipos; com ele, funciona 100%. **Voltando da 3.0 para a 2.1:** antes, rode `scripts/rollback-3.0-antes.sql` (com o usuário das migrações). Ele para se existir outra organização com dados (a 2.1 não isola clientes); senão, dá valor padrão AS TECH LOG ao `organizacaoId` (o que a 2.1 cadastrar cai nela), cria um índice temporário para a gravação de configurações e desativa o admin da plataforma (marca "[plataforma-v3]"). Ao republicar a 3.0, rode `scripts/rollback-3.0-desfazer.sql`. Testado numa cópia de produção: 3.0 → 2.1 (lendo e gravando) → 3.0. Antes de publicar qualquer migração que altere/remova dados, fazer **backup** do banco (pg_dump) e planejar o retorno.
 4. Conferir `/api/saude` → `versao` e testar o login.
 
 ## Operação e solução de problemas

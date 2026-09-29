@@ -69,7 +69,7 @@ async function carregar() {
   try {
     // Transportador: busca as opções da coleta junto (a tela já abre com Tipo/Local prontos).
     const transportador = Boolean(props.motorista) || auth.usuario?.perfil === "TRANSPORTADOR";
-    const [r, op] = await Promise.all([q.qr(props.token), transportador && !opcoes.value ? q.qrOpcoesColeta() : null]);
+    const [r, op] = await Promise.all([q.qr(props.token), transportador && !opcoes.value ? q.qrOpcoesColeta(props.token) : null]);
     if (op) {
       opcoes.value = op;
       // Cadastro pelo QR: começa no Tipo de Operação padrão.
@@ -160,7 +160,7 @@ watch(() => conferencia.value?.formatoValido && conferencia.value.numero, (numer
   if (!numero || estado.value !== "LIVRE") return;
   buscaProgramacao = setTimeout(async () => {
     try {
-      const p = await q.qrProgramacao(numero);
+      const p = await q.qrProgramacao(numero, props.token);
       if (p.numero !== conferencia.value?.numero) return;
       programacao.value = p.cadastrado ? p : null;
       if (p.cadastrado && modoColeta.value) await aplicarTrajeto(p.trajeto);

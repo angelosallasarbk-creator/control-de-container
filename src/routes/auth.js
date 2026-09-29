@@ -7,8 +7,12 @@ import { gerarToken, definirCookieAuth, limparCookieAuth, requireAuth } from "..
 import { permissoesEfetivas, carregarUsuarioAtual } from "../lib/permissoes.js";
 import { solicitarRedefinicao, conferirCodigo, redefinirComCodigo } from "../lib/redefinicaoSenha.js";
 import { enderecoPublico } from "../lib/enderecoPublico.js";
+import { comoSistema, comOrganizacao } from "../lib/tenant.js";
 
 export const authRouter = Router();
+// Antes do login não há organização: as rotas de /api/auth consultam em modo sistema (pelo e-mail,
+// que é único na plataforma). /me passa pelo carregarUsuarioAtual, que também usa modo sistema.
+authRouter.use((_req, _res, next) => comoSistema(next));
 
 // Limita tentativas de login por IP para dificultar força bruta de senha. Só as tentativas que
 // FALHAM contam: vários usuários atrás do mesmo IP (mesmo escritório) entrando certo não se bloqueiam.
@@ -27,7 +31,7 @@ authRouter.post("/login", loginLimiter, asyncHandler(async (req, res) => {
   if (!email || !senha) {
     return res.status(400).json({ erro: "E-mail e senha são obrigatórios." });
   }
-  const usuario = await prisma.usuario.findUnique({ where: { email: String(email).toLowerCase().trim() } });
+  const usuario = await prisma.usuario.findUnique({ where: { email: String(email).toLowerCase().trim() }, include: { organizacao: { select: { nome: true, ativo: true } } } });
   // Mesma mensagem para e-mail inexistente e senha errada: não revela quais e-mails existem.
   if (!usuario || !(await bcrypt.compare(String(senha), usuario.senhaHash))) {
     return res.status(401).json({ erro: "E-mail ou senha inválidos." });
@@ -35,8 +39,11 @@ authRouter.post("/login", loginLimiter, asyncHandler(async (req, res) => {
   if (!usuario.ativo) {
     return res.status(401).json({ erro: "Conta desativada. Fale com um administrador." });
   }
+  if (usuario.organizacao && !usuario.organizacao.ativo) {
+    return res.status(401).json({ erro: `A organização ${usuario.organizacao.nome} está desativada. Fale com o administrador da plataforma.` });
+  }
   definirCookieAuth(res, gerarToken(usuario, { lembrar }), { lembrar });
-  res.json({ email: usuario.email, nome: usuario.nome, perfil: usuario.perfil, permissoes: permissoesEfetivas(usuario) });
+  res.json({ email: usuario.email, nome: usuario.nome, perfil: usuario.perfil, permissoes: permissoesEfetivas(usuario), organizacao: usuario.organizacao?.nome ?? null });
 }));
 
 // ---------- Esqueci minha senha ----------
@@ -60,7 +67,9 @@ const redefinirLimiter = rateLimit({
 authRouter.post("/esqueci-senha", esqueciLimiter, asyncHandler(async (req, res) => {
   const email = String(req.body?.email ?? "").trim();
   if (!email || email.length > 160) return res.status(400).json({ erro: "Informe o e-mail da sua conta." });
-  const base = await enderecoPublico(req);
+  // O endereço do link vem das Configurações da organização da conta (se a conta existir).
+  const conta = await prisma.usuario.findUnique({ where: { email: email.toLowerCase() }, select: { organizacaoId: true } });
+  const base = conta?.organizacaoId ? await comOrganizacao(conta.organizacaoId, () => enderecoPublico(req)) : await enderecoPublico(req);
   if (!base) {
     console.error("Esqueci minha senha: defina o endereço do sistema (Configurações → Etiquetas QR ou APP_URL) para montar o link.");
     return res.json(RESPOSTA_ESQUECI);
@@ -90,6 +99,6 @@ authRouter.post("/logout", (_req, res) => {
 
 // A tela consulta periodicamente: permissões/perfil alterados pelo admin aparecem sem relogar.
 authRouter.get("/me", requireAuth, carregarUsuarioAtual, (req, res) => {
-  const { email, nome, perfil, transportadoraId } = req.usuario;
-  res.json({ email, nome, perfil, permissoes: req.permissoes, transportadoraId: transportadoraId ?? null });
+  const { email, nome, perfil, transportadoraId, organizacaoNome } = req.usuario;
+  res.json({ email, nome, perfil, permissoes: req.permissoes, transportadoraId: transportadoraId ?? null, organizacao: organizacaoNome ?? null });
 });

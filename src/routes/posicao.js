@@ -4,7 +4,8 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { decimal, inteiro } from "../lib/validacao.js";
-import { conferirPedido, registrarPosicaoDoLink } from "../lib/rastreamento.js";
+import { conferirPedido, registrarPosicaoDoLink, organizacaoDoCodigo } from "../lib/rastreamento.js";
+import { comOrganizacao, comoPlataforma } from "../lib/tenant.js";
 
 export const posicaoRouter = Router();
 
@@ -15,6 +16,13 @@ posicaoRouter.use(rateLimit({
   legacyHeaders: false,
   message: { erro: "Muitas tentativas. Aguarde alguns minutos e tente novamente." },
 }));
+
+// A organização vem do próprio link (código). Código desconhecido: sem organização → "Link inválido".
+posicaoRouter.param("codigo", (req, _res, next, codigo) => {
+  organizacaoDoCodigo(codigo)
+    .then((org) => (org ? comOrganizacao(org, next) : comoPlataforma(next)))
+    .catch(next);
+});
 
 posicaoRouter.get("/:codigo", asyncHandler(async (req, res) => {
   res.json(await conferirPedido(req.params.codigo));

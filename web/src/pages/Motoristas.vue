@@ -178,7 +178,7 @@ const pag = usePaginacao(() => visiveis.value, "motoristas");
       <div>
         <h2 style="margin: 0">Motoristas</h2>
         <p class="mudo pequeno" style="margin: 4px 0 0">
-          Motoristas não têm usuário: entram pelo QR com o celular e um código SMS. {{ ehGestor ? "Aqui ficam os da sua transportadora." : "" }}
+          Motoristas não têm usuário: entram pelo QR com o celular e um código SMS. {{ ehGestor ? "Aqui ficam os da sua transportadora." : "Aparecem aqui os motoristas que registraram pelo QR uma carga de vocês ou que vocês cadastraram (o cadastro do motorista é único na plataforma)." }}
           Bloquear derruba o acesso na hora.
         </p>
       </div>

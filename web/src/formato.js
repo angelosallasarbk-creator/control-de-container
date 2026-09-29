@@ -90,6 +90,7 @@ export const ROTULO_PERFIL = {
   TRANSPORTADOR: "Transportador",
   PORTARIA: "Portaria",
   GESTOR_TRANSPORTADORA: "Gestor da transportadora",
+  PLATAFORMA: "Administrador da plataforma",
 };
 
 const FUSO = "America/Sao_Paulo";

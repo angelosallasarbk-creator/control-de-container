@@ -3,6 +3,7 @@
 // "administrar" (usuários, permissões, integração, configurações gerais) é exclusivo do perfil
 // ADMIN e não pode ser concedido — evita que alguém fique trancado fora ou se autopromova.
 import { prisma } from "./prisma.js";
+import { comoSistema } from "./tenant.js";
 
 export const CATALOGO_PERMISSOES = [
   { chave: "containers.operar", grupo: "Containers", nome: "Operar containers", descricao: "Cadastrar containers, avançar etapas, editar dados, registrar temperatura na ficha e reconhecer alertas." },
@@ -24,6 +25,7 @@ export const PADRAO_POR_PERFIL = {
   TRANSPORTADOR: ["qr.registrar"],
   PORTARIA: ["qr.registrar"],
   GESTOR_TRANSPORTADORA: [],
+  PLATAFORMA: [],
 };
 
 // Perfis de campo usam só parte do sistema; o resto da API fica fechado para eles.
@@ -35,6 +37,8 @@ const API_DO_PERFIL = {
   TRANSPORTADOR: { rotas: ["/qr/"], escrita: ["/qr/"], mensagem: "O perfil Transportador acessa apenas a leitura das etiquetas QR." },
   PORTARIA: { rotas: ["/qr/", "/painel", "/alertas/resumo"], escrita: ["/qr/"], mensagem: "O perfil Portaria acessa apenas a leitura das etiquetas QR e a consulta do Pátio." },
   GESTOR_TRANSPORTADORA: { rotas: ["/motoristas"], escrita: ["/motoristas"], mensagem: "O perfil Gestor da transportadora acessa apenas a gestão dos motoristas." },
+  // Administrador da plataforma: só a tela de Organizações — nunca os dados dos clientes.
+  PLATAFORMA: { rotas: ["/organizacoes"], escrita: ["/organizacoes"], mensagem: "O administrador da plataforma acessa apenas a gestão de organizações." },
 };
 export const ehGestorTransportadora = (req) => req.usuario?.perfil === "GESTOR_TRANSPORTADORA";
 export const ehTransportador = (req) => req.usuario?.perfil === "TRANSPORTADOR";
@@ -65,13 +69,15 @@ export const ehPersonalizado = (usuario) => usuario.perfil !== "ADMIN" && Array.
  */
 export async function carregarUsuarioAtual(req, res, next) {
   try {
-    const u = await prisma.usuario.findUnique({ where: { email: req.usuario.email } });
+    // Busca pelo e-mail (único na plataforma) antes de saber a organização: modo sistema.
+    const u = await comoSistema(() => prisma.usuario.findUnique({ where: { email: req.usuario.email }, include: { organizacao: { select: { nome: true, ativo: true } } } }));
     if (!u || !u.ativo) return res.status(401).json({ erro: "Conta desativada ou inexistente. Fale com um administrador." });
+    if (u.organizacao && !u.organizacao.ativo) return res.status(401).json({ erro: `A organização ${u.organizacao.nome} está desativada. Fale com o administrador da plataforma.` });
     // Sessão emitida antes da última troca de senha (versão diferente) não vale mais.
     if ((req.usuario.sv ?? 0) !== (u.sessoesValidasApos?.getTime() ?? 0)) {
       return res.status(401).json({ erro: "Sua senha foi alterada. Entre novamente." });
     }
-    req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil, transportadoraId: u.transportadoraId };
+    req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil, transportadoraId: u.transportadoraId, organizacaoId: u.organizacaoId, organizacaoNome: u.organizacao?.nome ?? null };
     req.permissoes = permissoesEfetivas(u);
     next();
   } catch (err) {

@@ -3,6 +3,7 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { prisma } from "../src/lib/prisma.js";
+import { comoSistema } from "../src/lib/tenant.js";
 
 const [email, nome, senha] = process.argv.slice(2);
 if (!email || !nome || !senha || senha.length < 8) {
@@ -11,10 +12,14 @@ if (!email || !nome || !senha || senha.length < 8) {
 }
 
 const senhaHash = await bcrypt.hash(senha, 10);
-const usuario = await prisma.usuario.upsert({
-  where: { email: email.toLowerCase().trim() },
-  create: { email: email.toLowerCase().trim(), nome, senhaHash, perfil: "ADMIN" },
-  update: { nome, senhaHash, perfil: "ADMIN", ativo: true },
+// v3.0: o admin criado por aqui é da primeira organização (AS TECH LOG).
+const usuario = await comoSistema(async () => {
+  const org = await prisma.organizacao.findFirst({ orderBy: { id: "asc" } });
+  return prisma.usuario.upsert({
+    where: { email: email.toLowerCase().trim() },
+    create: { organizacaoId: org.id, email: email.toLowerCase().trim(), nome, senhaHash, perfil: "ADMIN" },
+    update: { nome, senhaHash, perfil: "ADMIN", ativo: true },
+  });
 });
 console.log(`Administrador pronto: ${usuario.email}`);
 await prisma.$disconnect();

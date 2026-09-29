@@ -178,6 +178,9 @@ rotasRouter.get("/estimar", asyncHandler(async (req, res) => {
   const portoRetiradaId = validarId(q.portoRetiradaId, "Local de retirada");
   const localCarregamentoId = comCarregamento ? validarId(q.localCarregamentoId, "Local de carregamento") : null;
   const portoEntregaId = validarId(q.portoEntregaId, "Local de entrega");
+  // Só locais da própria organização (de outra = não existe).
+  const idsLocais = [portoRetiradaId, localCarregamentoId, portoEntregaId].filter(Boolean);
+  if ((await prisma.local.count({ where: { id: { in: idsLocais } } })) !== new Set(idsLocais).size) throw erroHttp(400, "Local do trajeto não encontrado.");
   const [grupo, armador, config] = await Promise.all([
     q.grupoId ? prisma.grupoOperacao.findUnique({ where: { id: validarId(q.grupoId, "Ponto de Carregamento") } }) : null,
     q.armadorId ? prisma.armador.findUnique({ where: { id: validarId(q.armadorId, "Armador") } }) : null,
