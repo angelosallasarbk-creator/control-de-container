@@ -42,6 +42,14 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos da Home.
 
+## Melhorias de navegação (v2.1)
+
+- **Mapa das posições** na aba Rastreamento da ficha: pontos de cada posição, caminho percorrido, última posição destacada e
+  data/hora ao passar o mouse; locais do trajeto como referência (OpenStreetMap).
+- **Paginação** nas listas longas: 10, 20 ou 50 por página (a escolha fica lembrada no navegador).
+- **Menu com ícones**: o ☰ recolhe o menu para uma faixa só com ícones (tela larga).
+- **Histórico** da ficha: etapas + mudanças no trajeto com antes/depois, indicando as feitas após o Planejado.
+
 ## Tipo de Operação: fluxo personalizado (v2.0)
 
 Menu **Cadastros → Tipo de Operação**. Cada tipo define o fluxo que o container segue:

@@ -6,6 +6,8 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { fmtDataHora, tempoDesde } from "../formato.js";
 import Icone from "../components/Icone.vue";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const auth = useAuthStore();
 const ehGestor = computed(() => auth.usuario?.perfil === "GESTOR_TRANSPORTADORA");
@@ -38,7 +40,7 @@ const visiveis = computed(() => {
   const digitos = b.replace(/\D/g, "");
   return lista.value.filter((m) =>
     (!filtro.situacao || situacao(m) === filtro.situacao) &&
-    (!b || m.nome.toLowerCase().includes(b) || (m.placa ?? "").toLowerCase().includes(b) || (digitos.length >= 3 && m.celular.includes(digitos)))
+    (!b || m.nome.toLowerCase().includes(b) || (m.placa ?? "").toLowerCase().includes(b) || (digitos.length >= 3 && m.celularFinal.includes(digitos)))
   );
 });
 const contagem = computed(() => ({
@@ -50,6 +52,32 @@ const fmtCelular = (c) => {
   const m = /^\+55(\d{2})(\d{5})(\d{4})$/.exec(c ?? "");
   return m ? `(${m[1]}) ${m[2]}-${m[3]}` : c;
 };
+
+// Editar: busca o celular completo (a lista só tem os 4 últimos dígitos).
+const edicao = ref(null);
+const erroEdicao = ref(null);
+async function abrirEdicao(m) {
+  erroEdicao.value = null;
+  try {
+    const x = await api.motorista(m.id);
+    edicao.value = { id: x.id, nome: x.nome, placa: x.placa ?? "", celular: fmtCelular(x.celular), celularOriginal: fmtCelular(x.celular) };
+  } catch (e) {
+    mostrar(e.message);
+  }
+}
+async function salvarEdicao() {
+  erroEdicao.value = null;
+  const e = edicao.value;
+  if (e.celular !== e.celularOriginal && !confirm("Trocar o celular encerra os acessos atuais do motorista; ele entra de novo com o código SMS no número novo. Continuar?")) return;
+  try {
+    await api.atualizarMotorista(e.id, { nome: e.nome, placa: e.placa, ...(e.celular !== e.celularOriginal ? { celular: e.celular } : {}) });
+    edicao.value = null;
+    mostrar("Motorista atualizado.");
+    await carregar();
+  } catch (err) {
+    erroEdicao.value = err.message;
+  }
+}
 
 function mostrar(msg) {
   aviso.value = msg;
@@ -139,6 +167,9 @@ async function confirmarPlanilha() {
   }
 }
 const linhasPlanilha = computed(() => (planilha.value?.resultado ?? planilha.value?.previa)?.linhas ?? []);
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => visiveis.value, "motoristas");
 </script>
 
 <template>
@@ -190,21 +221,23 @@ const linhasPlanilha = computed(() => (planilha.value?.resultado ?? planilha.val
         <tr><th>Nome</th><th>Celular</th><th v-if="!ehGestor">Transportadora</th><th>Placa</th><th>Situação</th><th>Último acesso</th><th>Acessos</th><th></th></tr>
       </thead>
       <tbody>
-        <tr v-for="m in visiveis" :key="m.id" :style="{ opacity: m.bloqueado ? 0.6 : 1 }">
+        <tr v-for="m in pag.itens.value" :key="m.id" :style="{ opacity: m.bloqueado ? 0.6 : 1 }">
           <td class="negrito">{{ m.nome }}</td>
-          <td class="mono" style="white-space: nowrap">{{ fmtCelular(m.celular) }}</td>
+          <td class="mono" style="white-space: nowrap" title="Por privacidade, só os 4 últimos dígitos (o número completo aparece ao editar)">{{ m.celular }}</td>
           <td v-if="!ehGestor">{{ m.transportadora.nome }}</td>
           <td class="mono">{{ m.placa ?? "—" }}</td>
           <td><span class="chip" :class="ROTULO_SITUACAO[situacao(m)][1]">{{ ROTULO_SITUACAO[situacao(m)][0] }}</span></td>
           <td :title="m.ultimoAcessoEm ? fmtDataHora(m.ultimoAcessoEm) : ''">{{ m.ultimoAcessoEm ? `há ${tempoDesde(m.ultimoAcessoEm)}` : "—" }}</td>
           <td><button type="button" class="pequeno" :title="'Celulares com acesso ativo'" @click="verAcessos(m)">{{ m.sessoesAtivas }}</button></td>
           <td style="text-align: right; white-space: nowrap">
+            <button type="button" class="pequeno" @click="abrirEdicao(m)">Editar</button>
             <button v-if="m.sessoesAtivas" type="button" class="pequeno" @click="encerrarAcessos(m)">Encerrar acessos</button>
             <button type="button" class="pequeno" :class="{ perigo: !m.bloqueado }" @click="alternarBloqueio(m)">{{ m.bloqueado ? "Desbloquear" : "Bloquear" }}</button>
           </td>
         </tr>
       </tbody>
     </table>
+      <Paginacao :p="pag" />
   </div>
 
   <!-- Acessos -->
@@ -232,6 +265,24 @@ const linhasPlanilha = computed(() => (planilha.value?.resultado ?? planilha.val
   </div>
 
   <!-- Novo motorista -->
+  <div v-if="edicao" class="fundo-modal" @mousedown.self="edicao = null">
+    <form class="modal estreito" @submit.prevent="salvarEdicao">
+      <h2>Editar motorista</h2>
+      <div v-if="erroEdicao" class="erro">{{ erroEdicao }}</div>
+      <div class="campo"><label for="ed-nome">Nome *</label><input id="ed-nome" v-model="edicao.nome" required maxlength="120" /></div>
+      <div class="campo">
+        <label for="ed-celular">Celular *</label>
+        <input id="ed-celular" v-model="edicao.celular" type="tel" required />
+        <span class="dica">Número completo só aqui. Trocar o celular encerra os acessos atuais.</span>
+      </div>
+      <div class="campo"><label for="ed-placa">Placa</label><input id="ed-placa" v-model="edicao.placa" maxlength="8" style="text-transform: uppercase" /></div>
+      <div class="modal-acoes">
+        <button type="button" @click="edicao = null">Cancelar</button>
+        <button type="submit" class="primario">Salvar</button>
+      </div>
+    </form>
+  </div>
+
   <div v-if="novo" class="fundo-modal" @mousedown.self="novo = null">
     <form class="modal estreito" @submit.prevent="salvarNovo">
       <h2>Novo motorista</h2>

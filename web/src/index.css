@@ -44,10 +44,17 @@ h3 { font-size: 14px; margin: 0 0 8px; }
 /* Menu lateral fixo na altura da tela (rola sozinho se o menu crescer). */
 .lateral { width: 220px; flex-shrink: 0; background: var(--lateral); color: var(--lateral-texto); display: flex; flex-direction: column;
   position: sticky; top: 0; height: 100vh; overflow-y: auto; align-self: flex-start; transition: margin-left .2s ease; }
-/* Tela larga com o menu recolhido: ele desliza para fora pela esquerda e o conteúdo ocupa a largura toda. */
-.shell.menu-recolhido .lateral { margin-left: -220px; }
-/* Recolhido + mouse na borda: o menu abre POR CIMA do conteúdo (não empurra a página). */
-.shell.menu-recolhido .lateral.flutuante { position: fixed; left: 0; top: 0; margin-left: 0; z-index: 50; box-shadow: 4px 0 16px rgba(0, 0, 0, .25); }
+.lateral { transition: width .18s ease; }
+/* Tela larga com o menu recolhido: faixa estreita só com os ícones (o nome aparece no title). */
+.shell.menu-recolhido .lateral { width: 64px; overflow-x: hidden; }
+.shell.menu-recolhido .rotulo-menu, .shell.menu-recolhido .seta-secao { display: none; }
+.shell.menu-recolhido .lateral-marca { justify-content: center; padding: 18px 8px; }
+.shell.menu-recolhido .lateral nav a, .shell.menu-recolhido .lateral nav .sub-itens a { justify-content: center; padding: 10px 0; }
+.shell.menu-recolhido button.lateral-secao { padding: 0; margin: 8px 10px; height: 1px; background: rgba(255,255,255,0.14); pointer-events: none; }
+.shell.menu-recolhido .lateral-rodape { padding: 12px 8px; text-align: center; }
+.shell.menu-recolhido .sair-menu { padding: 6px 0; justify-content: center; }
+.shell.menu-recolhido .com-contagem { position: relative; }
+.shell.menu-recolhido .contagem-menu { position: absolute; top: 2px; right: 6px; padding: 0 5px; font-size: 10px; line-height: 16px; min-width: 16px; justify-content: center; }
 
 /* Alça na borda esquerda: faixa invisível de 14px na altura toda (área do mouse) com a aba "›". */
 .alca-menu {
@@ -68,7 +75,11 @@ h3 { font-size: 14px; margin: 0 0 8px; }
 .cabecalho-fixo { position: sticky; top: 0; z-index: 30; box-shadow: 0 1px 0 var(--borda), 0 2px 6px rgba(16, 24, 40, 0.06); }
 .lateral-marca { padding: 18px 16px; font-weight: 700; font-size: 15px; color: #fff; display: flex; gap: 10px; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); }
 .lateral nav { display: flex; flex-direction: column; padding: 8px; gap: 2px; flex: 1; }
-.lateral nav a { color: var(--lateral-texto); padding: 9px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+.lateral nav a { color: var(--lateral-texto); padding: 9px 12px; border-radius: 6px; display: flex; gap: 10px; align-items: center; }
+.lateral nav a .icone { opacity: .85; }
+.lateral nav a.router-link-exact-active .icone, .lateral nav a.ativo .icone { opacity: 1; }
+.lateral nav a .contagem-menu { margin-left: auto; }
+.sair-menu { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .lateral nav a:hover { background: rgba(255,255,255,0.06); text-decoration: none; }
 .lateral nav a.router-link-exact-active, .lateral nav a.ativo { background: rgba(255,255,255,0.12); color: #fff; }
 .lateral-secao { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .55; padding: 14px 12px 4px; }
@@ -80,7 +91,7 @@ button.lateral-secao:hover:not(:disabled) { background: none; opacity: .9; }
 .seta-secao { font-size: 16px; line-height: 1; transition: transform .15s; transform: rotate(0deg); }
 .seta-secao.aberta { transform: rotate(90deg); }
 .sub-itens { display: flex; flex-direction: column; gap: 2px; }
-.lateral nav .sub-itens a { padding-left: 22px; }
+.lateral nav .sub-itens a { padding-left: 16px; }
 .lateral-rodape { padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 12px; }
 .lateral-rodape button { margin-top: 8px; width: 100%; }
 .lateral-rodape .versao { margin-top: 8px; text-align: center; opacity: .55; font-size: 11px; letter-spacing: .03em; }

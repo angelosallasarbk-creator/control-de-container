@@ -9,6 +9,8 @@ import { FLUXO, ROTULO_STATUS, ROTULO_TIPO, rotuloEtapa } from "../formato.js";
 import { filtroContainers, passaFiltroContainers } from "../filtroContainers.js";
 import Icone from "./Icone.vue";
 import MarcaQr from "./MarcaQr.vue";
+import Paginacao from "./Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const props = defineProps({ selecionado: { type: [Number, String], default: null } });
 const emit = defineEmits(["carregada", "filtrada", "novo", "upload"]);
@@ -86,6 +88,15 @@ const visiveis = computed(() => {
 watch(() => [filtroContainers.regioes, filtroContainers.grupos, filtroContainers.semQr], () => emit("filtrada", visiveis.value), { deep: true });
 const filtrando = computed(() => filtroContainers.regioes.length || filtroContainers.grupos.length || filtroContainers.semQr);
 const abrir = (c) => router.push(`/containers/${c.id}`);
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => visiveis.value, "lista-lateral");
+// Container aberto fora da página atual (link, tabela, filtro): vai para a página dele.
+watch([() => props.selecionado, visiveis, pag.porPagina], () => {
+  const i = visiveis.value.findIndex((c) => String(c.id) === String(props.selecionado));
+  if (i >= 0) pag.irPara(Math.floor(i / pag.porPagina.value) + 1);
+  rolarAteSelecionado();
+});
 </script>
 
 <template>
@@ -115,7 +126,7 @@ const abrir = (c) => router.push(`/containers/${c.id}`);
         <div v-for="i in 4" :key="i" class="esqueleto"><span></span><span></span></div>
       </template>
       <button
-        v-for="c in visiveis" :key="c.id" type="button" class="item" :class="{ ativo: String(c.id) === String(selecionado) }"
+        v-for="c in pag.itens.value" :key="c.id" type="button" class="item" :class="{ ativo: String(c.id) === String(selecionado) }"
         :aria-current="String(c.id) === String(selecionado) ? 'page' : undefined" @click="abrir(c)"
       >
         <span class="linha-entre" style="gap: 8px">
@@ -132,6 +143,7 @@ const abrir = (c) => router.push(`/containers/${c.id}`);
         Nenhum container encontrado{{ filtrando ? " com os filtros do cabeçalho" : "" }}.
       </div>
     </div>
+    <Paginacao :p="pag" compacto />
   </aside>
 </template>
 

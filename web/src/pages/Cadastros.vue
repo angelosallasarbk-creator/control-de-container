@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { fmtMoeda, fmtTemp } from "../formato.js";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 // Uma tela para os cadastros de apoio; a configuração abaixo define colunas e campos.
 // Campo com `opcoesDe` é um select alimentado por outro cadastro (ex.: Região em Ponto de Carregamento).
@@ -217,6 +219,9 @@ async function excluir(r) {
     erro.value = e.message;
   }
 }
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => lista.value, "cadastros");
 </script>
 
 <template>
@@ -245,7 +250,7 @@ async function excluir(r) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in lista" :key="r.id" :style="{ opacity: r.ativo ? 1 : 0.55 }">
+          <tr v-for="r in pag.itens.value" :key="r.id" :style="{ opacity: r.ativo ? 1 : 0.55 }">
             <td v-for="col in cfg.colunas" :key="col.rotulo">{{ col.valor(r) }}</td>
             <td>{{ r.emUso }}</td>
             <td><span class="chip" :class="r.ativo ? 'verde' : ''">{{ r.ativo ? "Ativo" : "Inativo" }}</span></td>
@@ -258,6 +263,7 @@ async function excluir(r) {
           <tr v-if="!lista.length"><td :colspan="cfg.colunas.length + 3" class="vazio">Nenhum cadastro ainda.</td></tr>
         </tbody>
       </table>
+      <Paginacao :p="pag" />
     </div>
 
     <div v-if="editando" class="fundo-modal" @mousedown.self="editando = null">

@@ -13,7 +13,7 @@ import { ROTULO_STATUS as ROTULO_ETAPA, TIPOS as TIPOS_CONTAINER, CAMPO_DATA, va
 import { estadoDaEtiqueta } from "./etiquetas.js";
 import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { assumirRastreio } from "../lib/rastreamento.js";
-import { SELECT_PARADA, serializarParadas, proximaParada, registrarPassagem } from "../lib/trajeto.js";
+import { SELECT_PARADA, serializarParadas, proximaParada, registrarPassagem, registrarMudancaTrajeto } from "../lib/trajeto.js";
 import { etapasDoContainer, temOperacao, regrasDeLocal, motivoLocalForaDaRegra } from "../lib/fluxo.js";
 
 export const qrRouter = Router();
@@ -331,6 +331,8 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
           (trajeto.localCarregamentoId !== undefined && trajeto.localCarregamentoId !== c.localCarregamentoId ? " (local de carregamento alterado na leitura)" : "") +
           (trajeto.portoEntregaId !== undefined && trajeto.portoEntregaId !== c.portoEntregaId ? " (local de entrega alterado na leitura)" : ""),
       }, tx);
+      // Locais trocados na leitura (retirada/carregamento/entrega) → Histórico da ficha.
+      await registrarMudancaTrajeto(tx, { container: c, antes: c, depois: { ...c, portoRetiradaId: retirada.id, ...trajeto }, usuarioEmail: email, origem: "QR" });
       c = { ...c, status: "COLETADO", coletadoEm, portoRetiradaId: retirada.id, ...trajeto };
     }
     if (e.status === "LIVRE") {

@@ -15,7 +15,7 @@ import { garantirDistancias, paresDoContainer } from "../lib/rotas.js";
 import { resumoRastreamento, solicitarPosicaoManual } from "../lib/rastreamento.js";
 import { gerarModelo, lerPlanilha } from "../lib/importacaoContainers.js";
 import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
-import { SELECT_PARADA, serializarParadas, validarTrajeto, gravarTrajeto, registrarPassagem } from "../lib/trajeto.js";
+import { SELECT_PARADA, serializarParadas, validarTrajeto, gravarTrajeto, registrarPassagem, registrarMudancaTrajeto } from "../lib/trajeto.js";
 import { etapasDoContainer, regrasDeLocal, fluxoDoTipo, motivoLocalForaDaRegra, SELECT_TIPO_OPERACAO } from "../lib/fluxo.js";
 import { Prisma } from "@prisma/client";
 
@@ -128,6 +128,7 @@ async function detalhe(containerId) {
         alertas: { orderBy: { abertoEm: "desc" } },
         etiquetas: { select: { id: true, codigo: true, status: true, vinculadaEm: true, vinculadaPor: true, canceladaEm: true, motivoCancelamento: true }, orderBy: { id: "asc" } },
         paradas: { select: SELECT_PARADA },
+        mudancasTrajeto: { orderBy: { id: "asc" } },
       },
     }),
     lerConfiguracao(),
@@ -499,6 +500,10 @@ containersRouter.patch("/:id", requirePermissao("containers.operar"), asyncHandl
   }
 
   const depois = await prisma.container.update({ where: { id: containerId }, data: dados });
+  // Local de retirada/carregamento/entrega trocado na edição → Histórico (com antes e depois).
+  if (Object.keys(FUNCAO_DO_CAMPO).some((c) => c in dados)) {
+    await registrarMudancaTrajeto(prisma, { container: antes, antes, depois, usuarioEmail: req.usuario.email, origem: "FICHA" });
+  }
   await registrarLog({
     usuarioEmail: req.usuario.email,
     acao: "ALTERAR",

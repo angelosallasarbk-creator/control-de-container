@@ -139,9 +139,12 @@ onBeforeUnmount(() => {
   document.removeEventListener("mousemove", aoMoverMouse);
   clearTimeout(timerHover);
 });
-const menuVisivel = computed(() => (estreita.value ? menuAberto.value : !menuRecolhido.value || menuFlutuante.value));
-// A alça "›" aparece sempre que o menu está escondido.
-const mostrarAlca = computed(() => (estreita.value ? !menuAberto.value : menuRecolhido.value && !menuFlutuante.value));
+// Tela larga: o menu fica sempre à vista — aberto (ícone + nome) ou recolhido (faixa só com os ícones;
+// o nome aparece ao passar o mouse). Tela estreita: gaveta.
+const faixaIcones = computed(() => !estreita.value && menuRecolhido.value);
+const menuVisivel = computed(() => (estreita.value ? menuAberto.value : true));
+// A alça "›" só existe no celular (gaveta fechada).
+const mostrarAlca = computed(() => estreita.value && !menuAberto.value);
 const resumo = ref(null);
 const INTERVALO_ALERTAS_MS = 30000;
 let timer = null;
@@ -253,59 +256,59 @@ function alternarSecao(nome) {
     >
       <div class="lateral-marca">
         <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="8" width="28" height="16" rx="2" fill="#4a8fdc" /><path d="M8 11v10M13 11v10M18 11v10M23 11v10" stroke="#fff" stroke-width="2" /></svg>
-        <span class="espaco">Controle de Container</span>
+        <span class="espaco rotulo-menu">Controle de Container</span>
         <button v-if="estreita" class="fechar-menu" aria-label="Fechar menu" @click="menuAberto = false">✕</button>
         <!-- Flutuando por cima (tela larga), o menu cobre o ☰; o 📌 o fixa aberto de novo. -->
         <button v-else-if="menuFlutuante" class="fechar-menu" title="Manter menu aberto" aria-label="Manter menu aberto" @click="fixarMenu">📌</button>
       </div>
       <nav>
-        <router-link v-if="ehGestor" to="/motoristas">Motoristas</router-link>
-        <router-link v-else to="/">Home</router-link>
-        <router-link v-if="ehPortaria" to="/leitura">Registrar pelo código</router-link>
+        <router-link v-if="ehGestor" to="/motoristas" title="Motoristas"><Icone nome="pessoa" :tamanho="19" /><span class="rotulo-menu">Motoristas</span></router-link>
+        <router-link v-else to="/" title="Home"><Icone nome="casa" :tamanho="19" /><span class="rotulo-menu">Home</span></router-link>
+        <router-link v-if="ehPortaria" to="/leitura" title="Registrar pelo código"><Icone nome="teclado" :tamanho="19" /><span class="rotulo-menu">Registrar pelo código</span></router-link>
         <template v-else-if="!ehGestor">
-        <router-link to="/containers" :class="{ ativo: route.path.startsWith('/containers') }">Containers</router-link>
-        <router-link to="/alertas">
-          Alertas
-          <span v-if="resumo?.total" class="chip" :class="resumo.criticos ? 'vermelho' : 'amarelo'">{{ resumo.total }}</span>
+        <router-link to="/containers" :class="{ ativo: route.path.startsWith('/containers') }" title="Containers"><Icone nome="container" :tamanho="19" /><span class="rotulo-menu">Containers</span></router-link>
+        <router-link to="/alertas" title="Alertas" class="com-contagem">
+          <Icone nome="sino" :tamanho="19" /><span class="rotulo-menu">Alertas</span>
+          <span v-if="resumo?.total" class="chip contagem-menu" :class="resumo.criticos ? 'vermelho' : 'amarelo'">{{ resumo.total }}</span>
         </router-link>
-        <router-link to="/etiquetas" :class="{ ativo: route.path.startsWith('/etiquetas') }">Etiquetas QR</router-link>
-        <router-link to="/leitura">Registrar pelo código</router-link>
-        <router-link to="/custos">Custo estimado</router-link>
+        <router-link to="/etiquetas" :class="{ ativo: route.path.startsWith('/etiquetas') }" title="Etiquetas QR"><Icone nome="qr" :tamanho="19" /><span class="rotulo-menu">Etiquetas QR</span></router-link>
+        <router-link to="/leitura" title="Registrar pelo código"><Icone nome="teclado" :tamanho="19" /><span class="rotulo-menu">Registrar pelo código</span></router-link>
+        <router-link to="/custos" title="Custo estimado"><Icone nome="moeda" :tamanho="19" /><span class="rotulo-menu">Custo estimado</span></router-link>
         <button
           type="button" class="lateral-secao" :aria-expanded="secaoAberta('cadastros')" aria-controls="menu-cadastros"
           @click="alternarSecao('cadastros')"
         >
-          <span>Cadastros</span><span class="seta-secao" :class="{ aberta: secaoAberta('cadastros') }" aria-hidden="true">›</span>
+          <span class="rotulo-menu">Cadastros</span><span class="seta-secao" :class="{ aberta: secaoAberta('cadastros') }" aria-hidden="true">›</span>
         </button>
-        <div v-show="secaoAberta('cadastros')" id="menu-cadastros" class="sub-itens">
-          <router-link to="/cadastros/regioes">Regiões</router-link>
-          <router-link to="/locais">Locais</router-link>
-          <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
-          <router-link to="/tipos-operacao">Tipo de Operação</router-link>
-          <router-link to="/cadastros/armadores">Armadores</router-link>
-          <router-link to="/cadastros/produtos">Produtos</router-link>
-          <router-link to="/cadastros/transportadoras">Transportadoras</router-link>
-          <router-link v-if="auth.pode('cadastros.editar')" to="/motoristas">Motoristas</router-link>
+        <div v-show="faixaIcones || secaoAberta('cadastros')" id="menu-cadastros" class="sub-itens">
+          <router-link to="/cadastros/regioes" title="Regiões"><Icone nome="mapa" :tamanho="19" /><span class="rotulo-menu">Regiões</span></router-link>
+          <router-link to="/locais" title="Locais"><Icone nome="local" :tamanho="19" /><span class="rotulo-menu">Locais</span></router-link>
+          <router-link to="/cadastros/grupos" title="Ponto de Carregamento"><Icone nome="fabrica" :tamanho="19" /><span class="rotulo-menu">Ponto de Carregamento</span></router-link>
+          <router-link to="/tipos-operacao" title="Tipo de Operação"><Icone nome="fluxo" :tamanho="19" /><span class="rotulo-menu">Tipo de Operação</span></router-link>
+          <router-link to="/cadastros/armadores" title="Armadores"><Icone nome="navio" :tamanho="19" /><span class="rotulo-menu">Armadores</span></router-link>
+          <router-link to="/cadastros/produtos" title="Produtos"><Icone nome="caixa" :tamanho="19" /><span class="rotulo-menu">Produtos</span></router-link>
+          <router-link to="/cadastros/transportadoras" title="Transportadoras"><Icone nome="caminhao" :tamanho="19" /><span class="rotulo-menu">Transportadoras</span></router-link>
+          <router-link v-if="auth.pode('cadastros.editar')" to="/motoristas" title="Motoristas"><Icone nome="pessoa" :tamanho="19" /><span class="rotulo-menu">Motoristas</span></router-link>
         </div>
         <template v-if="auth.pode('administrar') || auth.pode('auditoria.ver')">
           <button
             type="button" class="lateral-secao" :aria-expanded="secaoAberta('administracao')" aria-controls="menu-administracao"
             @click="alternarSecao('administracao')"
           >
-            <span>Administração</span><span class="seta-secao" :class="{ aberta: secaoAberta('administracao') }" aria-hidden="true">›</span>
+            <span class="rotulo-menu">Administração</span><span class="seta-secao" :class="{ aberta: secaoAberta('administracao') }" aria-hidden="true">›</span>
           </button>
-          <div v-show="secaoAberta('administracao')" id="menu-administracao" class="sub-itens">
-            <router-link v-if="auth.pode('administrar')" to="/usuarios">Usuários</router-link>
-            <router-link v-if="auth.pode('administrar')" to="/integracao">Integração</router-link>
-            <router-link to="/configuracoes">Configurações e log</router-link>
+          <div v-show="faixaIcones || secaoAberta('administracao')" id="menu-administracao" class="sub-itens">
+            <router-link v-if="auth.pode('administrar')" to="/usuarios" title="Usuários"><Icone nome="usuarios" :tamanho="19" /><span class="rotulo-menu">Usuários</span></router-link>
+            <router-link v-if="auth.pode('administrar')" to="/integracao" title="Integração"><Icone nome="plugue" :tamanho="19" /><span class="rotulo-menu">Integração</span></router-link>
+            <router-link to="/configuracoes" title="Configurações e log"><Icone nome="ajustes" :tamanho="19" /><span class="rotulo-menu">Configurações e log</span></router-link>
           </div>
         </template>
         </template>
       </nav>
       <div class="lateral-rodape">
-        <div class="negrito" style="color: #fff">{{ auth.usuario.nome }}</div>
-        <div>{{ ROTULO_PERFIL[auth.usuario.perfil] }}</div>
-        <button class="pequeno" @click="auth.logout()">Sair</button>
+        <div class="rotulo-menu negrito" style="color: #fff">{{ auth.usuario.nome }}</div>
+        <div class="rotulo-menu">{{ ROTULO_PERFIL[auth.usuario.perfil] }}</div>
+        <button class="pequeno sair-menu" :title="faixaIcones ? `Sair (${auth.usuario.nome})` : 'Sair'" @click="auth.logout()"><Icone nome="sair" :tamanho="16" /><span class="rotulo-menu">Sair</span></button>
         <div class="versao" title="Versão do sistema">v{{ VERSAO }}</div>
       </div>
     </aside>
@@ -317,7 +320,8 @@ function alternarSecao(nome) {
         <div class="linha">
           <button
             class="botao-menu pequeno" aria-controls="menu-lateral" :aria-expanded="menuVisivel"
-            :aria-label="menuVisivel ? 'Recolher menu' : 'Abrir menu'" :title="menuVisivel ? 'Recolher menu' : 'Abrir menu'"
+            :aria-label="estreita ? (menuAberto ? 'Fechar menu' : 'Abrir menu') : menuRecolhido ? 'Expandir menu' : 'Recolher menu (só ícones)'"
+            :title="estreita ? (menuAberto ? 'Fechar menu' : 'Abrir menu') : menuRecolhido ? 'Expandir menu' : 'Recolher menu (só ícones)'"
             @click="alternarMenu"
           >☰</button>
           <h1>{{ route.meta.titulo }}</h1>

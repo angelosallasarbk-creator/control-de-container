@@ -355,12 +355,14 @@ model Container {
   criadoPor    String
   atualizadoEm DateTime @updatedAt
 
-  eventos   EventoContainer[]
-  leituras  LeituraTemperatura[]
-  alertas   Alerta[]
-  etiquetas EtiquetaQR[]
+  eventos         EventoContainer[]
+  leituras        LeituraTemperatura[]
+  alertas         Alerta[]
+  etiquetas       EtiquetaQR[]
   // Pontos de parada do trajeto (ex.: Ponto Fiscal), em ordem, antes ou depois do carregamento.
-  paradas   ParadaContainer[]
+  paradas         ParadaContainer[]
+  // Mudanças no trajeto (locais e paradas) — aba Histórico da ficha.
+  mudancasTrajeto MudancaTrajeto[]
 
   // Rastreamento por SMS: quem registrou algo pelo QR por último recebe os pedidos de posição.
   rastreioResponsavelId Int?
@@ -649,6 +651,23 @@ model ParadaContainer {
   longitude      Decimal?      @db.Decimal(9, 6)
   precisaoM      Int?
   criadoEm       DateTime      @default(now())
+
+  @@index([containerId])
+}
+
+// Mudança no trajeto do container (retirada, carregamento, entrega ou paradas), com o antes e o
+// depois. aposPlanejado = o container já tinha o Planejado (plano congelado) quando mudou.
+model MudancaTrajeto {
+  id            Int       @id @default(autoincrement())
+  containerId   Int
+  container     Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  ocorridoEm    DateTime  @default(now())
+  usuarioEmail  String
+  origem        String // FICHA (editar dados) | TRAJETO (Editar trajeto) | QR (leitura da coleta)
+  antes         String
+  depois        String
+  detalhes      Json // ["Entrega: Porto A → Porto B", "+ parada: Posto Fiscal X", …]
+  aposPlanejado Boolean
 
   @@index([containerId])
 }

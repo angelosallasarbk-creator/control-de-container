@@ -14,6 +14,9 @@ import PrevisaoCiclo from "../components/PrevisaoCiclo.vue";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ListaContainersLateral from "../components/ListaContainersLateral.vue";
 import Icone from "../components/Icone.vue";
+import MapaPosicoes from "../components/MapaPosicoes.vue";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 import NovoContainer from "../components/NovoContainer.vue";
 import ImportarContainers from "../components/ImportarContainers.vue";
 import EditarTrajeto from "../components/EditarTrajeto.vue";
@@ -105,7 +108,7 @@ const p = computed(() => (s.value.previsao?.disponivel ? s.value.previsao : null
 const km = computed(() => kmDoCiclo(p.value));
 const alertasAbertos = computed(() => (c.value?.alertas ?? []).filter((a) => a.chaveAberta));
 const alertasEncerrados = computed(() => (c.value?.alertas ?? []).filter((a) => !a.chaveAberta));
-const leiturasDesc = computed(() => [...(c.value?.leituras ?? [])].reverse().slice(0, 30));
+const leiturasDesc = computed(() => [...(c.value?.leituras ?? [])].reverse());
 const rota = computed(() => (c.value ? [c.value.portoRetirada?.nome, ...(c.value.paradas ?? []).filter((x) => x.fase === "ANTES_CARREGAMENTO").map((x) => x.nome), c.value.localCarregamento?.nome, ...(c.value.paradas ?? []).filter((x) => x.fase === "APOS_CARREGAMENTO").map((x) => x.nome), c.value.portoEntrega?.nome].filter(Boolean) : []));
 const RISCO = { OK: { texto: "Sem risco", cor: "verde" }, ATENCAO: { texto: "Atenção", cor: "amarelo" }, CRITICO: { texto: "Risco alto", cor: "vermelho" } };
 
@@ -452,6 +455,33 @@ function reconhecido() {
   carregar();
   atualizarAlertas();
 }
+
+// ----- Paginação das tabelas da ficha -----
+const pagLeituras = usePaginacao(() => leiturasDesc.value, "ficha-leituras");
+const pagPosicoes = usePaginacao(() => rastreio.value?.posicoes ?? [], "ficha-posicoes");
+const pagSms = usePaginacao(() => rastreio.value?.mensagens ?? [], "ficha-sms");
+
+// ----- Mapa: locais do trajeto como referência -----
+const locaisMapa = computed(() => {
+  if (!c.value) return [];
+  const x = c.value;
+  return [
+    x.portoRetirada && { papel: "Retirada", ...x.portoRetirada },
+    ...(x.paradas ?? []).map((pa) => ({ papel: "Ponto de parada", nome: pa.nome, latitude: pa.latitude, longitude: pa.longitude })),
+    x.temOperacao !== false && x.localCarregamento && { papel: "Carregamento", ...x.localCarregamento },
+    x.portoEntrega && { papel: "Entrega", ...x.portoEntrega },
+  ].filter(Boolean);
+});
+
+// ----- Histórico: etapas + mudanças no trajeto, em ordem de acontecimento -----
+const ORIGEM_MUDANCA = { FICHA: "edição dos dados", TRAJETO: "Editar trajeto", QR: "leitura do QR na coleta" };
+const historico = computed(() => {
+  if (!c.value) return [];
+  const etapas = (c.value.eventos ?? []).map((e) => ({ chave: "e" + e.id, tipo: "etapa", quando: e.registradoEm ?? e.ocorridoEm, ocorridoEm: e.ocorridoEm, e }));
+  const mudancas = (c.value.mudancasTrajeto ?? []).map((m) => ({ chave: "m" + m.id, tipo: "trajeto", quando: m.ocorridoEm, ocorridoEm: m.ocorridoEm, m }));
+  return [...etapas, ...mudancas].sort((a, b) => new Date(a.quando) - new Date(b.quando));
+});
+const pagHistorico = usePaginacao(historico, "ficha-historico");
 </script>
 
 <template>
@@ -850,7 +880,7 @@ function reconhecido() {
             <table class="pequeno">
               <thead><tr><th>Horário</th><th>Temperatura</th><th>Origem</th><th>Registro</th></tr></thead>
               <tbody>
-                <tr v-for="l in leiturasDesc" :key="l.id">
+                <tr v-for="l in pagLeituras.itens.value" :key="l.id">
                   <td>{{ fmtDataHora(l.lidaEm) }}</td>
                   <td :class="l.temperatura < c.tempMin || l.temperatura > c.tempMax ? 'txt-VENCIDO' : ''">{{ fmtTemp(l.temperatura) }}</td>
                   <td>
@@ -867,6 +897,7 @@ function reconhecido() {
                 </tr>
               </tbody>
             </table>
+            <Paginacao :p="pagLeituras" />
           </details>
         </div>
 
@@ -920,12 +951,16 @@ function reconhecido() {
               <span v-else class="chip verde">Nenhum</span>
             </div>
 
+            <h3 style="margin-top: 18px">Mapa das posições</h3>
+            <MapaPosicoes :posicoes="rastreio.posicoes" :locais="locaisMapa" :rotulo-etapa="(s) => rotuloEtapa(c, s)" />
+            <div v-if="!rastreio.posicoes.length" class="mudo pequeno" style="margin-top: 4px">Nenhuma posição recebida ainda — o mapa mostra os locais do trajeto.</div>
+
             <h3 style="margin-top: 18px">Posições ({{ rastreio.posicoes.length }})</h3>
             <div class="tabela-wrap">
               <table v-if="rastreio.posicoes.length" class="pequeno">
                 <thead><tr><th>Quando</th><th>Etapa</th><th>Origem</th><th>Quem</th><th>Posição</th></tr></thead>
                 <tbody>
-                  <tr v-for="p in rastreio.posicoes" :key="p.id">
+                  <tr v-for="p in pagPosicoes.itens.value" :key="p.id">
                     <td>{{ fmtDataHora(p.registradaEm) }}</td>
                     <td>{{ rotuloEtapa(c, p.etapa) }}</td>
                     <td>{{ ORIGEM_POSICAO[p.origem] ?? p.origem }}</td>
@@ -939,13 +974,14 @@ function reconhecido() {
               </table>
               <div v-else class="mudo">Nenhuma posição recebida ainda.</div>
             </div>
+            <Paginacao :p="pagPosicoes" />
 
             <h3 style="margin-top: 18px">SMS ({{ rastreio.mensagens.length }})</h3>
             <div class="tabela-wrap">
               <table v-if="rastreio.mensagens.length" class="pequeno">
                 <thead><tr><th>Quando</th><th>Tipo</th><th>Motivo</th><th>Para</th><th>Situação</th></tr></thead>
                 <tbody>
-                  <tr v-for="m in rastreio.mensagens" :key="m.id">
+                  <tr v-for="m in pagSms.itens.value" :key="m.id">
                     <td>{{ fmtDataHora(m.criadaEm) }}</td>
                     <td>{{ TIPO_SMS[m.tipo] ?? m.tipo }}</td>
                     <td class="mudo">{{ m.motivo ?? "—" }}</td>
@@ -959,22 +995,35 @@ function reconhecido() {
               </table>
               <div v-else class="mudo">Nenhum SMS enviado para este container.</div>
             </div>
+            <Paginacao :p="pagSms" />
           </template>
         </div>
 
         <!-- Histórico -->
         <div v-if="aba === 'historico'" class="card">
-          <h2>Histórico de etapas</h2>
-          <table class="pequeno">
-            <thead><tr><th>Quando</th><th>Etapa</th><th>Quem / observação</th></tr></thead>
+          <h2>Histórico</h2>
+          <p class="mudo pequeno" style="margin-top: 0">Etapas registradas e mudanças no trajeto (retirada, carregamento, entrega e paradas), com o antes e o depois.</p>
+          <table class="pequeno historico">
+            <thead><tr><th>Quando</th><th>O que</th><th>Quem / detalhe</th></tr></thead>
             <tbody>
-              <tr v-for="e in c.eventos" :key="e.id">
-                <td>{{ fmtDataHora(e.ocorridoEm) }}</td>
-                <td class="negrito">{{ rotuloEtapa(c, e.statusPara) }}</td>
-                <td>{{ e.usuarioEmail }}<div v-if="e.observacao" class="mudo">{{ e.observacao }}</div></td>
+              <tr v-for="h in pagHistorico.itens.value" :key="h.chave" :class="{ 'mudanca-trajeto': h.tipo === 'trajeto' }">
+                <td style="white-space: nowrap">{{ fmtDataHora(h.ocorridoEm) }}</td>
+                <td v-if="h.tipo === 'etapa'" class="negrito">{{ rotuloEtapa(c, h.e.statusPara) }}</td>
+                <td v-else>
+                  <span class="negrito">Trajeto alterado</span>
+                  <div><span v-if="h.m.aposPlanejado" class="chip laranja pequeno" title="O container já tinha o Planejado quando o trajeto mudou">após o planejado</span></div>
+                </td>
+                <td v-if="h.tipo === 'etapa'">{{ h.e.usuarioEmail }}<div v-if="h.e.observacao" class="mudo">{{ h.e.observacao }}</div></td>
+                <td v-else>
+                  {{ h.m.usuarioEmail }} <span class="mudo">· {{ ORIGEM_MUDANCA[h.m.origem] ?? h.m.origem }}</span>
+                  <ul class="mudancas"><li v-for="(d, i) in h.m.detalhes" :key="i">{{ d }}</li></ul>
+                  <div class="mudo"><span class="rotulo-antes">Antes:</span> {{ h.m.antes }}</div>
+                  <div><span class="rotulo-antes">Depois:</span> {{ h.m.depois }}</div>
+                </td>
               </tr>
             </tbody>
           </table>
+          <Paginacao :p="pagHistorico" />
 
           <h2 style="margin-top: 22px">Alertas encerrados</h2>
           <table v-if="alertasEncerrados.length" class="pequeno">
@@ -1111,6 +1160,9 @@ function reconhecido() {
 </template>
 
 <style scoped>
+.historico tr.mudanca-trajeto td { background: var(--superficie-2); }
+.mudancas { margin: 4px 0; padding-left: 18px; }
+.rotulo-antes { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
 .motivos-agora { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
 .trajeto-pontos { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; }
 .ponto-trajeto { display: inline-flex; flex-direction: column; padding: 6px 10px; border: 1px solid var(--borda); border-radius: 8px; background: var(--azul-fundo); font-size: 13px; line-height: 1.25; }

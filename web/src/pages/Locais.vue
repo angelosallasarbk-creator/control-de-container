@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_FUNCAO_LOCAL, ROTULO_POSICAO_PARADA } from "../formato.js";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const auth = useAuthStore();
 const lista = ref([]);
@@ -224,6 +226,9 @@ const etapasDoTipo = (t) => (t.funcao === "PARADA" ? "passagem registrada no tra
 
 const TIPO_RESULTADO = { venue: "terminal/empresa", address: "endereço", street: "rua", neighbourhood: "bairro", locality: "cidade", localadmin: "município", county: "município", region: "estado" };
 const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.longitude}#map=15/${l.latitude}/${l.longitude}`;
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => visiveis.value, "locais");
 </script>
 
 <template>
@@ -261,7 +266,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
           <tr><th>Local</th><th>Tipo</th><th>Cidade / UF</th><th>Coordenadas</th><th>Fila/gate</th><th>Em uso</th><th>Situação</th><th v-if="auth.pode('cadastros.editar')"></th></tr>
         </thead>
         <tbody>
-          <tr v-for="l in visiveis" :key="l.id" :style="{ opacity: l.ativo ? 1 : 0.55 }">
+          <tr v-for="l in pag.itens.value" :key="l.id" :style="{ opacity: l.ativo ? 1 : 0.55 }">
             <td class="negrito">{{ l.nome }}<div v-if="l.endereco" class="mudo pequeno">{{ l.endereco }}</div></td>
             <td><span class="chip" :class="l.tipo.funcao === 'RETIRADA_ENTREGA' ? 'azul' : ''">{{ l.tipo.nome }}</span></td>
             <td>{{ [l.cidade, l.uf].filter(Boolean).join(" / ") || "—" }}</td>
@@ -285,6 +290,7 @@ const mapa = (l) => `https://www.openstreetmap.org/?mlat=${l.latitude}&mlon=${l.
           <tr v-if="!visiveis.length"><td colspan="8" class="vazio">Nenhum local encontrado.</td></tr>
         </tbody>
       </table>
+      <Paginacao :p="pag" />
     </div>
   </div>
 

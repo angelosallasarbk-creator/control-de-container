@@ -141,6 +141,7 @@ export const api = {
   motoristas: (params) => request(`/motoristas${qs(params)}`),
   criarMotorista: (dados) => request("/motoristas", { method: "POST", body: dados }),
   atualizarMotorista: (id, dados) => request(`/motoristas/${id}`, { method: "PATCH", body: dados }),
+  motorista: (id) => request(`/motoristas/${id}`),
   sessoesMotorista: (id) => request(`/motoristas/${id}/sessoes`),
   encerrarSessoesMotorista: (id) => request(`/motoristas/${id}/encerrar-sessoes`, { method: "POST" }),
   baixarModeloMotoristas: () => baixarArquivo("/motoristas/modelo", "modelo-motoristas.xlsx"),

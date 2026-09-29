@@ -5,6 +5,8 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { fmtDataHora, minutosParaHora, horaParaMinutos } from "../formato.js";
 import PermissoesUsuarios from "../components/PermissoesUsuarios.vue";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const auth = useAuthStore();
 const route = useRoute();
@@ -91,6 +93,9 @@ onMounted(async () => {
   if (podeEditar.value) api.configImpressao().then((r) => (sugestoesEndereco.value = r.sugestoes ?? [])).catch(() => {});
   if (aba.value === "log") carregarLogs();
 });
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => logsFiltrados.value, "log");
 </script>
 
 <template>
@@ -286,7 +291,7 @@ onMounted(async () => {
     <table class="pequeno">
       <thead><tr><th>Quando</th><th>Usuário</th><th>Ação</th><th>Descrição</th></tr></thead>
       <tbody>
-        <tr v-for="l in logsFiltrados" :key="l.id">
+        <tr v-for="l in pag.itens.value" :key="l.id">
           <td style="white-space: nowrap">{{ fmtDataHora(l.criadoEm) }}</td>
           <td>{{ l.usuarioEmail }}</td>
           <td>{{ l.acao }}</td>
@@ -295,6 +300,7 @@ onMounted(async () => {
         <tr v-if="!logsFiltrados.length"><td colspan="4" class="vazio">Nenhum registro.</td></tr>
       </tbody>
     </table>
+      <Paginacao :p="pag" />
   </div>
 </template>
 

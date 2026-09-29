@@ -1360,7 +1360,7 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
   const doLink = r.posicoes.find((p) => p.origem === "LINK_SMS");
   assert.equal(doLink.latitude, -22.5);
   assert.equal(doLink.precisaoM, 5);
-  assert.ok(r.mensagens.some((m) => m.telefone === "+55 11 9****-4321"));
+  assert.ok(r.mensagens.some((m) => m.telefone === "(••) •••••-4321"));
   assert.ok(!JSON.stringify(r).includes("98765-4321") && !JSON.stringify(r).includes("5511987654321"), "celular completo não vaza");
 
   // 8) Rastreamento desligado: nada sai; container encerrado: nada sai.
@@ -2166,4 +2166,70 @@ test("tipos de operação (v2.0-B): planilha com a coluna Tipo de Operação", a
   assert.equal(c.localCarregamentoId, null);
   assert.deepEqual(c.fluxo.etapas, ["COLETADO", "ENTREGUE_PORTO"]);
   await agentes.ADMIN.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste v2.0-B" });
+});
+
+test("v2.1: mudanças no trajeto ficam no Histórico (antes/depois, após o planejado) e posições para o mapa", async () => {
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { tipo: "DRY_40", grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), confirmarDigito: true };
+  // Com trajeto completo e coordenadas: o Planejado é gravado na criação.
+  const c = await agentes.OPERADOR.post("/api/containers").send({ ...cad, numero: "HSTU2200001", portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  assert.ok(c.body.planejamento, "Planejado gravado");
+  assert.deepEqual(c.body.mudancasTrajeto, []);
+
+  // Edição dos dados trocando a entrega → registro com antes/depois e "após o planejado".
+  await agentes.OPERADOR.post(`/api/containers/${c.body.id}/avancar`).send({});
+  const ed = await agentes.OPERADOR.patch(`/api/containers/${c.body.id}`).send({ portoEntregaId: ids.ferro, booking: "BK-HIST" });
+  assert.equal(ed.status, 200, JSON.stringify(ed.body));
+  const [m1] = ed.body.mudancasTrajeto;
+  assert.equal(m1.origem, "FICHA");
+  assert.equal(m1.aposPlanejado, true);
+  assert.deepEqual(m1.detalhes, ["Entrega: Porto de Santos → Terminal Ferroviário Paulínia"]);
+  assert.match(m1.antes, /Porto de Santos → Armazém Cubatão → Porto de Santos/);
+  assert.match(m1.depois, /→ Terminal Ferroviário Paulínia$/);
+  // Só booking: não é mudança de trajeto.
+  assert.equal((await agentes.OPERADOR.patch(`/api/containers/${c.body.id}`).send({ booking: "BK-2" })).body.mudancasTrajeto.length, 1);
+
+  // Editar trajeto: acrescenta uma parada.
+  const pf = (await agentes.ADMIN.get("/api/locais?ativos=1")).body.find((l) => l.tipo.funcao === "PARADA");
+  const r = await agentes.OPERADOR.put(`/api/containers/${c.body.id}/trajeto`).send({ pontos: [
+    { papel: "RETIRADA", localId: ids.santos }, { papel: "PARADA", localId: pf.id }, { papel: "CARREGAMENTO", localId: ids.cubatao }, { papel: "ENTREGA", localId: ids.ferro },
+  ] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const m2 = r.body.mudancasTrajeto.at(-1);
+  assert.equal(m2.origem, "TRAJETO");
+  assert.deepEqual(m2.detalhes, [`+ parada: ${pf.nome}`]);
+  // Salvar sem mudar nada não registra.
+  const igual = await agentes.OPERADOR.put(`/api/containers/${c.body.id}/trajeto`).send({ pontos: [
+    { papel: "RETIRADA", localId: ids.santos }, { papel: "PARADA", localId: pf.id, paradaId: r.body.paradas[0].id }, { papel: "CARREGAMENTO", localId: ids.cubatao }, { papel: "ENTREGA", localId: ids.ferro },
+  ] });
+  assert.equal(igual.body.mudancasTrajeto.length, 2);
+  // Paradas com coordenadas (mapa).
+  assert.equal(typeof r.body.paradas[0].latitude, "number");
+
+  // Rastreamento devolve as posições para o mapa (mais de 50).
+  await prisma.posicaoContainer.createMany({ data: Array.from({ length: 60 }, (_, i) => ({ containerId: c.body.id, latitude: -23.9 + i / 1000, longitude: -46.3, origem: "QR", etapa: "COLETADO", registradaEm: new Date(Date.now() - (60 - i) * 60e3) })) });
+  const rast = (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body;
+  assert.equal(rast.posicoes.length, 60);
+  assert.ok(new Date(rast.posicoes[0].registradaEm) > new Date(rast.posicoes[1].registradaEm), "mais recente primeiro (destacada no mapa)");
+  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste v2.1" });
+});
+
+test("v2.1: celular do motorista só com os 4 últimos dígitos; completo ao criar/editar", async () => {
+  const t = (await agentes.ADMIN.get("/api/transportadoras?ativos=1")).body[0];
+  const criado = await agentes.SUPERVISOR.post("/api/motoristas").send({ nome: "Privacidade V21", celular: "(11) 91234-5678", transportadoraId: t.id });
+  assert.equal(criado.status, 201, JSON.stringify(criado.body));
+  assert.equal(criado.body.celular, "+5511912345678", "criação devolve o número completo");
+  const lista = (await agentes.SUPERVISOR.get("/api/motoristas")).body;
+  const m = lista.find((x) => x.id === criado.body.id);
+  assert.equal(m.celular, "(••) •••••-5678");
+  assert.equal(m.celularFinal, "5678");
+  assert.ok(!JSON.stringify(lista).includes("912345678"), "lista não expõe nenhum número completo");
+  const det = await agentes.SUPERVISOR.get(`/api/motoristas/${m.id}`);
+  assert.equal(det.body.celular, "+5511912345678", `editar mostra completo: ${det.status} ${JSON.stringify(det.body)}`);
+  const ed = await agentes.SUPERVISOR.patch(`/api/motoristas/${m.id}`).send({ celular: "11 98888-7777" });
+  assert.equal(ed.status, 200);
+  assert.equal(ed.body.celular, "(••) •••••-7777");
+  assert.equal((await prisma.motorista.findUnique({ where: { id: m.id } })).celular, "+5511988887777");
+  assert.equal((await agentes.OPERADOR.get(`/api/motoristas/${m.id}`)).status, 403, "sem permissão de cadastro não vê");
 });
