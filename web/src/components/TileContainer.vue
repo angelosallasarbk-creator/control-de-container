@@ -31,6 +31,7 @@ const textoDemurrage = computed(() => {
       <span>{{ ROTULO_TIPO[c.tipo] }} · {{ c.armador }}</span>
       <span v-if="c.posicaoPatio" style="white-space: nowrap">📍 {{ c.posicaoPatio }}</span>
     </div>
+    <div v-if="c.tipoOperacao" class="linha-tile mudo pequeno" title="Tipo de operação">{{ c.tipoOperacao }}</div>
     <div class="linha-tile"><span class="chip azul">{{ rotuloEtapa(c, c.status) }}</span></div>
     <div v-if="c.status === 'PROGRAMADO' && c.coletaProgramadaEm" class="linha-tile">
       <span>Coleta</span>

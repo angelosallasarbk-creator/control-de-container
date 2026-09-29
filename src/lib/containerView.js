@@ -3,6 +3,7 @@ import { estimarCiclo } from "./estimativa.js";
 import { configRodagem } from "./previsao.js";
 import { LIMITE_ATRASO_MIN } from "./leituras.js";
 import { rotulosDasEtapas } from "./tiposLocal.js";
+import { etapasDoContainer, temOperacao, regrasDeLocal } from "./fluxo.js";
 
 const CAMPOS_DECIMAIS = ["custoEstadiaPorHora", "valorDiaria", "setpoint", "tempMin", "tempMax", "tempoParadaHoras"];
 export const CAMPOS_LOCAL = ["latitude", "longitude", "filaHoras", "tempoParadaHoras"];
@@ -47,6 +48,12 @@ export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = nul
     portoEntrega: c.portoEntrega ? decimaisParaNumero(c.portoEntrega, CAMPOS_LOCAL) : c.portoEntrega,
     // Nome das etapas conforme o tipo dos locais (ex.: COLETADO → "Coleta ferroviária").
     rotulosEtapa: rotulosDasEtapas(c),
+    // Tipo de Operação: etapas do fluxo (PROGRAMADO … entrega), se tem local de operação (estadia)
+    // e o tipo de local exigido em cada campo do trajeto. Containers anteriores: fluxo de exportação.
+    tipoOperacao: c.tipoOperacao ?? (c.fluxo?.tipo ? { id: c.fluxo.tipoId, nome: c.fluxo.tipo } : null),
+    fluxo: etapasDoContainer(c),
+    temOperacao: temOperacao(c),
+    regrasLocal: regrasDeLocal(c),
     // Tem etiqueta QR ligada agora (consulta com CONTAGEM_QR, ou a lista de etiquetas da ficha).
     qrVinculado: _count ? _count.etiquetas > 0 : Array.isArray(c.etiquetas) ? c.etiquetas.some((e) => e.status === "VINCULADA") : false,
     // Configurações → Geral: tolerância do "no prazo" na aba Etapas (planejado × realizado).

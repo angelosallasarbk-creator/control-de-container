@@ -123,12 +123,13 @@ export const ordenarParadas = (paradas = []) => {
 };
 
 // Sequência de locais do trajeto: retirada → paradas antes → carregamento → paradas depois → entrega.
+// Sem local de carregamento (Tipo de Operação sem ovação/desova): retirada → paradas → entrega.
 export function sequenciaDoTrajeto(c) {
   const paradas = ordenarParadas(c.paradas);
   return [
     c.portoRetiradaId,
     ...paradas.filter((p) => p.fase === "ANTES_CARREGAMENTO").map((p) => p.localId),
-    c.localCarregamentoId,
+    ...(c.localCarregamentoId ? [c.localCarregamentoId] : []),
     ...paradas.filter((p) => p.fase === "APOS_CARREGAMENTO").map((p) => p.localId),
     c.portoEntregaId,
   ];

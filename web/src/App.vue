@@ -281,6 +281,7 @@ function alternarSecao(nome) {
           <router-link to="/cadastros/regioes">Regiões</router-link>
           <router-link to="/locais">Locais</router-link>
           <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>
+          <router-link to="/tipos-operacao">Tipo de Operação</router-link>
           <router-link to="/cadastros/armadores">Armadores</router-link>
           <router-link to="/cadastros/produtos">Produtos</router-link>
           <router-link to="/cadastros/transportadoras">Transportadoras</router-link>

@@ -12,6 +12,7 @@ import { painelRouter } from "./routes/painel.js";
 import { alertasRouter } from "./routes/alertas.js";
 import { custosRouter } from "./routes/custos.js";
 import { locaisRouter, rotasRouter, tiposLocalRouter } from "./routes/locais.js";
+import { tiposOperacaoRouter } from "./routes/tiposOperacao.js";
 import { etiquetasRouter } from "./routes/etiquetas.js";
 import { qrRouter } from "./routes/qr.js";
 import { posicaoRouter } from "./routes/posicao.js";
@@ -54,6 +55,7 @@ export function criarApp() {
   app.use("/api/custos", custosRouter);
   app.use("/api/locais", locaisRouter);
   app.use("/api/tipos-local", tiposLocalRouter);
+  app.use("/api/tipos-operacao", tiposOperacaoRouter);
   app.use("/api/rotas", rotasRouter);
   app.use("/api/etiquetas", etiquetasRouter);
   app.use("/api/qr", qrRouter);

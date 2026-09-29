@@ -56,6 +56,14 @@ export const ROTULO_FUNCAO_LOCAL = {
 };
 export const ROTULO_POSICAO_PARADA = { ANTES_CARREGAMENTO: "Antes do ponto de carregamento", APOS_CARREGAMENTO: "Depois do ponto de carregamento" };
 export const ehRetiradaEntrega = (l) => l?.tipo?.funcao === "RETIRADA_ENTREGA";
+// Local serve para o campo do trajeto conforme a regra do Tipo de Operação (c.regrasLocal):
+// null = o fluxo não usa o campo; { tipoLocalId } = só esse tipo; { funcao } = essa função; {} = qualquer.
+export function atendeRegraLocal(l, regra) {
+  if (regra === null || l?.tipo?.funcao === "PARADA") return false;
+  if (!regra) return true;
+  if (regra.tipoLocalId) return l.tipo.id === regra.tipoLocalId;
+  return !regra.funcao || l.tipo.funcao === regra.funcao;
+}
 
 // Minutos desde 00:00 ↔ "HH:MM" (janela de rodagem nas Configurações).
 export const minutosParaHora = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;

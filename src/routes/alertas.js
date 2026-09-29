@@ -9,7 +9,7 @@ import { SELECT_LOCAIS_ETAPAS, comRotulosEtapa } from "../lib/tiposLocal.js";
 export const alertasRouter = Router();
 
 const INCLUDE_CONTAINER = {
-  container: { select: { id: true, numero: true, status: true, grupo: { select: { cliente: true, fabrica: true } }, ...SELECT_LOCAIS_ETAPAS } },
+  container: { select: { id: true, numero: true, status: true, fluxo: true, grupo: { select: { cliente: true, fabrica: true } }, ...SELECT_LOCAIS_ETAPAS } },
 };
 const serializarAlerta = (a) => ({ ...a, container: comRotulosEtapa(a.container) });
 

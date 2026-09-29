@@ -4,6 +4,7 @@
 import { prisma } from "./prisma.js";
 import { percentil } from "./estimativa.js";
 import { ordenarParadas, tempoParadaDoLocal, SELECT_LOCAL_PARADA } from "./rotas.js";
+import { temOperacao } from "./fluxo.js";
 
 const HORA = 60 * 60 * 1000;
 const JANELA_HISTORICO_DIAS = 180;
@@ -77,11 +78,11 @@ function perna(origemId, destinoId, paradas, km) {
 // containers: precisam de id, portoRetiradaId, localCarregamentoId, portoEntregaId, metaEstadiaHoras.
 // As paradas do trajeto (ParadaContainer) são lidas aqui mesmo.
 export async function montarContextos(containers, config) {
-  const comTrajeto = containers.filter((c) => c.portoRetiradaId && c.localCarregamentoId && c.portoEntregaId);
+  const comTrajeto = containers.filter((c) => c.portoRetiradaId && (c.localCarregamentoId || !temOperacao(c)) && c.portoEntregaId);
   const paradas = await paradasPorContainer(comTrajeto.map((c) => c.id));
   const ids = new Set();
   for (const c of comTrajeto) {
-    [c.portoRetiradaId, c.localCarregamentoId, c.portoEntregaId].forEach((i) => ids.add(i));
+    [c.portoRetiradaId, c.localCarregamentoId, c.portoEntregaId].filter(Boolean).forEach((i) => ids.add(i));
     (paradas.get(c.id) ?? []).forEach((p) => ids.add(p.localId));
   }
   const listaIds = [...ids];
@@ -91,7 +92,7 @@ export async function montarContextos(containers, config) {
       ? prisma.distanciaRota.findMany({ where: { origemId: { in: listaIds }, destinoId: { in: listaIds } }, orderBy: { calculadoEm: "asc" } })
       : [],
     listaIds.length ? prisma.local.findMany({ where: { id: { in: listaIds } }, select: { id: true, filaHoras: true } }) : [],
-    tempoNaFabricaPorLocal([...new Set(comTrajeto.map((c) => c.localCarregamentoId))]),
+    tempoNaFabricaPorLocal([...new Set(comTrajeto.map((c) => c.localCarregamentoId).filter(Boolean))]),
   ]);
   // Ordenado por data: o mais recente de cada par (em qualquer sentido) prevalece.
   const km = new Map(distancias.map((d) => [chavePar(d.origemId, d.destinoId), { km: Number(d.distanciaKm), fonte: d.fonte }]));
@@ -100,6 +101,8 @@ export async function montarContextos(containers, config) {
   const contextos = new Map();
   for (const c of containers) {
     const lista = paradas.get(c.id) ?? [];
+    // Fluxo sem local de operação: uma perna só, retirada → paradas → entrega.
+    const direto = !temOperacao(c) && c.portoRetiradaId && c.portoEntregaId ? perna(c.portoRetiradaId, c.portoEntregaId, lista, km) : null;
     const ida = c.portoRetiradaId && c.localCarregamentoId
       ? perna(c.portoRetiradaId, c.localCarregamentoId, lista.filter((p) => p.fase === "ANTES_CARREGAMENTO"), km) : null;
     const volta = c.localCarregamentoId && c.portoEntregaId
@@ -115,6 +118,10 @@ export async function montarContextos(containers, config) {
       trechosIda: ida?.trechos ?? [],
       paradasVolta: volta?.paradas ?? [],
       trechosVolta: volta?.trechos ?? [],
+      kmDireto: direto?.km ?? null,
+      fonteDireto: direto?.fonte ?? null,
+      paradasDireto: direto?.paradas ?? [],
+      trechosDireto: direto?.trechos ?? [],
       filaEntregaHoras: fila.get(c.portoEntregaId) ?? config.filaPortoHorasPadrao,
       tempoFabricaHoras: historico?.horas ?? c.metaEstadiaHoras,
       fonteTempoFabrica: historico ? "HISTORICO" : "META",

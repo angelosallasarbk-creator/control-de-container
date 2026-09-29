@@ -55,6 +55,18 @@ enum FuncaoLocal {
   PARADA // ponto intermediário do trajeto (ex.: Ponto Fiscal): tempo de parada; passagem registrada
 }
 
+// Ação de cada etapa do fluxo de um Tipo de Operação. Cada ação (menos PASSAGEM) corresponde a um
+// status do container; PASSAGEM vira um ponto de parada do trajeto (ParadaContainer).
+enum AcaoEtapa {
+  COLETA // → COLETADO
+  CHEGADA // → NA_FABRICA (chegada ao local de operação)
+  INICIO_OPERACAO // → EM_OPERACAO (ovação/desova)
+  LIBERACAO // → LIBERADO
+  SAIDA // → SAIU_FABRICA
+  PASSAGEM // ponto de parada
+  ENTREGA // → ENTREGUE_PORTO
+}
+
 // Onde um ponto de parada fica no trajeto, em relação ao ponto de carregamento.
 enum PosicaoParada {
   ANTES_CARREGAMENTO
@@ -152,16 +164,51 @@ model GrupoOperacao {
 // Os rótulos dão nome às etapas do container que acontecem nesse tipo de local
 // (ex.: "Coleta ferroviária"); só os da função do tipo são usados.
 model TipoLocal {
-  id            Int         @id @default(autoincrement())
-  nome          String      @unique
+  id            Int          @id @default(autoincrement())
+  nome          String       @unique
   funcao        FuncaoLocal
   rotuloColeta  String? // RETIRADA_ENTREGA
   rotuloEntrega String? // RETIRADA_ENTREGA
   rotuloChegada String? // CARREGAMENTO
   rotuloSaida   String? // CARREGAMENTO
-  ativo         Boolean     @default(true)
-  criadoEm      DateTime    @default(now())
+  ativo         Boolean      @default(true)
+  criadoEm      DateTime     @default(now())
   locais        Local[]
+  etapasFluxo   EtapaFluxo[]
+}
+
+// Tipo de Operação (Exportação padrão, Coleta de cheio, Importação, Transferência…): define o fluxo
+// de etapas do container. O fluxo é copiado para Container.fluxo na criação do container.
+model TipoOperacao {
+  id             Int             @id @default(autoincrement())
+  nome           String          @unique
+  descricao      String?
+  ativo          Boolean         @default(true)
+  padrao         Boolean         @default(false) // usado quando o container não informa o tipo
+  // Etapas que abrem e fecham o free time do armador (demurrage).
+  freeTimeInicio StatusContainer @default(COLETADO)
+  freeTimeFim    StatusContainer @default(ENTREGUE_PORTO)
+  criadoEm       DateTime        @default(now())
+  etapas         EtapaFluxo[]
+  containers     Container[]
+}
+
+// Etapa do fluxo de um Tipo de Operação, em ordem. O local pode ser restrito por função
+// (ex.: qualquer porto/terminal) ou por um tipo de local específico, com um local sugerido.
+model EtapaFluxo {
+  id              Int          @id @default(autoincrement())
+  tipoOperacaoId  Int
+  tipoOperacao    TipoOperacao @relation(fields: [tipoOperacaoId], references: [id], onDelete: Cascade)
+  ordem           Int
+  acao            AcaoEtapa
+  nome            String? // nome livre da etapa (ex.: "Coleta do cheio na fábrica")
+  funcaoLocal     FuncaoLocal?
+  tipoLocalId     Int?
+  tipoLocal       TipoLocal?   @relation(fields: [tipoLocalId], references: [id])
+  localSugeridoId Int?
+  localSugerido   Local?       @relation("LocalSugeridoEtapa", fields: [localSugeridoId], references: [id])
+
+  @@index([tipoOperacaoId])
 }
 
 // Ponto físico do trajeto; o tipo define se é carregamento ou retirada/entrega.
@@ -189,6 +236,7 @@ model Local {
   distanciasOrigem  DistanciaRota[]   @relation("Origem")
   distanciasDestino DistanciaRota[]   @relation("Destino")
   paradas           ParadaContainer[]
+  etapasSugeridas   EtapaFluxo[]      @relation("LocalSugeridoEtapa")
 
   @@index([tipoId])
 }
@@ -256,6 +304,11 @@ model Container {
   armador             Armador         @relation(fields: [armadorId], references: [id])
   produtoId           Int?
   produto             Produto?        @relation(fields: [produtoId], references: [id])
+  // Tipo de Operação e cópia do seu fluxo na criação (etapas, nomes, free time, regras de local).
+  // fluxo vazio = fluxo de exportação de sempre (containers anteriores à v2.0).
+  tipoOperacaoId      Int?
+  tipoOperacao        TipoOperacao?   @relation(fields: [tipoOperacaoId], references: [id])
+  fluxo               Json?
   // Trajeto: porto de retirada do vazio → local de carregamento → porto de entrega do cheio.
   portoRetiradaId     Int?
   portoRetirada       Local?          @relation("PortoRetirada", fields: [portoRetiradaId], references: [id])

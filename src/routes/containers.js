@@ -16,13 +16,15 @@ import { resumoRastreamento, solicitarPosicaoManual } from "../lib/rastreamento.
 import { gerarModelo, lerPlanilha } from "../lib/importacaoContainers.js";
 import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { SELECT_PARADA, serializarParadas, validarTrajeto, gravarTrajeto, registrarPassagem } from "../lib/trajeto.js";
+import { etapasDoContainer, regrasDeLocal, fluxoDoTipo, motivoLocalForaDaRegra, SELECT_TIPO_OPERACAO } from "../lib/fluxo.js";
 import { Prisma } from "@prisma/client";
 
 export const containersRouter = Router();
 
 export const TIPOS = ["DRY_20", "DRY_40", "HC_40", "REEFER_20", "REEFER_40"];
 
-// Sequência do processo de exportação e o campo de data que cada etapa preenche.
+// Sequência do processo de exportação e o campo de data que cada etapa preenche. Cada container
+// segue o fluxo do seu Tipo de Operação (lib/fluxo.js), que usa estas etapas (ou parte delas).
 export const FLUXO = ["PROGRAMADO", "COLETADO", "NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA", "ENTREGUE_PORTO"];
 export const CAMPO_DATA = {
   COLETADO: "coletadoEm",
@@ -51,6 +53,7 @@ const SELECT_LOCAL = { select: { id: true, nome: true, tipo: SELECT_TIPO, cidade
 const INCLUDE_BASICO = {
   grupo: true, armador: true, produto: true,
   portoRetirada: SELECT_LOCAL, localCarregamento: SELECT_LOCAL, portoEntrega: SELECT_LOCAL,
+  tipoOperacao: { select: { id: true, nome: true } },
   ...CONTAGEM_QR,
 };
 
@@ -63,6 +66,8 @@ const FUNCAO_DO_CAMPO = {
 
 // Nome da etapa conforme o tipo do local (ex.: "Coleta ferroviária"); sem local, o genérico.
 const nomeEtapa = (c, status) => rotulosDasEtapas(c)[status] ?? ROTULO_STATUS[status];
+// Local sempre com o tipo (mesma forma em todo o cache: a chave não distingue os argumentos).
+const COM_TIPO = { include: { tipo: true } };
 // Consulta de cadastro com cache opcional: na importação em lote cada cadastro é lido uma vez só.
 function buscarCadastro(cache, modelo, id, args = {}) {
   if (!cache) return prisma[modelo].findUnique({ where: { id }, ...args });
@@ -71,18 +76,25 @@ function buscarCadastro(cache, modelo, id, args = {}) {
   return cache.get(chave);
 }
 
-export async function validarLocais(corpo, atual = {}, cache = null) {
+// regras: tipo de local exigido em cada campo pelo fluxo do Tipo de Operação (padrão: o do container).
+export async function validarLocais(corpo, atual = {}, cache = null, regras = regrasDeLocal(atual)) {
   const dados = {};
-  for (const [campo, { funcao, rotulo, exemplo }] of Object.entries(FUNCAO_DO_CAMPO)) {
+  for (const [campo, { rotulo, exemplo }] of Object.entries(FUNCAO_DO_CAMPO)) {
     if (!(campo in corpo)) continue;
     if (corpo[campo] === null || corpo[campo] === "") {
       dados[campo] = null;
       continue;
     }
     const localId = validarId(corpo[campo], rotulo);
-    const local = await buscarCadastro(cache, "local", localId, { include: { tipo: true } });
+    const local = await buscarCadastro(cache, "local", localId, COM_TIPO);
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
-    if (local.tipo.funcao !== funcao) throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome}; escolha um local de ${ROTULO_FUNCAO[funcao].toLowerCase()} (ex.: ${exemplo}).`);
+    const regra = regras[campo];
+    const tipoExigido = regra?.tipoLocalId ? await buscarCadastro(cache, "tipoLocal", regra.tipoLocalId) : null;
+    const motivo = motivoLocalForaDaRegra(local, regra, tipoExigido?.nome);
+    if (motivo) {
+      const dica = regra?.funcao && !regra.tipoLocalId ? `; escolha um local de ${ROTULO_FUNCAO[regra.funcao].toLowerCase()}${regra.funcao === FUNCAO_DO_CAMPO[campo].funcao ? ` (ex.: ${exemplo})` : ""}` : "";
+      throw erroHttp(400, `${rotulo}: ${motivo}${dica}.`);
+    }
     if (!local.ativo && atual[campo] !== localId) throw erroHttp(400, `${rotulo}: o local "${local.nome}" está inativo.`);
     dados[campo] = localId;
   }
@@ -311,8 +323,28 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
 
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta");
   if (coletadoEm && coletadoEm.getTime() > Date.now() + FOLGA_FUTURO_MS) throw erroHttp(400, "A coleta não pode estar no futuro.");
-  // Local de carregamento não informado → o local padrão do Ponto de Carregamento.
-  const locais = await validarLocais({ localCarregamentoId: grupo.localId, ...b }, {}, cache);
+
+  // Tipo de Operação (sem informar: o padrão) — o fluxo dele é copiado para o container.
+  const tipoOperacao = await tipoOperacaoDoCadastro(b.tipoOperacaoId, cache);
+  const fluxo = tipoOperacao ? fluxoDoTipo(tipoOperacao) : null;
+  const regras = regrasDeLocal({ fluxo });
+  // Locais não informados: os sugeridos no fluxo; carregamento = o sugerido ou o local do Ponto de
+  // Carregamento, só se o fluxo tiver local de operação.
+  const sugeridos = Object.fromEntries(Object.entries(fluxo?.sugeridos ?? {}).filter(([, v]) => v));
+  // O local do Ponto de Carregamento só entra se atender ao tipo de local exigido pelo fluxo.
+  const localDoGrupo = grupo.localId ? await buscarCadastro(cache, "local", grupo.localId, COM_TIPO) : null;
+  const grupoServe = localDoGrupo && !motivoLocalForaDaRegra(localDoGrupo, regras.localCarregamentoId);
+  const padraoCarregamento = regras.localCarregamentoId === null ? {} : { localCarregamentoId: sugeridos.localCarregamentoId ?? (grupoServe ? grupo.localId : null) };
+  const locais = await validarLocais({ ...sugeridos, ...padraoCarregamento, ...b }, {}, cache, regras);
+  // Passagens do fluxo com local sugerido (ativo) viram paradas do trajeto.
+  if (fluxo) {
+    const passagens = [];
+    for (const p of fluxo.passagens) {
+      const local = p.localId ? await buscarCadastro(cache, "local", p.localId, COM_TIPO) : null;
+      if (local?.ativo) passagens.push(p);
+    }
+    fluxo.passagens = passagens;
+  }
 
   const dados = {
     numero,
@@ -321,6 +353,8 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
     armadorId,
     produtoId,
     ...locais,
+    tipoOperacaoId: tipoOperacao?.id ?? null,
+    fluxo: fluxo ?? Prisma.DbNull,
     booking: texto(b.booking, "Booking", { max: 60 }),
     lacre: texto(b.lacre, "Lacre", { max: 60 }),
     navio: texto(b.navio, "Navio", { max: 120 }),
@@ -348,6 +382,26 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
   return dados;
 }
 
+// Tipo de Operação informado (ativo) ou o padrão. Sem nenhum cadastrado: null (fluxo de sempre).
+async function tipoOperacaoDoCadastro(valor, cache) {
+  if (valor !== undefined && valor !== null && valor !== "") {
+    const tipo = await buscarCadastro(cache, "tipoOperacao", validarId(valor, "Tipo de operação"), SELECT_TIPO_OPERACAO);
+    if (!tipo?.ativo) throw erroHttp(400, "Tipo de operação inexistente ou inativo.");
+    return tipo;
+  }
+  const chave = "tipoOperacao:padrao";
+  const buscar = () => prisma.tipoOperacao.findFirst({ where: { padrao: true, ativo: true }, ...SELECT_TIPO_OPERACAO });
+  if (!cache) return buscar();
+  if (!cache.has(chave)) cache.set(chave, buscar());
+  return cache.get(chave);
+}
+
+// Paradas iniciais do trajeto: as passagens do fluxo do Tipo de Operação (com local sugerido).
+const paradasDoFluxo = (c) => {
+  const ordem = { ANTES_CARREGAMENTO: 0, APOS_CARREGAMENTO: 0 };
+  return (c.fluxo?.passagens ?? []).filter((p) => p.localId).map((p) => ({ containerId: c.id, localId: p.localId, fase: p.fase, ordem: ordem[p.fase]++ }));
+};
+
 // Grava o container novo (dentro da transação de quem chama) com os eventos e o log.
 export async function gravarNovoContainer(tx, dados, usuarioEmail, descricao = null) {
   const { numero, coletadoEm } = dados;
@@ -355,6 +409,8 @@ export async function gravarNovoContainer(tx, dados, usuarioEmail, descricao = n
   const ativo = await tx.container.findFirst({ where: { numero, status: { notIn: STATUS_ENCERRADOS } } });
   if (ativo) throw erroHttp(409, `O container ${numero} já está ativo no sistema (status: ${ROTULO_STATUS[ativo.status]}).`);
   const c = await tx.container.create({ data: dados });
+  const paradas = paradasDoFluxo(c);
+  if (paradas.length) await tx.paradaContainer.createMany({ data: paradas });
   await tx.eventoContainer.create({
     data: { containerId: c.id, statusDe: null, statusPara: "PROGRAMADO", ocorridoEm: c.criadoEm, usuarioEmail },
   });
@@ -382,6 +438,8 @@ export async function gravarContainersEmLote(tx, lista, usuarioEmail, descricao)
   const livres = lista.filter((d) => !ativos.has(d.numero));
   if (!livres.length) return { criados: [], recusados: [...ativos] };
   const criados = await tx.container.createManyAndReturn({ data: livres });
+  const paradas = criados.flatMap(paradasDoFluxo);
+  if (paradas.length) await tx.paradaContainer.createMany({ data: paradas });
   await tx.eventoContainer.createMany({
     data: criados.flatMap((c) => [
       { containerId: c.id, statusDe: null, statusPara: "PROGRAMADO", ocorridoEm: c.criadoEm, usuarioEmail },
@@ -514,9 +572,10 @@ containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asy
   await prisma.$transaction(async (tx) => {
     const c = await tx.container.findUnique({ where: { id: containerId }, include: SELECT_LOCAIS_ETAPAS });
     if (!c) throw erroHttp(404, "Container não encontrado.");
-    const posicao = FLUXO.indexOf(c.status);
-    if (posicao === -1 || posicao === FLUXO.length - 1) throw erroHttp(409, "Este container já está encerrado.");
-    const proximo = FLUXO[posicao + 1];
+    const etapas = etapasDoContainer(c);
+    const posicao = etapas.indexOf(c.status);
+    if (posicao === -1 || posicao === etapas.length - 1) throw erroHttp(409, "Este container já está encerrado.");
+    const proximo = etapas[posicao + 1];
     // O front envia a etapa esperada: se outra pessoa avançou antes, evita pular uma etapa sem querer.
     if (b.statusPara && b.statusPara !== proximo) {
       throw erroHttp(409, `O container já mudou de etapa (agora: ${nomeEtapa(c, c.status)}). Atualize a tela.`);

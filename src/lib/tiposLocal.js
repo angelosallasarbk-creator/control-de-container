@@ -25,13 +25,14 @@ export const SELECT_LOCAIS_ETAPAS = {
 };
 
 // Troca os locais parciais (só com o tipo, de SELECT_LOCAIS_ETAPAS) por "rotulosEtapa".
-export function comRotulosEtapa({ portoRetirada, localCarregamento, portoEntrega, ...c }) {
-  return { ...c, rotulosEtapa: rotulosDasEtapas({ portoRetirada, localCarregamento, portoEntrega }) };
+export function comRotulosEtapa({ portoRetirada, localCarregamento, portoEntrega, fluxo, ...c }) {
+  return { ...c, rotulosEtapa: rotulosDasEtapas({ portoRetirada, localCarregamento, portoEntrega, fluxo }) };
 }
 
 /**
  * Nome das etapas que acontecem num local, conforme o tipo dele (ex.: COLETADO → "Coleta
- * ferroviária"). Etapa sem local definido fica de fora: a tela usa o nome genérico.
+ * ferroviária"). Etapa sem local definido fica de fora: a tela usa o nome genérico. O nome dado à
+ * etapa no fluxo do Tipo de Operação (c.fluxo.nomes, ex.: "Devolução do vazio") prevalece.
  */
 export function rotulosDasEtapas(c) {
   const r = {
@@ -40,5 +41,5 @@ export function rotulosDasEtapas(c) {
     SAIU_FABRICA: c.localCarregamento?.tipo?.rotuloSaida,
     ENTREGUE_PORTO: c.portoEntrega?.tipo?.rotuloEntrega,
   };
-  return Object.fromEntries(Object.entries(r).filter(([, v]) => v));
+  return { ...Object.fromEntries(Object.entries(r).filter(([, v]) => v)), ...(c.fluxo?.nomes ?? {}) };
 }

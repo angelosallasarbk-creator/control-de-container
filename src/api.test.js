@@ -1923,3 +1923,247 @@ test("v1.4: categoria do produto — Carga Seca sem temperatura (cadastro, ficha
   assert.equal((await agentes.OPERADOR.post(`/api/qr/${e2.token}/vincular`).send({ numero: "SECU1400002" })).status, 400, "refrigerado exige temperatura");
   for (const id of [c.body.id, r.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v1.4" });
 });
+
+test("tipos de operação (v2.0): padrões da migração, cadastro do fluxo e travas", async () => {
+  const lista = (await agentes.VISUALIZACAO.get("/api/tipos-operacao")).body;
+  assert.deepEqual(lista.map((t) => t.nome), ["Exportação padrão", "Coleta de cheio", "Importação", "Transferência"], "padrão primeiro, depois por nome");
+  const tipo = (nome) => lista.find((t) => t.nome === nome);
+  assert.equal(tipo("Exportação padrão").padrao, true);
+  assert.deepEqual(tipo("Exportação padrão").etapas.map((e) => e.acao), ["COLETA", "CHEGADA", "INICIO_OPERACAO", "LIBERACAO", "SAIDA", "ENTREGA"]);
+  assert.deepEqual(tipo("Coleta de cheio").etapas.map((e) => [e.acao, e.funcaoLocal]), [["COLETA", "CARREGAMENTO"], ["ENTREGA", "RETIRADA_ENTREGA"]]);
+  assert.equal(tipo("Importação").etapas.at(-1).nome, "Devolução do vazio");
+  ids.tipoOp = Object.fromEntries(lista.map((t) => [t.nome, t.id]));
+
+  // Containers criados antes (sem informar o tipo) ficaram na Exportação padrão, fluxo completo.
+  const antigo = (await agentes.ADMIN.get(`/api/containers/${ids.reefer}`)).body;
+  assert.equal(antigo.tipoOperacao?.nome, "Exportação padrão");
+  assert.deepEqual(antigo.fluxo, ["PROGRAMADO", "COLETADO", "NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA", "ENTREGUE_PORTO"]);
+  assert.equal(antigo.temOperacao, true);
+
+  const coleta = { acao: "COLETA", funcaoLocal: "RETIRADA_ENTREGA" };
+  const entrega = { acao: "ENTREGA", funcaoLocal: "RETIRADA_ENTREGA" };
+  const novo = (etapas, extra = {}) => agentes.SUPERVISOR.post("/api/tipos-operacao").send({ nome: "Cross-docking", etapas, ...extra });
+  assert.equal((await agentes.OPERADOR.post("/api/tipos-operacao").send({ nome: "X", etapas: [coleta, entrega] })).status, 403, "operador não cadastra");
+  assert.equal((await novo([entrega, coleta])).status, 400, "começa pela coleta");
+  assert.equal((await novo([coleta, { acao: "CHEGADA" }, entrega])).status, 400, "chegada sem saída");
+  assert.equal((await novo([coleta, { acao: "SAIDA" }, { acao: "CHEGADA" }, entrega])).status, 400, "fora de ordem");
+  assert.equal((await novo([coleta, { acao: "CHEGADA" }, { acao: "PASSAGEM" }, { acao: "SAIDA" }, entrega])).status, 400, "passagem dentro do local de operação");
+  assert.equal((await novo([coleta, entrega], { freeTimeInicio: "ENTREGUE_PORTO", freeTimeFim: "COLETADO" })).status, 400, "free time invertido");
+  assert.equal((await novo([coleta, entrega], { freeTimeInicio: "NA_FABRICA" })).status, 400, "free time em etapa fora do fluxo");
+  assert.equal((await novo([coleta, { ...entrega, localSugeridoId: ids.rioVerde }])).status, 400, "local sugerido do tipo errado");
+  assert.equal((await agentes.SUPERVISOR.post("/api/tipos-operacao").send({ nome: "Importação", etapas: [coleta, entrega] })).status, 409, "nome repetido");
+
+  // Cross-docking: sem ovação/desova (chegada → saída), free time só a partir da chegada.
+  const cross = await novo(
+    [{ ...coleta, localSugeridoId: ids.santos }, { acao: "CHEGADA", nome: "Chegada no CD", tipoLocalId: ids.tipo["Armazém"], localSugeridoId: ids.cubatao }, { acao: "SAIDA", nome: "Saída do CD" }, { ...entrega, tipoLocalId: ids.tipo["Terminal Ferroviário"] }],
+    { freeTimeInicio: "NA_FABRICA", freeTimeFim: "ENTREGUE_PORTO" }
+  );
+  assert.equal(cross.status, 201, JSON.stringify(cross.body));
+  assert.equal(cross.body.etapas[1].funcaoLocal, "CARREGAMENTO", "tipo específico define a função");
+  ids.tipoOp.cross = cross.body.id;
+
+  // Padrão: não desmarca nem desativa direto; trocar o padrão desmarca o anterior.
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${ids.tipoOp["Exportação padrão"]}`).send({ padrao: false })).status, 409);
+  assert.equal((await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${ids.tipoOp["Exportação padrão"]}`).send({ ativo: false })).status, 409);
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/tipos-operacao/${ids.tipoOp["Exportação padrão"]}`)).status, 409);
+  const troca = await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${ids.tipoOp.cross}`).send({ padrao: true });
+  assert.equal(troca.body.padrao, true);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/tipos-operacao")).body.filter((t) => t.padrao).length, 1, "um padrão só");
+  await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${ids.tipoOp["Exportação padrão"]}`).send({ padrao: true });
+
+  // Excluir: só sem containers.
+  const sobra = await agentes.SUPERVISOR.post("/api/tipos-operacao").send({ nome: "Sem uso", etapas: [coleta, entrega] });
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/tipos-operacao/${sobra.body.id}`)).status, 204);
+});
+
+test("tipos de operação (v2.0): container segue o fluxo do tipo (etapas, locais, estadia, free time, paradas)", async () => {
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { tipo: "DRY_40", grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), confirmarDigito: true };
+  const criar = (corpo) => agentes.OPERADOR.post("/api/containers").send({ ...cad, ...corpo });
+  const avancar = async (id) => {
+    const r = await agentes.OPERADOR.post(`/api/containers/${id}/avancar`).send({});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body;
+  };
+  const criados = [];
+
+  // Coleta de cheio: coleta na fábrica/armazém, entrega no porto; sem local de carregamento.
+  assert.equal((await criar({ numero: "COLU2000001", tipoOperacaoId: ids.tipoOp["Coleta de cheio"], portoRetiradaId: ids.santos })).status, 400, "retirada precisa ser fábrica/armazém");
+  assert.equal((await criar({ numero: "COLU2000001", tipoOperacaoId: ids.tipoOp["Coleta de cheio"], portoRetiradaId: ids.rioVerde, localCarregamentoId: ids.cubatao })).status, 400, "não usa local de carregamento");
+  const cheio = await criar({ numero: "COLU2000001", tipoOperacaoId: ids.tipoOp["Coleta de cheio"], portoRetiradaId: ids.rioVerde, portoEntregaId: ids.santos });
+  assert.equal(cheio.status, 201, JSON.stringify(cheio.body));
+  criados.push(cheio.body.id);
+  assert.deepEqual(cheio.body.fluxo, ["PROGRAMADO", "COLETADO", "ENTREGUE_PORTO"]);
+  assert.equal(cheio.body.temOperacao, false);
+  assert.equal(cheio.body.localCarregamentoId, null, "Ponto de Carregamento não vira local de carregamento");
+  assert.equal(cheio.body.rotulosEtapa.COLETADO, "Coleta do cheio");
+  assert.equal(cheio.body.situacao.previsao.disponivel, true, JSON.stringify(cheio.body.situacao.previsao));
+  assert.equal(cheio.body.situacao.previsao.previsaoChegadaFabrica, null, "sem tempo de fábrica");
+  assert.ok(cheio.body.situacao.previsao.trechos.every((t) => !t.etapa.includes("carregamento")), "uma perna só, retirada → entrega");
+  const coletado = await avancar(cheio.body.id);
+  assert.equal(coletado.status, "COLETADO");
+  assert.ok(coletado.situacao.demurrage, "free time conta da coleta");
+  assert.equal(coletado.situacao.estadia, null);
+  assert.equal((await avancar(cheio.body.id)).status, "ENTREGUE_PORTO", "coletado → entrega direto");
+  // Trajeto sem carregamento.
+  const transf = await criar({ numero: "TRFU2000002", tipoOperacaoId: ids.tipoOp["Transferência"], portoRetiradaId: ids.cubatao, portoEntregaId: ids.ferro });
+  assert.equal(transf.status, 201, "transferência aceita qualquer local");
+  criados.push(transf.body.id);
+  const pontos = (extra = []) => [{ papel: "RETIRADA", localId: ids.cubatao }, ...extra, { papel: "ENTREGA", localId: ids.santos }];
+  assert.equal((await agentes.OPERADOR.put(`/api/containers/${transf.body.id}/trajeto`).send({ pontos: pontos([{ papel: "CARREGAMENTO", localId: ids.rioVerde }]) })).status, 400, "sem carregamento neste tipo");
+  const rota = await agentes.OPERADOR.put(`/api/containers/${transf.body.id}/trajeto`).send({ pontos: pontos() });
+  assert.equal(rota.status, 200, JSON.stringify(rota.body));
+  assert.equal(rota.body.portoEntregaId, ids.santos);
+
+  // Cross-docking: locais sugeridos, avanço pula ovação/liberação, free time a partir da chegada.
+  const cd = await criar({ numero: "CRSU2000003", tipoOperacaoId: ids.tipoOp.cross, portoEntregaId: ids.ferro });
+  assert.equal(cd.status, 201, JSON.stringify(cd.body));
+  criados.push(cd.body.id);
+  assert.equal(cd.body.portoRetiradaId, ids.santos, "retirada sugerida no fluxo");
+  assert.equal(cd.body.localCarregamentoId, ids.cubatao, "carregamento: o sugerido no fluxo");
+  assert.equal((await criar({ numero: "CRSU2000004", tipoOperacaoId: ids.tipoOp.cross, portoEntregaId: ids.santos })).status, 400, "entrega precisa ser Terminal Ferroviário");
+  assert.deepEqual(cd.body.fluxo, ["PROGRAMADO", "COLETADO", "NA_FABRICA", "SAIU_FABRICA", "ENTREGUE_PORTO"]);
+  assert.equal(cd.body.rotulosEtapa.NA_FABRICA, "Chegada no CD");
+  assert.equal((await avancar(cd.body.id)).situacao.demurrage, null, "free time ainda não começou (só na chegada)");
+  const noCd = await avancar(cd.body.id);
+  assert.equal(noCd.status, "NA_FABRICA");
+  assert.ok(noCd.situacao.demurrage && noCd.situacao.estadia, "chegada abre free time e estadia");
+  assert.equal((await avancar(cd.body.id)).status, "SAIU_FABRICA", "sem ovação/liberação no fluxo");
+  assert.equal((await agentes.SUPERVISOR.delete(`/api/tipos-operacao/${ids.tipoOp.cross}`)).status, 409, "tipo com containers não é excluído");
+
+  // Passagem do fluxo com local sugerido vira parada do trajeto.
+  const pf = await agentes.SUPERVISOR.post("/api/locais").send({ nome: "Posto Fiscal V20", tipoId: ids.tipo["Ponto Fiscal"], latitude: -23.5, longitude: -46.9, tempoParadaHoras: 1, posicaoParada: "ANTES_CARREGAMENTO" });
+  assert.equal(pf.status, 201, JSON.stringify(pf.body));
+  const comParada = await agentes.SUPERVISOR.post("/api/tipos-operacao").send({
+    nome: "Coleta com fiscal",
+    etapas: [{ acao: "COLETA", funcaoLocal: "CARREGAMENTO" }, { acao: "PASSAGEM", localSugeridoId: pf.body.id }, { acao: "ENTREGA", funcaoLocal: "RETIRADA_ENTREGA" }],
+  });
+  assert.equal(comParada.status, 201, JSON.stringify(comParada.body));
+  const cp = await criar({ numero: "FSCU2000005", tipoOperacaoId: comParada.body.id, portoRetiradaId: ids.rioVerde, portoEntregaId: ids.santos });
+  assert.equal(cp.status, 201, JSON.stringify(cp.body));
+  criados.push(cp.body.id);
+  assert.deepEqual(cp.body.paradas.map((p) => [p.nome, p.fase]), [["Posto Fiscal V20", "ANTES_CARREGAMENTO"]]);
+  assert.ok(cp.body.situacao.previsao.paradas.some((m) => m.nome === "Posto Fiscal V20"), "parada entra na previsão");
+
+  // Importação: nomes do fluxo nas etapas.
+  const imp = await criar({ numero: "IMPU2000006", tipoOperacaoId: ids.tipoOp["Importação"], portoRetiradaId: ids.santos, portoEntregaId: ids.santos });
+  assert.equal(imp.status, 201, JSON.stringify(imp.body));
+  criados.push(imp.body.id);
+  assert.equal(imp.body.tipoOperacao.nome, "Importação");
+  assert.equal(imp.body.rotulosEtapa.ENTREGUE_PORTO, "Devolução do vazio");
+  assert.equal(imp.body.rotulosEtapa.EM_OPERACAO, "Em desova");
+  assert.equal((await criar({ numero: "IMPU2000007", tipoOperacaoId: 99999 })).status, 400, "tipo inexistente");
+
+  // Mudar o fluxo do tipo não altera containers já criados.
+  await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${ids.tipoOp["Importação"]}`).send({ etapas: [{ acao: "COLETA" }, { acao: "ENTREGA", nome: "Outro nome" }] });
+  assert.equal((await agentes.ADMIN.get(`/api/containers/${imp.body.id}`)).body.rotulosEtapa.ENTREGUE_PORTO, "Devolução do vazio");
+
+  for (const id of criados) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v2.0" });
+});
+
+test("tipos de operação (v2.0-B): QR do transportador, portaria e Home seguem o fluxo", async () => {
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { tipo: "DRY_40", grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), confirmarDigito: true };
+  const tr = await logar("transportador@teste.local");
+  const po = await logar("portaria@teste.local");
+  const cheioId = ids.tipoOp["Coleta de cheio"];
+  const criados = [];
+
+  // Opções do QR: listas completas + tipos de operação (a tela filtra pela regra do fluxo).
+  const op = (await tr.get("/api/qr/opcoes/coleta")).body;
+  assert.ok(op.todosLocais.some((l) => l.id === ids.rioVerde && l.tipo.funcao === "CARREGAMENTO"));
+  assert.ok(!op.todosLocais.some((l) => l.tipo.funcao === "PARADA"), "sem pontos de parada");
+  assert.ok(op.tiposOperacao.find((t) => t.nome === "Coleta de cheio").etapas.some((e) => e.acao === "COLETA" && e.funcaoLocal === "CARREGAMENTO"));
+
+  // Container Coleta de cheio programado: coleta pelo QR na fábrica, não no porto.
+  const c = await agentes.ADMIN.post("/api/containers").send({ ...cad, numero: "QRCU2100001", tipoOperacaoId: cheioId, portoRetiradaId: ids.rioVerde, portoEntregaId: ids.santos });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  criados.push(c.body.id);
+  const prog = (await tr.get("/api/qr/opcoes/container/QRCU2100001")).body;
+  assert.equal(prog.tipoOperacao, "Coleta de cheio");
+  assert.equal(prog.temOperacao, false);
+  assert.equal(prog.regrasLocal.localCarregamentoId, null);
+  assert.equal(prog.regrasLocal.portoRetiradaId.funcao, "CARREGAMENTO");
+  const [e1, e2, e3] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 3 })).body.etiquetas;
+  const porto = await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "QRCU2100001", portoRetiradaId: ids.santos });
+  assert.equal(porto.status, 400, "coleta de cheio é na fábrica/armazém");
+  assert.match(porto.body.erro, /fábrica ou armazém/);
+  assert.equal((await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "QRCU2100001", portoRetiradaId: ids.rioVerde, localCarregamentoId: ids.cubatao })).status, 400, "tipo sem local de carregamento");
+  const col = await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "QRCU2100001", portoRetiradaId: ids.rioVerde, portoEntregaId: ids.ferro });
+  assert.equal(col.status, 201, JSON.stringify(col.body));
+  assert.equal(col.body.container.status, "COLETADO");
+  assert.equal(col.body.container.temOperacao, false);
+  assert.deepEqual(col.body.container.trajeto, { portoRetiradaId: ids.rioVerde, localCarregamentoId: null, portoEntregaId: ids.ferro });
+
+  // Cadastro pelo QR escolhendo o tipo de operação.
+  const novo = { tipo: "DRY_40", grupoId: cad.grupoId, armadorId: cad.armadorId, tipoOperacaoId: cheioId };
+  assert.equal((await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "QRCU2100002", confirmarDigito: true, portoRetiradaId: ids.santos, novo })).status, 400, "regra do tipo escolhido");
+  const cadastrou = await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "QRCU2100002", confirmarDigito: true, portoRetiradaId: ids.rioVerde, novo });
+  assert.equal(cadastrou.status, 201, JSON.stringify(cadastrou.body));
+  assert.equal(cadastrou.body.container.tipoOperacao, "Coleta de cheio");
+  criados.push(cadastrou.body.container.id);
+
+  // Portaria: tipo sem local de operação não tem entrada/saída.
+  const transf = await agentes.ADMIN.post("/api/containers").send({ ...cad, numero: "QRCU2100003", tipoOperacaoId: ids.tipoOp["Transferência"] });
+  criados.push(transf.body.id);
+  const recusa = await po.post(`/api/qr/${e3.token}/portaria`).send({ placa: "ABC1D23", numero: "QRCU2100003", movimento: "ENTRADA" });
+  assert.equal(recusa.status, 409);
+  assert.match(recusa.body.erro, /sem entrada\/saída/);
+
+  // Home: seção pela etapa + tipo de operação no card.
+  const painel = (await agentes.ADMIN.get("/api/painel")).body;
+  const noPainel = painel.grupos.flatMap((g) => g.containers).find((x) => x.numero === "QRCU2100001");
+  assert.equal(noPainel.temOperacao, false);
+  assert.equal(noPainel.tipoOperacao, "Coleta de cheio");
+  assert.equal(painel.grupos.flatMap((g) => g.containers).find((x) => x.id === ids.reefer)?.tipoOperacao ?? null, null, "tipo padrão não aparece no card");
+
+  for (const id of criados) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v2.0-B" });
+});
+
+test("tipos de operação (v2.0-B): planilha com a coluna Tipo de Operação", async () => {
+  const ExcelJS = (await import("exceljs")).default;
+  const { calcularDigitoVerificador } = await import("./lib/iso6346.js");
+  const num = (base) => `${base}${calcularDigitoVerificador(base)}`;
+  const binario = (res, cb) => { const partes = []; res.on("data", (x) => partes.push(x)); res.on("end", () => cb(null, Buffer.concat(partes))); };
+  const modelo = await agentes.OPERADOR.get("/api/containers/modelo").buffer(true).parse(binario);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(modelo.body);
+  const ws = wb.getWorksheet("Containers");
+  const cab = ws.getRow(1).values.slice(1);
+  assert.ok(cab.includes("Tipo de Operação"), "coluna nova, opcional");
+  assert.ok(cab.includes("Local de carregamento"), "carregamento sem * (depende do tipo)");
+  const listas = wb.getWorksheet("Listas");
+  const valoresDe = (nome) => listas.getColumn(listas.getRow(1).values.indexOf(nome)).values.slice(2);
+  assert.ok(valoresDe("tiposOperacao").includes("Coleta de cheio"));
+  assert.ok(valoresDe("locais").includes("Fábrica Rio Verde") && valoresDe("locais").includes("Porto de Santos"));
+
+  const col = (titulo) => cab.findIndex((t) => t.replace(" *", "") === titulo) + 1;
+  const linha = (n, v) => { for (const [t, x] of Object.entries(v)) ws.getRow(n).getCell(col(t)).value = x; };
+  const base = {
+    Tipo: "40' Dry", "Ponto de Carregamento": "Planilha SA / Fábrica Upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
+    "Local de entrega": "Porto de Santos", "Coleta programada": "10/10/2026 09:00",
+  };
+  const ok = num("PLCU210001");
+  linha(2, { "Número do container": ok, ...base, "Tipo de Operação": "coleta de cheio", "Local de retirada": "Fábrica Rio Verde" });
+  linha(3, { "Número do container": num("PLCU210002"), ...base, "Tipo de Operação": "Coleta de cheio", "Local de retirada": "Fábrica Rio Verde", "Local de carregamento": "Armazém Cubatão" });
+  linha(4, { "Número do container": num("PLCU210003"), ...base, "Tipo de Operação": "Coleta de cheio", "Local de retirada": "Porto de Santos" });
+  linha(5, { "Número do container": num("PLCU210004"), ...base, "Local de retirada": "Porto de Santos" }); // padrão sem carregamento
+  linha(6, { "Número do container": num("PLCU210005"), ...base, "Tipo de Operação": "Tipo Que Não Existe", "Local de retirada": "Porto de Santos" });
+  const arquivo = Buffer.from(await wb.xlsx.writeBuffer());
+  const enviar = (conf) => agentes.OPERADOR.post(`/api/containers/importar${conf ? "?confirmar=1" : ""}`).set("Content-Type", "application/octet-stream").send(arquivo);
+  const previa = await enviar(false);
+  assert.equal(previa.status, 200, JSON.stringify(previa.body));
+  const erroDa = (n) => previa.body.linhas.find((l) => l.linha === n).erro;
+  assert.equal(erroDa(2), null, "coleta de cheio sem carregamento");
+  assert.match(erroDa(3), /Local de carregamento: o tipo de operação "Coleta de cheio" não usa este local/);
+  assert.match(erroDa(4), /Local de retirada: "Porto de Santos" não é um local de carregamento \(fábrica\/armazém\) \(tipo de operação Coleta de cheio\)/);
+  assert.equal(erroDa(5), "Obrigatório(s) em branco: Local de carregamento.");
+  assert.match(erroDa(6), /Tipo de Operação: "Tipo Que Não Existe" não encontrado/);
+  const conf = await enviar(true);
+  assert.equal(conf.body.importados, 1);
+  const c = await prisma.container.findFirst({ where: { numero: ok }, include: { tipoOperacao: true } });
+  assert.equal(c.tipoOperacao.nome, "Coleta de cheio");
+  assert.equal(c.localCarregamentoId, null);
+  assert.deepEqual(c.fluxo.etapas, ["COLETADO", "ENTREGUE_PORTO"]);
+  await agentes.ADMIN.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste v2.0-B" });
+});

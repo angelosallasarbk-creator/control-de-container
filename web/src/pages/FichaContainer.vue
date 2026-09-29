@@ -6,7 +6,7 @@ import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import {
-  FLUXO, ROTULO_TIPO, ROTULO_ALERTA, rotuloEtapa, acaoEtapa, ehRetiradaEntrega, kmDoCiclo,
+  FLUXO, ROTULO_TIPO, ROTULO_ALERTA, rotuloEtapa, acaoEtapa, atendeRegraLocal, kmDoCiclo,
   fmtDataHora, fmtHoras, fmtKm, fmtFolga, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde,
 } from "../formato.js";
 import GraficoTemperatura from "../components/GraficoTemperatura.vue";
@@ -94,9 +94,11 @@ async function executar(fn, sucesso) {
 }
 
 const encerrado = computed(() => ["ENTREGUE_PORTO", "CANCELADO"].includes(c.value?.status));
+// Etapas do fluxo do Tipo de Operação do container (a API manda; sem ela, o fluxo de exportação).
+const fluxo = computed(() => c.value?.fluxo ?? FLUXO);
 const proximo = computed(() => {
-  const i = FLUXO.indexOf(c.value?.status);
-  return i >= 0 && i < FLUXO.length - 1 ? FLUXO[i + 1] : null;
+  const i = fluxo.value.indexOf(c.value?.status);
+  return i >= 0 && i < fluxo.value.length - 1 ? fluxo.value[i + 1] : null;
 });
 const s = computed(() => c.value?.situacao ?? {});
 const p = computed(() => (s.value.previsao?.disponivel ? s.value.previsao : null));
@@ -236,10 +238,10 @@ const ETA_DA_ETAPA = {
 const minutosEntre = (a, b) => (new Date(a) - new Date(b)) / 60000;
 const etapas = computed(() => {
   if (!c.value) return [];
-  const atual = FLUXO.indexOf(c.value.status);
+  const atual = fluxo.value.indexOf(c.value.status);
   const cancelado = c.value.status === "CANCELADO";
   const agora = new Date();
-  return FLUXO.map((etapa, i) => {
+  return fluxo.value.map((etapa, i) => {
     const realizado = etapa === "PROGRAMADO" ? c.value.criadoEm : c.value[CAMPO_DATA[etapa]];
     const feita = Boolean(realizado) && (cancelado || i <= atual);
     // Sem plano congelado (sem trajeto completo), a coleta programada vale como planejado da coleta.
@@ -335,7 +337,7 @@ const sequenciaTrajeto = computed(() => {
   return [
     { papel: "Retirada", nome: c.value.portoRetirada?.nome },
     ...pa.filter((x) => x.fase === "ANTES_CARREGAMENTO").map((x) => ({ papel: x.tipo ?? "Parada", nome: x.nome, parada: x })),
-    { papel: "Carregamento", nome: c.value.localCarregamento?.nome },
+    ...(c.value.temOperacao === false ? [] : [{ papel: "Carregamento", nome: c.value.localCarregamento?.nome }]),
     ...pa.filter((x) => x.fase === "APOS_CARREGAMENTO").map((x) => ({ papel: x.tipo ?? "Parada", nome: x.nome, parada: x })),
     { papel: "Entrega", nome: c.value.portoEntrega?.nome },
   ];
@@ -404,8 +406,11 @@ function registrarLeitura() {
 // ----- Edição -----
 const ed = reactive({});
 const locais = ref([]);
-const portos = computed(() => locais.value.filter((l) => ehRetiradaEntrega(l) && (l.ativo || l.id === c.value?.portoRetiradaId || l.id === c.value?.portoEntregaId)));
-const carregamentos = computed(() => locais.value.filter((l) => !ehRetiradaEntrega(l) && (l.ativo || l.id === c.value?.localCarregamentoId)));
+// Locais que servem para cada campo conforme o Tipo de Operação (ativos, ou o atual do container).
+const locaisDoCampo = (campo) => computed(() => locais.value.filter((l) => atendeRegraLocal(l, c.value?.regrasLocal?.[campo]) && (l.ativo || l.id === c.value?.[campo])));
+const portos = locaisDoCampo("portoRetiradaId");
+const carregamentos = locaisDoCampo("localCarregamentoId");
+const entregas = locaisDoCampo("portoEntregaId");
 async function abrirEditar() {
   const x = c.value;
   if (!locais.value.length) locais.value = await api.locais().catch(() => []);
@@ -471,6 +476,7 @@ function reconhecido() {
                 <h1 class="numero"><MarcaQr v-if="c.qrVinculado" tamanho="0.85em" />{{ c.numero }}</h1>
                 <span class="chip azul chip-grande">{{ rotuloEtapa(c, c.status) }}</span>
                 <span class="chip chip-grande">{{ ROTULO_TIPO[c.tipo] }}</span>
+                <span v-if="c.tipoOperacao" class="chip chip-grande" title="Tipo de operação">{{ c.tipoOperacao.nome }}</span>
               </div>
               <div class="rota-cab">
                 <template v-if="rota.length">{{ rota.join(" → ") }}</template>
@@ -551,7 +557,7 @@ function reconhecido() {
                 <template v-else><div class="valor">—</div><div class="sub">free time: {{ c.freeTimeDias }} dias</div></template>
               </div>
             </div>
-            <div class="ind">
+            <div v-if="c.temOperacao !== false" class="ind">
               <Icone nome="armazem" />
               <div>
                 <div class="rotulo">Estadia na fábrica (meta)</div>
@@ -672,6 +678,7 @@ function reconhecido() {
             <div class="card">
               <h2>Prazos</h2>
               <dl class="lista-def">
+                <template v-if="c.temOperacao !== false">
                 <dt>Estadia na fábrica</dt>
                 <dd>
                   <template v-if="s.estadia">
@@ -681,6 +688,7 @@ function reconhecido() {
                   </template>
                   <span v-else class="mudo">meta {{ c.metaEstadiaHoras }}h · começa na chegada</span>
                 </dd>
+                </template>
                 <dt>Demurrage</dt>
                 <dd>
                   <template v-if="s.demurrage">
@@ -789,7 +797,7 @@ function reconhecido() {
             <h2 style="margin: 0">Trajeto e previsão</h2>
             <span class="pequeno">
               <strong>{{ c.portoRetirada?.nome ?? "retirada ?" }}</strong> →
-              <strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →
+              <template v-if="c.temOperacao !== false"><strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →</template>
               <strong>{{ c.portoEntrega?.nome ?? "entrega ?" }}</strong>
             </span>
           </div>
@@ -1048,7 +1056,7 @@ function reconhecido() {
               <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
-          <div class="campo">
+          <div v-if="c.temOperacao !== false" class="campo">
             <label>Local de carregamento</label>
             <select v-model="ed.localCarregamentoId">
               <option value="">— não informado —</option>
@@ -1059,7 +1067,7 @@ function reconhecido() {
             <label>Local de entrega (cheio)</label>
             <select v-model="ed.portoEntregaId">
               <option value="">— não informado —</option>
-              <option v-for="l in portos" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+              <option v-for="l in entregas" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
         </div>

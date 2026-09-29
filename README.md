@@ -42,6 +42,32 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
 - **Alertas**: **Risco de demurrage** e **Risco de deadline**. Atenção quando a folga é menor que o limite configurado (padrão 24h); Crítico quando a previsão passa do prazo, já com diárias e custo estimados. Só existem enquanto o prazo real não venceu; depois disso vale o alerta real.
 - Onde aparece: ficha do container (quadro **Trajeto e previsão**, trecho a trecho), simulação ao vivo no **Novo container**, coluna **Previsão** na lista e linha "Previsão" nos blocos da Home.
 
+## Tipo de Operação: fluxo personalizado (v2.0)
+
+Menu **Cadastros → Tipo de Operação**. Cada tipo define o fluxo que o container segue:
+
+- **Etapas** (arrastáveis no editor): Coleta → [Passagens] → Chegada → Início da operação → Liberação → Saída → [Passagens] → Entrega.
+  Coleta e Entrega são obrigatórias; Chegada e Saída vêm juntas (o "local de operação", onde há estadia); Início da operação e
+  Liberação são opcionais; Passagem (ponto de parada) pode entrar em qualquer lugar, menos dentro do local de operação.
+- Cada etapa tem **nome livre** (ex.: "Devolução do vazio"), **tipo de local** exigido (qualquer local, qualquer porto/terminal,
+  qualquer fábrica/armazém ou um tipo específico, ex.: só Terminal Ferroviário) e um **local sugerido** (vem preenchido no
+  cadastro do container). Passagens com local viram pontos de parada do trajeto.
+- **Free time (demurrage):** etapa em que começa e termina (padrão: Coleta → Entrega).
+- Tipos cadastrados na instalação: **Exportação padrão** (padrão), **Coleta de cheio**, **Importação** e **Transferência**.
+  Os containers anteriores à v2.0 ficaram na Exportação padrão, sem nenhuma mudança.
+- No **Novo container** escolhe-se o tipo; os campos de local seguem o fluxo (sem local de operação não há campo de
+  carregamento nem estadia; a previsão vai direto da retirada à entrega).
+- O fluxo é **copiado para o container** na criação: alterar um tipo depois vale só para containers novos.
+- Ficha: aba Etapas, próxima etapa, avançar/desfazer e Editar trajeto seguem o fluxo do container.
+- **QR do transportador:** a retirada, o carregamento e a entrega aceitam os locais do fluxo do container (ex.: na Coleta
+  de cheio a retirada é na fábrica/armazém e não há local de carregamento). No cadastro pelo QR escolhe-se o tipo de operação.
+- **Portaria:** entrada/saída seguem as etapas do tipo; tipos sem local de operação (Coleta de cheio, Transferência) não têm
+  registro de portaria (a tela avisa).
+- **Planilha:** coluna opcional "Tipo de Operação" (em branco = padrão); os locais de cada linha são conferidos pelo tipo e o
+  Local de carregamento só é obrigatório quando o tipo tem local de operação.
+- **Home:** seções "A caminho do local de operação", "No local de operação" e "A caminho da entrega" (tipos sem local de
+  operação vão direto para a última); o card mostra o tipo quando não é o padrão.
+
 ## Produtos: categoria e temperatura (v1.4)
 
 - **Categoria do produto:** Congelado, Refrigerado ou **Carga Seca**. Congelado e Refrigerado têm faixa (setpoint, mínima, máxima, tolerância); Carga Seca não tem temperatura.
