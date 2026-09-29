@@ -4,6 +4,32 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.0.0 — em desenvolvimento (branch `versao-3.0`)
+
+**Multi-tenant: vários clientes na mesma plataforma, cada um vendo só a própria organização.**
+
+- **Organizações:** todos os dados atuais passaram para a organização **AS TECH LOG**. Nomes de
+  cadastros passam a ser únicos por organização. Configurações, log, etiquetas, tokens e
+  usuários são de cada organização.
+- **Isolamento em duas camadas:** (1) filtro automático de organização em toda consulta do
+  sistema (sem organização definida, a consulta falha); (2) **Row-Level Security** no PostgreSQL,
+  com o sistema conectando pelo usuário restrito `ccs_app` (sem permissão de ignorar o RLS).
+- **Administrador da plataforma** (perfil novo): tela **Organizações** — criar cliente (já com os
+  tipos de local e de operação padrão) e o 1º administrador dele, renomear, desativar. Não vê
+  dados operacionais dos clientes. Criado por `PLATAFORMA_ADMIN_EMAIL/SENHA/NOME`.
+- **Motoristas e transportadoras** continuam com cadastro único na plataforma; cada cliente só vê
+  os que registraram pelo QR uma carga dele (ou que ele cadastrou). Transportadora compartilhada
+  não pode ser alterada por um cliente.
+- Login pelo e-mail (único na plataforma); organização desativada derruba login e sessões.
+- Migrações (todas testadas numa cópia restaurada de produção): `20261003085900_perfil_plataforma`,
+  `20261003090000_multi_tenant` (backfill AS TECH LOG), `20261004090000_rls_organizacao`,
+  `20261004100000_gestor_na_organizacao`, `20261004110000_rls_tabelas_globais` (o Supabase
+  liga o RLS em toda tabela nova — tabelas globais precisam de regra explícita).
+- **Voltar para a 2.1 exige** `scripts/rollback-3.0-antes.sql` (para se houver outra organização
+  com dados); ao republicar a 3.0, `scripts/rollback-3.0-desfazer.sql`. Ciclo completo testado.
+- Testes de invasão: a organização B ataca todas as rotas com identificador da A e nada muda
+  (o teste falha se aparecer rota nova sem caso de ataque).
+
 ## 2.1.0 — 29/09/2026 (tag `v2.1.0`)
 
 - **Mapa na ficha** (aba Rastreamento): cada posição registrada é um ponto, ligados pelo caminho

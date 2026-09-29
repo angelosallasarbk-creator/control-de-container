@@ -362,13 +362,14 @@ export const INTERVALO_MANUAL_MIN = 5;
  * pedido de posição a cada 5 min por container, contando os automáticos). Lança erroHttp.
  */
 export async function solicitarPosicaoManual({ containerId, solicitante, agora = new Date() }) {
-  const config = await lerConfiguracao();
-  if (!config.rastreioSmsAtivo) throw erroHttp(409, "O envio de SMS de rastreamento está desligado (Configurações → Rastreamento).");
+  // Primeiro o container (de outra organização = não existe), depois a configuração.
   const c = await prisma.container.findUnique({
     where: { id: containerId },
     select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, rastreioUltimoEnvioEm: true },
   });
   if (!c) throw erroHttp(404, "Container não encontrado.");
+  const config = await lerConfiguracao();
+  if (!config.rastreioSmsAtivo) throw erroHttp(409, "O envio de SMS de rastreamento está desligado (Configurações → Rastreamento).");
   if (STATUS_ENCERRADOS.includes(c.status)) throw erroHttp(409, `O container ${c.numero} já foi encerrado.`);
   if (!destinoDoContainer(c)) throw erroHttp(409, "Ninguém registrou este container pelo QR ainda — não há para quem pedir a posição.");
   const ultimo = await prisma.mensagemSms.findFirst({

@@ -2380,3 +2380,142 @@ test("v3.0: admin da plataforma cria organizações (com cadastros padrão) e n�
   assert.equal((await request(app).post("/api/auth/login").send({ email: "admin@clientec.local", senha: "senha-c-12345" })).status, 401);
   assert.equal((await pl.patch(`/api/organizacoes/${orgC.id}`).send({ ativo: true })).status, 200);
 });
+
+test("v3.0: invasão — organização B ataca TODAS as rotas com identificador da A e nada muda", async () => {
+  const fs = await import("node:fs");
+  const b = await logar("admin@clienteb.local");
+  const A = (fn) => comOrganizacao(ORG_TESTE, fn);
+  const { prisma: bruto } = await import("./lib/prisma.js");
+
+  // Recursos da A usados no ataque.
+  const cont = await prisma.container.findFirst({ where: { id: ids.reefer } });
+  const parada = await prisma.paradaContainer.findFirst();
+  const alerta = await prisma.alerta.findFirst();
+  const etiqueta = await prisma.etiquetaQR.findFirst();
+  const local = await prisma.local.findFirst();
+  const tipoLocal = await prisma.tipoLocal.findFirst();
+  const tipoOp = await prisma.tipoOperacao.findFirst();
+  const usuarioA = await prisma.usuario.findFirst({ where: { email: "operador@teste.local" } });
+  const token = await prisma.tokenIntegracao.findFirst();
+  const regiao = await prisma.regiao.findFirst();
+  const grupo = await prisma.grupoOperacao.findFirst();
+  const armador = await prisma.armador.findFirst();
+  const produto = await prisma.produto.findFirst();
+  const motoristaSoDaA = await bruto.motorista.findFirst({ where: { organizacoes: { some: {}, every: { organizacaoId: ORG_TESTE } } } });
+  const transpSoDaA = await bruto.transportadora.findFirst({ where: { organizacoes: { some: {}, every: { organizacaoId: ORG_TESTE } } } });
+  for (const [nome, v] of Object.entries({ cont, parada, alerta, etiqueta, local, tipoLocal, tipoOp, usuarioA, token, regiao, grupo, armador, produto, motoristaSoDaA, transpSoDaA })) {
+    assert.ok(v, `recurso da A para o teste: ${nome}`);
+  }
+
+  // Foto dos dados da A (antes/depois).
+  const foto = () => A(async () => JSON.stringify(await Promise.all([
+    prisma.container.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true, booking: true, placa: true, portoEntregaId: true, atualizadoEm: true } }),
+    prisma.paradaContainer.findMany({ orderBy: { id: "asc" }, select: { id: true, passouEm: true, localId: true } }),
+    prisma.alerta.findMany({ orderBy: { id: "asc" }, select: { id: true, reconhecidoEm: true } }),
+    prisma.etiquetaQR.findMany({ orderBy: { id: "asc" }, select: { id: true, status: true, vezesImpressa: true, containerId: true } }),
+    prisma.local.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, ativo: true } }),
+    prisma.tipoLocal.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, ativo: true } }),
+    prisma.tipoOperacao.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, ativo: true } }),
+    prisma.usuario.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, perfil: true, ativo: true, permissoes: true, resetTokenHash: true } }),
+    prisma.tokenIntegracao.findMany({ orderBy: { id: "asc" }, select: { id: true, ativo: true } }),
+    prisma.regiao.findMany({ orderBy: { id: "asc" } }), prisma.grupoOperacao.findMany({ orderBy: { id: "asc" } }),
+    prisma.armador.findMany({ orderBy: { id: "asc" } }), prisma.produto.findMany({ orderBy: { id: "asc" } }),
+    prisma.leituraTemperatura.count(), prisma.posicaoContainer.count(), prisma.solicitacaoPosicao.count(), prisma.mensagemSms.count(),
+    bruto.motorista.findMany({ orderBy: { id: "asc" }, select: { id: true, nome: true, celular: true, placa: true, bloqueado: true } }),
+    bruto.transportadora.findMany({ orderBy: { id: "asc" } }), bruto.sessaoMotorista.count({ where: { revogadaEm: null } }),
+    bruto.organizacao.findMany({ orderBy: { id: "asc" } }),
+  ])));
+  const antes = await foto();
+
+  const c = cont.id;
+  const CASOS = [
+    ["POST /api/alertas/:id/reconhecer", () => b.post(`/api/alertas/${alerta.id}/reconhecer`).send({ acaoTomada: "invasão de teste com texto longo" })],
+    ["GET /api/containers/:id", () => b.get(`/api/containers/${c}`)],
+    ["PATCH /api/containers/:id", () => b.patch(`/api/containers/${c}`).send({ booking: "X", portoEntregaId: local.id })],
+    ["GET /api/containers/:id/rastreamento", () => b.get(`/api/containers/${c}/rastreamento`)],
+    ["POST /api/containers/:id/avancar", () => b.post(`/api/containers/${c}/avancar`).send({})],
+    ["POST /api/containers/:id/desfazer", () => b.post(`/api/containers/${c}/desfazer`).send({})],
+    ["POST /api/containers/:id/cancelar", () => b.post(`/api/containers/${c}/cancelar`).send({ motivo: "x" })],
+    ["POST /api/containers/:id/leituras", () => b.post(`/api/containers/${c}/leituras`).send({ temperatura: -18 })],
+    ["POST /api/containers/:id/solicitar-posicao", () => b.post(`/api/containers/${c}/solicitar-posicao`).send({})],
+    ["PUT /api/containers/:id/trajeto", () => b.put(`/api/containers/${c}/trajeto`).send({ pontos: [] })],
+    ["POST /api/containers/:id/paradas/:paradaId/passagem", () => b.post(`/api/containers/${parada.containerId}/paradas/${parada.id}/passagem`).send({})],
+    ["DELETE /api/containers/:id/paradas/:paradaId/passagem", () => b.delete(`/api/containers/${parada.containerId}/paradas/${parada.id}/passagem`)],
+    ["POST /api/etiquetas/:id/cancelar", () => b.post(`/api/etiquetas/${etiqueta.id}/cancelar`).send({ motivo: "x" })],
+    ["PATCH /api/locais/:id", () => b.patch(`/api/locais/${local.id}`).send({ nome: "X" })],
+    ["DELETE /api/locais/:id", () => b.delete(`/api/locais/${local.id}`)],
+    ["PATCH /api/tipos-local/:id", () => b.patch(`/api/tipos-local/${tipoLocal.id}`).send({ nome: "X" })],
+    ["DELETE /api/tipos-local/:id", () => b.delete(`/api/tipos-local/${tipoLocal.id}`)],
+    ["PATCH /api/tipos-operacao/:id", () => b.patch(`/api/tipos-operacao/${tipoOp.id}`).send({ nome: "X" })],
+    ["DELETE /api/tipos-operacao/:id", () => b.delete(`/api/tipos-operacao/${tipoOp.id}`)],
+    ["GET /api/motoristas/:id", () => b.get(`/api/motoristas/${motoristaSoDaA.id}`)],
+    ["GET /api/motoristas/:id/sessoes", () => b.get(`/api/motoristas/${motoristaSoDaA.id}/sessoes`)],
+    ["PATCH /api/motoristas/:id", () => b.patch(`/api/motoristas/${motoristaSoDaA.id}`).send({ bloqueado: true })],
+    ["POST /api/motoristas/:id/encerrar-sessoes", () => b.post(`/api/motoristas/${motoristaSoDaA.id}/encerrar-sessoes`).send({})],
+    ["PATCH /api/organizacoes/:id", () => b.patch(`/api/organizacoes/${ORG_TESTE}`).send({ ativo: false })],
+    ["GET /api/qr/:token", () => b.get(`/api/qr/${etiqueta.token}`)],
+    ["GET /api/qr/codigo/:codigo", () => b.get(`/api/qr/codigo/${etiqueta.codigo}`)],
+    ["POST /api/qr/:token/coleta", () => b.post(`/api/qr/${etiqueta.token}/coleta`).send({ numero: cont.numero, portoRetiradaId: local.id })],
+    ["POST /api/qr/:token/leituras", () => b.post(`/api/qr/${etiqueta.token}/leituras`).send({ temperatura: -18 })],
+    ["POST /api/qr/:token/passagem", () => b.post(`/api/qr/${etiqueta.token}/passagem`).send({})],
+    ["POST /api/qr/:token/portaria", () => b.post(`/api/qr/${etiqueta.token}/portaria`).send({ movimento: "ENTRADA", placa: "ABC1D23" })],
+    ["POST /api/qr/:token/vincular", () => b.post(`/api/qr/${etiqueta.token}/vincular`).send({ numero: cont.numero, temperatura: -18 })],
+    ["POST /api/tokens/:id/revogar", () => b.post(`/api/tokens/${token.id}/revogar`).send({})],
+    ["PATCH /api/usuarios/:id", () => b.patch(`/api/usuarios/${usuarioA.id}`).send({ ativo: false, perfil: "ADMIN" })],
+    ["POST /api/usuarios/:id/enviar-redefinicao", () => b.post(`/api/usuarios/${usuarioA.id}/enviar-redefinicao`).send({})],
+    ["PUT /api/usuarios/:id/permissoes", () => b.put(`/api/usuarios/${usuarioA.id}/permissoes`).send({ permissoes: [] })],
+    ["PATCH /api/regioes/:id", () => b.patch(`/api/regioes/${regiao.id}`).send({ nome: "X" })],
+    ["DELETE /api/regioes/:id", () => b.delete(`/api/regioes/${regiao.id}`)],
+    ["PATCH /api/grupos/:id", () => b.patch(`/api/grupos/${grupo.id}`).send({ metaEstadiaHoras: 1 })],
+    ["DELETE /api/grupos/:id", () => b.delete(`/api/grupos/${grupo.id}`)],
+    ["PATCH /api/armadores/:id", () => b.patch(`/api/armadores/${armador.id}`).send({ freeTimeDias: 1 })],
+    ["DELETE /api/armadores/:id", () => b.delete(`/api/armadores/${armador.id}`)],
+    ["PATCH /api/produtos/:id", () => b.patch(`/api/produtos/${produto.id}`).send({ nome: "X" })],
+    ["DELETE /api/produtos/:id", () => b.delete(`/api/produtos/${produto.id}`)],
+    ["PATCH /api/transportadoras/:id", () => b.patch(`/api/transportadoras/${transpSoDaA.id}`).send({ nome: "X" })],
+    ["DELETE /api/transportadoras/:id", () => b.delete(`/api/transportadoras/${transpSoDaA.id}`)],
+  ];
+  for (const [nome, fazer] of CASOS) {
+    const r = await fazer();
+    assert.ok([400, 403, 404].includes(r.status), `${nome} → ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
+  }
+  // Rotas cujo código identifica a própria organização (o atacante não escolhe a organização).
+  const FORA = new Set(["GET /api/auth/redefinir-senha/:codigo", "GET /api/posicao/:codigo", "POST /api/posicao/:codigo", "GET /api/qr/opcoes/container/:numero"]);
+
+  // Ids da A no CORPO / na busca.
+  assert.equal((await b.post("/api/containers").send({ numero: "INVU1234567", confirmarDigito: true, tipo: "DRY_40", grupoId: grupo.id, armadorId: armador.id })).status, 400, "container com cadastros da A");
+  assert.equal((await b.get(`/api/qr/opcoes/container/${cont.numero}`)).body.cadastrado, false, "número de container da A");
+  assert.ok([400, 404].includes((await b.get(`/api/rotas/estimar?portoRetiradaId=${local.id}&localCarregamentoId=${local.id}&portoEntregaId=${local.id}`)).status), "estimar com locais da A");
+  const imp = await b.post("/api/etiquetas/impressas").send({ ids: [etiqueta.id] });
+  assert.ok(imp.status >= 400 || !JSON.stringify(imp.body).includes(etiqueta.codigo), "marcar impressa etiqueta da A");
+  const excl = await b.post("/api/etiquetas/excluir").send({ ids: [etiqueta.id] });
+  assert.ok(excl.status >= 400 || !JSON.stringify(excl.body).includes(etiqueta.codigo), "excluir etiqueta da A");
+  const zpl = await b.post("/api/etiquetas/zpl").send({ ids: [etiqueta.id] });
+  assert.ok(zpl.status >= 400 || !String(zpl.text).includes(etiqueta.codigo), "ZPL de etiqueta da A");
+  assert.ok(!(await b.get(`/api/custos?grupo=${grupo.id}`)).text.includes(cont.numero), "custos com grupo da A");
+  // Integração: token da B enviando número de container da A.
+  const tokB = await b.post("/api/tokens").send({ nome: "Sensor B" });
+  assert.equal(tokB.status, 201, JSON.stringify(tokB.body));
+  const integ = await request(app).post("/api/integracao/temperaturas").set("Authorization", `Bearer ${tokB.body.token}`).send({ leituras: [{ container: cont.numero, temperatura: -18, lidaEm: new Date().toISOString() }] });
+  assert.ok(!JSON.stringify(integ.body).match(/"gravadas":[1-9]/), `integração da B no container da A → ${integ.status} ${JSON.stringify(integ.body).slice(0, 160)}`);
+
+  assert.equal(await foto(), antes, "NENHUM dado da organização A mudou");
+
+  // Cobertura: toda rota com parâmetro nos arquivos de rotas tem caso de ataque (ou está em FORA).
+  const MONTAGEM = { alertas: "/api/alertas", containers: "/api/containers", etiquetas: "/api/etiquetas", locais: "/api/locais", tiposLocal: "/api/tipos-local", tiposOperacao: "/api/tipos-operacao", motoristas: "/api/motoristas", organizacoes: "/api/organizacoes", posicao: "/api/posicao", qr: "/api/qr", tokens: "/api/tokens", usuarios: "/api/usuarios", auth: "/api/auth" };
+  const cobertas = new Set([...CASOS.map(([n]) => n), ...FORA]);
+  const faltando = [];
+  for (const arq of fs.readdirSync(new URL("./routes/", import.meta.url))) {
+    const txt = fs.readFileSync(new URL(`./routes/${arq}`, import.meta.url), "utf8");
+    for (const m of txt.matchAll(/^(\w+)Router\.(get|post|put|patch|delete)\("([^"]*:[^"]*)"/gm)) {
+      const nome = `${m[2].toUpperCase()} ${MONTAGEM[m[1]] ?? "?"}${m[3].replace(/\(.*?\)/g, "")}`;
+      if (!cobertas.has(nome)) faltando.push(nome);
+    }
+    if (arq === "cadastros.js") {
+      for (const rota of ["regioes", "grupos", "armadores", "produtos", "transportadoras"]) {
+        for (const met of ["PATCH", "DELETE"]) if (!cobertas.has(`${met} /api/${rota}/:id`)) faltando.push(`${met} /api/${rota}/:id`);
+      }
+    }
+  }
+  assert.deepEqual(faltando, [], "rota com identificador sem teste de invasão");
+});
