@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.0.1 — em desenvolvimento (branch `versao-3.0`)
+## 3.0.1 — 29/09/2026 (tag `v3.0.1`)
 
 - **Correção do deploy da 3.0.0** (o build falhou depois das migrações e a 3.0.0 nunca entrou no ar):
   no Supabase (PostgreSQL 17) o usuário das migrações não é superusuário e não pode nem citar
