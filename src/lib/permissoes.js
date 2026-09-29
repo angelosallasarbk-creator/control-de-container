@@ -25,6 +25,7 @@ export const PADRAO_POR_PERFIL = {
   TRANSPORTADOR: ["qr.registrar"],
   PORTARIA: ["qr.registrar"],
   GESTOR_TRANSPORTADORA: [],
+  PLATAFORMA: [],
 };
 
 // Perfis de campo usam só parte do sistema; o resto da API fica fechado para eles.
@@ -36,6 +37,8 @@ const API_DO_PERFIL = {
   TRANSPORTADOR: { rotas: ["/qr/"], escrita: ["/qr/"], mensagem: "O perfil Transportador acessa apenas a leitura das etiquetas QR." },
   PORTARIA: { rotas: ["/qr/", "/painel", "/alertas/resumo"], escrita: ["/qr/"], mensagem: "O perfil Portaria acessa apenas a leitura das etiquetas QR e a consulta do Pátio." },
   GESTOR_TRANSPORTADORA: { rotas: ["/motoristas"], escrita: ["/motoristas"], mensagem: "O perfil Gestor da transportadora acessa apenas a gestão dos motoristas." },
+  // Administrador da plataforma: só a tela de Organizações — nunca os dados dos clientes.
+  PLATAFORMA: { rotas: ["/organizacoes"], escrita: ["/organizacoes"], mensagem: "O administrador da plataforma acessa apenas a gestão de organizações." },
 };
 export const ehGestorTransportadora = (req) => req.usuario?.perfil === "GESTOR_TRANSPORTADORA";
 export const ehTransportador = (req) => req.usuario?.perfil === "TRANSPORTADOR";

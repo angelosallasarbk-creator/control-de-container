@@ -2313,3 +2313,70 @@ test("v3.0 multi-tenant: usuário da organização B não enxerga nem altera dad
   assert.equal((await b.get("/api/configuracao")).body.kmPorDia, 777);
   assert.notEqual((await a.get("/api/configuracao")).body.kmPorDia, 777);
 });
+
+test("v3.0: admin da plataforma cria organizações (com cadastros padrão) e não vê dados dos clientes", async () => {
+  const { criarAdminPlataformaSeNecessario } = await import("./lib/adminInicial.js");
+  const env = { PLATAFORMA_ADMIN_EMAIL: "plataforma@teste.local", PLATAFORMA_ADMIN_SENHA: "senha-plataforma-123", PLATAFORMA_ADMIN_NOME: "Dono da Plataforma" };
+  assert.equal(await criarAdminPlataformaSeNecessario({ ...env, PLATAFORMA_ADMIN_SENHA: "curta" }), null, "senha curta não cria");
+  assert.equal((await criarAdminPlataformaSeNecessario(env))?.perfil, "PLATAFORMA");
+  assert.equal(await criarAdminPlataformaSeNecessario({ ...env, PLATAFORMA_ADMIN_EMAIL: "outro@teste.local" }), null, "só um, depois ignora");
+  const pl = request.agent(app);
+  assert.equal((await pl.post("/api/auth/login").send({ email: "plataforma@teste.local", senha: "senha-plataforma-123" })).status, 200);
+
+  // Não enxerga nada operacional.
+  for (const rota of ["/api/containers", "/api/usuarios", "/api/locais", "/api/painel", "/api/logs", "/api/motoristas"]) {
+    assert.equal((await pl.get(rota)).status, 403, rota);
+  }
+  assert.equal((await agentes.ADMIN.get("/api/organizacoes")).status, 403, "admin de cliente não gerencia organizações");
+
+  const lista = (await pl.get("/api/organizacoes")).body;
+  assert.ok(lista.some((o) => o.nome === "AS TECH LOG" && o.containers > 0), "vê só contagens");
+  assert.ok(!JSON.stringify(lista).includes("TGHU"), "nenhum dado de container");
+
+  // Nova organização: validações, cadastros padrão e 1º admin.
+  assert.equal((await pl.post("/api/organizacoes").send({ nome: "Cliente C", adminNome: "Admin C", adminEmail: "admin@teste.local", adminSenha: "senha-c-12345" })).status, 409, "e-mail já usado");
+  assert.equal((await pl.post("/api/organizacoes").send({ nome: "AS TECH LOG", adminNome: "X", adminEmail: "x@c.local", adminSenha: "senha-c-12345" })).status, 409, "nome repetido");
+  const criada = await pl.post("/api/organizacoes").send({ nome: "Cliente C", adminNome: "Admin C", adminEmail: "admin@clientec.local", adminSenha: "senha-c-12345" });
+  assert.equal(criada.status, 201, JSON.stringify(criada.body));
+  assert.equal(criada.body.usuarios, 1);
+  const c = request.agent(app);
+  const login = await c.post("/api/auth/login").send({ email: "admin@clientec.local", senha: "senha-c-12345" });
+  assert.equal(login.body.organizacao, "Cliente C");
+  assert.deepEqual((await c.get("/api/tipos-local")).body.map((t) => t.nome).sort(), ["Armazém", "Fábrica", "Ponto Fiscal", "Porto / Terminal", "Terminal Ferroviário"]);
+  const tiposOp = (await c.get("/api/tipos-operacao")).body;
+  assert.deepEqual(tiposOp.map((t) => t.nome), ["Exportação padrão", "Coleta de cheio", "Importação", "Transferência"]);
+  assert.equal(tiposOp[0].etapas.length, 6);
+  assert.deepEqual((await c.get("/api/containers?situacao=todos")).body, []);
+
+  // Motoristas e transportadoras da plataforma: invisíveis até registrarem algo para a C.
+  assert.deepEqual((await c.get("/api/motoristas")).body, [], "não vê a lista geral de motoristas");
+  assert.deepEqual((await c.get("/api/transportadoras")).body, [], "nem de transportadoras");
+  const m = await prisma.motorista.findFirst({ include: { transportadora: true } });
+  const t = await c.post("/api/transportadoras").send({ nome: "Transportadora da C" });
+  assert.equal(t.status, 201);
+  const dup = await c.post("/api/motoristas").send({ nome: "Qualquer", celular: m.celular, transportadoraId: t.body.id });
+  assert.equal(dup.status, 409);
+  assert.ok(!dup.body.erro.includes(m.nome), "não revela quem é o motorista");
+  assert.equal((await c.patch(`/api/motoristas/${m.id}`).send({ nome: "Invadido" })).status, 404, "não mexe em motorista não vinculado");
+  // Motorista registra pelo QR uma carga da C → passa a aparecer (celular mascarado), com a transportadora.
+  const orgC = (await pl.get("/api/organizacoes")).body.find((o) => o.nome === "Cliente C");
+  const { assumirRastreio: assumir } = await import("./lib/rastreamento.js");
+  const armadorC = await c.post("/api/armadores").send({ nome: "Armador C", freeTimeDias: 7, valorDiaria: 100 });
+  const grupoC = await c.post("/api/grupos").send({ cliente: "Cliente C", fabrica: "Fábrica C", metaEstadiaHoras: 24 });
+  const contC = await c.post("/api/containers").send({ numero: "CCCU1234560", confirmarDigito: true, tipo: "DRY_40", grupoId: grupoC.body.id, armadorId: armadorC.body.id });
+  assert.equal(contC.status, 201, JSON.stringify(contC.body));
+  await comOrganizacao(orgC.id, () => assumir({ containerId: contC.body.id, motoristaId: m.id }));
+  const visiveis = (await c.get("/api/motoristas")).body;
+  assert.deepEqual(visiveis.map((x) => x.id), [m.id]);
+  assert.match(visiveis[0].celular, /^\(••\) •••••-\d{4}$/);
+  assert.ok((await c.get("/api/transportadoras")).body.some((x) => x.id === m.transportadoraId), "transportadora dele também");
+  // Transportadora compartilhada (A e C): C não altera nem exclui.
+  assert.equal((await c.patch(`/api/transportadoras/${m.transportadoraId}`).send({ nome: "Renomeada" })).status, 409);
+  assert.equal((await c.patch(`/api/transportadoras/${t.body.id}`).send({ nome: "Transportadora da C Ltda" })).status, 200, "a exclusiva dela pode");
+
+  // Organização desativada: ninguém dela entra, nem com sessão aberta.
+  assert.equal((await pl.patch(`/api/organizacoes/${orgC.id}`).send({ ativo: false })).status, 200);
+  assert.equal((await c.get("/api/containers")).status, 401, "sessão aberta cai");
+  assert.equal((await request(app).post("/api/auth/login").send({ email: "admin@clientec.local", senha: "senha-c-12345" })).status, 401);
+  assert.equal((await pl.patch(`/api/organizacoes/${orgC.id}`).send({ ativo: true })).status, 200);
+});

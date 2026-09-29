@@ -14,8 +14,8 @@
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
-import { comoSistema } from "./tenant.js";
-import { paraCadaOrganizacao } from "./organizacoes.js";
+import { comoSistema, organizacaoAtual } from "./tenant.js";
+import { paraCadaOrganizacao, vincularMotorista } from "./organizacoes.js";
 import { registrarLog } from "./auditoria.js";
 import { erroHttp } from "./asyncHandler.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -104,8 +104,12 @@ export async function assumirRastreio({ containerId, usuarioId = null, motorista
       select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, motorista: true, placa: true },
     });
     if (!c) return { trocou: false };
-    // Motorista (acesso pelo celular): nome e placa atuais dele vão para o container a cada registro.
-    if (motoristaId) await atualizarMotoristaDoContainer(c, motoristaId);
+    // Motorista (acesso pelo celular): nome e placa atuais dele vão para o container a cada registro,
+    // e ele (com a transportadora) passa a ser visível para esta organização.
+    if (motoristaId) {
+      await atualizarMotoristaDoContainer(c, motoristaId);
+      await vincularMotorista(motoristaId, organizacaoAtual());
+    }
     const temPosicao = posicao.latitude !== undefined && posicao.latitude !== null;
     if (temPosicao) {
       await prisma.posicaoContainer.create({

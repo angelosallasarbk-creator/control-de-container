@@ -138,6 +138,11 @@ export const api = {
   motoristaEu: () => request("/motorista/eu"),
   motoristaAtualizar: (dados) => request("/motorista/eu", { method: "PATCH", body: dados }),
   motoristaSair: () => request("/motorista/sair", { method: "POST" }),
+  // Organizações (só o administrador da plataforma).
+  organizacoes: () => request("/organizacoes"),
+  criarOrganizacao: (dados) => request("/organizacoes", { method: "POST", body: dados }),
+  atualizarOrganizacao: (id, dados) => request(`/organizacoes/${id}`, { method: "PATCH", body: dados }),
+
   // Gestão dos motoristas (gestor da transportadora / administração).
   motoristas: (params) => request(`/motoristas${qs(params)}`),
   criarMotorista: (dados) => request("/motoristas", { method: "POST", body: dados }),

@@ -128,6 +128,9 @@ const CADASTROS = {
   // Transportadoras: agrupam os motoristas (acesso pelo celular) e os gestores de cada uma.
   transportadoras: {
     modelo: "transportadora",
+    // Cadastro único na plataforma: o cliente vê as vinculadas a ele e só altera/exclui as que
+    // são exclusivamente dele (compartilhadas com outro cliente ficam protegidas).
+    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", erroNome: "Já existe uma transportadora com esse nome na plataforma." },
     entidade: "Transportadora",
     uso: "motoristas",
     rotulo: (r) => r.nome,
@@ -204,9 +207,25 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
   // `emUso` = quantos registros dependem deste (containers, ou fábricas no caso de região).
   const serializar = ({ _count, ...r }) => ({ ...decimaisParaNumero(r), emUso: _count?.[cfg.uso] ?? 0 });
 
+  // Cadastros globais (transportadoras): visibilidade pela tabela de vínculo com a organização.
+  const escopo = (req) => (cfg.global ? { [cfg.global.vinculo]: { some: { organizacaoId: req.usuario.organizacaoId } } } : {});
+  const includeDe = (req) => (cfg.global
+    ? { ...cfg.incluir, _count: { select: { [cfg.uso]: { where: { organizacoes: { some: { organizacaoId: req.usuario.organizacaoId } } } } } } }
+    : include);
+  // Global compartilhado com outro cliente: não altera nem exclui.
+  async function exclusivoDaOrganizacao(req, id) {
+    if (!cfg.global) return;
+    const outros = await prisma[cfg.global.tabelaVinculo].count({ where: { [cfg.global.chave]: id, organizacaoId: { not: req.usuario.organizacaoId } } });
+    if (outros) throw erroHttp(409, "Este cadastro é compartilhado com outros clientes da plataforma e não pode ser alterado aqui. Fale com o administrador da plataforma.");
+  }
+  const erroUnico = (err) => {
+    if (cfg.global && err.code === "P2002") throw erroHttp(409, cfg.global.erroNome);
+    return traduzirErroUnico(err);
+  };
+
   cadastrosRouter.get(`/${rota}`, asyncHandler(async (req, res) => {
-    const where = req.query.ativos === "1" ? { ativo: true } : {};
-    const registros = await repo().findMany({ where, orderBy: cfg.ordem, include });
+    const where = { ...(req.query.ativos === "1" ? { ativo: true } : {}), ...escopo(req) };
+    const registros = await repo().findMany({ where, orderBy: cfg.ordem, include: includeDe(req) });
     // Quantos containers em andamento cada cadastro tem (para a opção "aplicar aos em andamento").
     const emAndamento = new Map();
     if (cfg.aplicarNosContainers) {
@@ -223,7 +242,8 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     cfg.validarConjunto?.(dados);
     const { criado, propagados } = await prisma.$transaction(async (tx) => {
       const depoisDeSalvar = cfg.antesDeSalvar ? await cfg.antesDeSalvar(tx, dados, corpo, null) : null;
-      const criado = await repo(tx).create({ data: dados, include }).catch(traduzirErroUnico);
+      const vinculo = cfg.global ? { [cfg.global.vinculo]: { create: { organizacaoId: req.usuario.organizacaoId } } } : {};
+      const criado = await repo(tx).create({ data: { ...dados, ...vinculo }, include: includeDe(req) }).catch(erroUnico);
       return { criado, propagados: depoisDeSalvar ? await depoisDeSalvar() : 0 };
     });
     await registrarLog({
@@ -240,14 +260,15 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
   cadastrosRouter.patch(`/${rota}/:id`, requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
     const registroId = validarId(req.params.id);
     const corpo = req.body ?? {};
-    const antes = await repo().findUnique({ where: { id: registroId } });
+    const antes = await repo().findFirst({ where: { id: registroId, ...escopo(req) } });
     if (!antes) throw erroHttp(404, "Cadastro não encontrado.");
+    await exclusivoDaOrganizacao(req, registroId);
     const dados = cfg.validar(corpo, true);
     cfg.validarConjunto?.({ ...antes, ...dados });
     const aplicar = Boolean(corpo.aplicarEmAndamento && cfg.aplicarNosContainers);
     const { depois, propagados, containersAtualizados } = await prisma.$transaction(async (tx) => {
       const depoisDeSalvar = cfg.antesDeSalvar ? await cfg.antesDeSalvar(tx, dados, corpo, antes) : null;
-      const depois = await repo(tx).update({ where: { id: registroId }, data: dados, include }).catch(traduzirErroUnico);
+      const depois = await repo(tx).update({ where: { id: registroId }, data: dados, include: includeDe(req) }).catch(erroUnico);
       let containersAtualizados = [];
       if (aplicar) {
         // Aplica os valores ATUAIS do cadastro (não só os alterados agora): cobre também o caso
@@ -284,8 +305,9 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
 
   cadastrosRouter.delete(`/${rota}/:id`, requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
     const registroId = validarId(req.params.id);
-    const antes = await repo().findUnique({ where: { id: registroId }, include: { _count: { select: { [cfg.uso]: true } } } });
+    const antes = await repo().findFirst({ where: { id: registroId, ...escopo(req) }, include: { _count: { select: { [cfg.uso]: true } } } });
     if (!antes) throw erroHttp(404, "Cadastro não encontrado.");
+    await exclusivoDaOrganizacao(req, registroId);
     if (antes._count[cfg.uso] > 0) {
       throw erroHttp(
         409,

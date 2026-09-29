@@ -22,6 +22,7 @@ import { motoristasRouter } from "./routes/motoristas.js";
 import { integracaoPublicaRouter, tokensRouter } from "./routes/integracao.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { configuracaoRouter, logsRouter } from "./routes/configuracao.js";
+import { organizacoesRouter } from "./routes/organizacoes.js";
 
 const VERSAO = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
@@ -66,6 +67,7 @@ export function criarApp() {
   app.use("/api/motoristas", motoristasRouter);
   app.use("/api/configuracao", configuracaoRouter);
   app.use("/api/logs", logsRouter);
+  app.use("/api/organizacoes", organizacoesRouter);
   app.use("/api", (_req, res) => res.status(404).json({ erro: "Rota não encontrada." }));
 
   const webDist = path.resolve("web/dist");
