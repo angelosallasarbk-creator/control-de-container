@@ -2060,3 +2060,110 @@ test("tipos de operação (v2.0): container segue o fluxo do tipo (etapas, locai
 
   for (const id of criados) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v2.0" });
 });
+
+test("tipos de operação (v2.0-B): QR do transportador, portaria e Home seguem o fluxo", async () => {
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { tipo: "DRY_40", grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), confirmarDigito: true };
+  const tr = await logar("transportador@teste.local");
+  const po = await logar("portaria@teste.local");
+  const cheioId = ids.tipoOp["Coleta de cheio"];
+  const criados = [];
+
+  // Opções do QR: listas completas + tipos de operação (a tela filtra pela regra do fluxo).
+  const op = (await tr.get("/api/qr/opcoes/coleta")).body;
+  assert.ok(op.todosLocais.some((l) => l.id === ids.rioVerde && l.tipo.funcao === "CARREGAMENTO"));
+  assert.ok(!op.todosLocais.some((l) => l.tipo.funcao === "PARADA"), "sem pontos de parada");
+  assert.ok(op.tiposOperacao.find((t) => t.nome === "Coleta de cheio").etapas.some((e) => e.acao === "COLETA" && e.funcaoLocal === "CARREGAMENTO"));
+
+  // Container Coleta de cheio programado: coleta pelo QR na fábrica, não no porto.
+  const c = await agentes.ADMIN.post("/api/containers").send({ ...cad, numero: "QRCU2100001", tipoOperacaoId: cheioId, portoRetiradaId: ids.rioVerde, portoEntregaId: ids.santos });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  criados.push(c.body.id);
+  const prog = (await tr.get("/api/qr/opcoes/container/QRCU2100001")).body;
+  assert.equal(prog.tipoOperacao, "Coleta de cheio");
+  assert.equal(prog.temOperacao, false);
+  assert.equal(prog.regrasLocal.localCarregamentoId, null);
+  assert.equal(prog.regrasLocal.portoRetiradaId.funcao, "CARREGAMENTO");
+  const [e1, e2, e3] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 3 })).body.etiquetas;
+  const porto = await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "QRCU2100001", portoRetiradaId: ids.santos });
+  assert.equal(porto.status, 400, "coleta de cheio é na fábrica/armazém");
+  assert.match(porto.body.erro, /fábrica ou armazém/);
+  assert.equal((await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "QRCU2100001", portoRetiradaId: ids.rioVerde, localCarregamentoId: ids.cubatao })).status, 400, "tipo sem local de carregamento");
+  const col = await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "QRCU2100001", portoRetiradaId: ids.rioVerde, portoEntregaId: ids.ferro });
+  assert.equal(col.status, 201, JSON.stringify(col.body));
+  assert.equal(col.body.container.status, "COLETADO");
+  assert.equal(col.body.container.temOperacao, false);
+  assert.deepEqual(col.body.container.trajeto, { portoRetiradaId: ids.rioVerde, localCarregamentoId: null, portoEntregaId: ids.ferro });
+
+  // Cadastro pelo QR escolhendo o tipo de operação.
+  const novo = { tipo: "DRY_40", grupoId: cad.grupoId, armadorId: cad.armadorId, tipoOperacaoId: cheioId };
+  assert.equal((await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "QRCU2100002", confirmarDigito: true, portoRetiradaId: ids.santos, novo })).status, 400, "regra do tipo escolhido");
+  const cadastrou = await tr.post(`/api/qr/${e2.token}/coleta`).send({ numero: "QRCU2100002", confirmarDigito: true, portoRetiradaId: ids.rioVerde, novo });
+  assert.equal(cadastrou.status, 201, JSON.stringify(cadastrou.body));
+  assert.equal(cadastrou.body.container.tipoOperacao, "Coleta de cheio");
+  criados.push(cadastrou.body.container.id);
+
+  // Portaria: tipo sem local de operação não tem entrada/saída.
+  const transf = await agentes.ADMIN.post("/api/containers").send({ ...cad, numero: "QRCU2100003", tipoOperacaoId: ids.tipoOp["Transferência"] });
+  criados.push(transf.body.id);
+  const recusa = await po.post(`/api/qr/${e3.token}/portaria`).send({ placa: "ABC1D23", numero: "QRCU2100003", movimento: "ENTRADA" });
+  assert.equal(recusa.status, 409);
+  assert.match(recusa.body.erro, /sem entrada\/saída/);
+
+  // Home: seção pela etapa + tipo de operação no card.
+  const painel = (await agentes.ADMIN.get("/api/painel")).body;
+  const noPainel = painel.grupos.flatMap((g) => g.containers).find((x) => x.numero === "QRCU2100001");
+  assert.equal(noPainel.temOperacao, false);
+  assert.equal(noPainel.tipoOperacao, "Coleta de cheio");
+  assert.equal(painel.grupos.flatMap((g) => g.containers).find((x) => x.id === ids.reefer)?.tipoOperacao ?? null, null, "tipo padrão não aparece no card");
+
+  for (const id of criados) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v2.0-B" });
+});
+
+test("tipos de operação (v2.0-B): planilha com a coluna Tipo de Operação", async () => {
+  const ExcelJS = (await import("exceljs")).default;
+  const { calcularDigitoVerificador } = await import("./lib/iso6346.js");
+  const num = (base) => `${base}${calcularDigitoVerificador(base)}`;
+  const binario = (res, cb) => { const partes = []; res.on("data", (x) => partes.push(x)); res.on("end", () => cb(null, Buffer.concat(partes))); };
+  const modelo = await agentes.OPERADOR.get("/api/containers/modelo").buffer(true).parse(binario);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(modelo.body);
+  const ws = wb.getWorksheet("Containers");
+  const cab = ws.getRow(1).values.slice(1);
+  assert.ok(cab.includes("Tipo de Operação"), "coluna nova, opcional");
+  assert.ok(cab.includes("Local de carregamento"), "carregamento sem * (depende do tipo)");
+  const listas = wb.getWorksheet("Listas");
+  const valoresDe = (nome) => listas.getColumn(listas.getRow(1).values.indexOf(nome)).values.slice(2);
+  assert.ok(valoresDe("tiposOperacao").includes("Coleta de cheio"));
+  assert.ok(valoresDe("locais").includes("Fábrica Rio Verde") && valoresDe("locais").includes("Porto de Santos"));
+
+  const col = (titulo) => cab.findIndex((t) => t.replace(" *", "") === titulo) + 1;
+  const linha = (n, v) => { for (const [t, x] of Object.entries(v)) ws.getRow(n).getCell(col(t)).value = x; };
+  const base = {
+    Tipo: "40' Dry", "Ponto de Carregamento": "Planilha SA / Fábrica Upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
+    "Local de entrega": "Porto de Santos", "Coleta programada": "10/10/2026 09:00",
+  };
+  const ok = num("PLCU210001");
+  linha(2, { "Número do container": ok, ...base, "Tipo de Operação": "coleta de cheio", "Local de retirada": "Fábrica Rio Verde" });
+  linha(3, { "Número do container": num("PLCU210002"), ...base, "Tipo de Operação": "Coleta de cheio", "Local de retirada": "Fábrica Rio Verde", "Local de carregamento": "Armazém Cubatão" });
+  linha(4, { "Número do container": num("PLCU210003"), ...base, "Tipo de Operação": "Coleta de cheio", "Local de retirada": "Porto de Santos" });
+  linha(5, { "Número do container": num("PLCU210004"), ...base, "Local de retirada": "Porto de Santos" }); // padrão sem carregamento
+  linha(6, { "Número do container": num("PLCU210005"), ...base, "Tipo de Operação": "Tipo Que Não Existe", "Local de retirada": "Porto de Santos" });
+  const arquivo = Buffer.from(await wb.xlsx.writeBuffer());
+  const enviar = (conf) => agentes.OPERADOR.post(`/api/containers/importar${conf ? "?confirmar=1" : ""}`).set("Content-Type", "application/octet-stream").send(arquivo);
+  const previa = await enviar(false);
+  assert.equal(previa.status, 200, JSON.stringify(previa.body));
+  const erroDa = (n) => previa.body.linhas.find((l) => l.linha === n).erro;
+  assert.equal(erroDa(2), null, "coleta de cheio sem carregamento");
+  assert.match(erroDa(3), /Local de carregamento: o tipo de operação "Coleta de cheio" não usa este local/);
+  assert.match(erroDa(4), /Local de retirada: "Porto de Santos" não é um local de carregamento \(fábrica\/armazém\) \(tipo de operação Coleta de cheio\)/);
+  assert.equal(erroDa(5), "Obrigatório(s) em branco: Local de carregamento.");
+  assert.match(erroDa(6), /Tipo de Operação: "Tipo Que Não Existe" não encontrado/);
+  const conf = await enviar(true);
+  assert.equal(conf.body.importados, 1);
+  const c = await prisma.container.findFirst({ where: { numero: ok }, include: { tipoOperacao: true } });
+  assert.equal(c.tipoOperacao.nome, "Coleta de cheio");
+  assert.equal(c.localCarregamentoId, null);
+  assert.deepEqual(c.fluxo.etapas, ["COLETADO", "ENTREGUE_PORTO"]);
+  await agentes.ADMIN.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste v2.0-B" });
+});

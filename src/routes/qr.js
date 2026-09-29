@@ -14,7 +14,7 @@ import { estadoDaEtiqueta } from "./etiquetas.js";
 import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { assumirRastreio } from "../lib/rastreamento.js";
 import { SELECT_PARADA, serializarParadas, proximaParada, registrarPassagem } from "../lib/trajeto.js";
-import { etapasDoContainer, temOperacao } from "../lib/fluxo.js";
+import { etapasDoContainer, temOperacao, regrasDeLocal, motivoLocalForaDaRegra } from "../lib/fluxo.js";
 
 export const qrRouter = Router();
 
@@ -39,7 +39,7 @@ async function resumo(e, req) {
     etiqueta: { codigo: e.codigo, estado: estadoDaEtiqueta(e), vinculadaEm: e.vinculadaEm, vinculadaPor: e.vinculadaPor, motivoCancelamento: e.motivoCancelamento },
     container: c && {
       id: c.id, numero: c.numero, tipo: c.tipo, reefer: controlaTemperatura(c), status: c.status, rotulosEtapa: rotulosDasEtapas(c),
-      fluxo: etapasDoContainer(c), temOperacao: temOperacao(c),
+      fluxo: etapasDoContainer(c), temOperacao: temOperacao(c), regrasLocal: regrasDeLocal(c), tipoOperacao: c.fluxo?.tipo ?? null,
       placa: c.placa, motorista: c.motorista,
       cliente: c.grupo.cliente, fabrica: c.grupo.fabrica,
       setpoint: c.setpoint === null ? null : Number(c.setpoint),
@@ -201,15 +201,26 @@ qrRouter.post("/:token/passagem", requirePermissao("qr.registrar"), asyncHandler
 
 // Opções do formulário do celular (só o necessário, sem expor o resto do sistema).
 qrRouter.get("/opcoes/coleta", requirePermissao("qr.registrar"), asyncHandler(async (_req, res) => {
-  const [tipos, locais, locaisCarregamento, grupos, armadores, produtos] = await Promise.all([
+  const [tipos, locais, locaisCarregamento, grupos, armadores, produtos, todosTipos, todosLocais, tiposOperacao] = await Promise.all([
     prisma.tipoLocal.findMany({ where: { ativo: true, funcao: "RETIRADA_ENTREGA" }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
     prisma.local.findMany({ where: { ativo: true, tipo: { funcao: "RETIRADA_ENTREGA" } }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cidade: true, uf: true, tipoId: true } }),
     prisma.local.findMany({ where: { ativo: true, tipo: { funcao: "CARREGAMENTO" } }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cidade: true, uf: true } }),
     prisma.grupoOperacao.findMany({ where: { ativo: true }, orderBy: [{ cliente: "asc" }, { fabrica: "asc" }], select: { id: true, cliente: true, fabrica: true } }),
     prisma.armador.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
     prisma.produto.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true, categoria: true } }),
+    // v2.0: o local de cada campo depende do Tipo de Operação do container — a tela filtra por
+    // estas listas completas (sem pontos de parada) conforme a regra do fluxo.
+    prisma.tipoLocal.findMany({ where: { ativo: true, funcao: { not: "PARADA" } }, orderBy: { nome: "asc" }, select: { id: true, nome: true, funcao: true } }),
+    prisma.local.findMany({
+      where: { ativo: true, tipo: { funcao: { not: "PARADA" } } }, orderBy: { nome: "asc" },
+      select: { id: true, nome: true, cidade: true, uf: true, tipoId: true, tipo: { select: { id: true, nome: true, funcao: true } } },
+    }),
+    prisma.tipoOperacao.findMany({
+      where: { ativo: true }, orderBy: [{ padrao: "desc" }, { nome: "asc" }],
+      select: { id: true, nome: true, padrao: true, etapas: { orderBy: { ordem: "asc" }, select: { acao: true, nome: true, funcaoLocal: true, tipoLocalId: true, localSugeridoId: true } } },
+    }),
   ]);
-  res.json({ tipos, locais, locaisCarregamento, grupos, armadores, produtos, tiposContainer: TIPOS_CONTAINER });
+  res.json({ tipos, locais, locaisCarregamento, grupos, armadores, produtos, tiposContainer: TIPOS_CONTAINER, todosTipos, todosLocais, tiposOperacao });
 }));
 
 // Etiqueta nova: ao digitar o número, a tela busca a programação do container (se já cadastrado)
@@ -219,19 +230,31 @@ qrRouter.get("/opcoes/container/:numero", requirePermissao("qr.registrar"), asyn
   if (!formatoValido) throw erroHttp(400, "Número do container inválido.");
   const c = await prisma.container.findFirst({
     where: { numero, status: { notIn: STATUS_ENCERRADOS } },
-    select: { numero: true, tipo: true, status: true, portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true, placa: true, tempMin: true, tempMax: true },
+    select: { numero: true, tipo: true, status: true, portoRetiradaId: true, localCarregamentoId: true, portoEntregaId: true, placa: true, tempMin: true, tempMax: true, fluxo: true },
   });
   if (!c) return res.json({ cadastrado: false, numero });
-  const { tempMin: _min, tempMax: _max, ...resto } = c;
-  res.json({ cadastrado: true, ...resto, controlaTemperatura: controlaTemperatura(c), trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId } });
+  const { tempMin: _min, tempMax: _max, fluxo: _f, ...resto } = c;
+  res.json({
+    cadastrado: true, ...resto, controlaTemperatura: controlaTemperatura(c),
+    // Tipo de Operação: a tela da coleta filtra os locais e a portaria sabe se há entrada/saída.
+    tipoOperacao: c.fluxo?.tipo ?? null, temOperacao: temOperacao(c), regrasLocal: regrasDeLocal(c),
+    trajeto: { portoRetiradaId: c.portoRetiradaId, localCarregamentoId: c.localCarregamentoId, portoEntregaId: c.portoEntregaId } });
 }));
 
+// Local de retirada informado no QR. A regra (tipo de local) vem do fluxo do Tipo de Operação do
+// container; sem container ainda, a do tipo escolhido no cadastro (conferida no validarNovoContainer).
 async function localDeRetirada(valor) {
   const id = validarId(valor, "Local de retirada");
   const local = await prisma.local.findUnique({ where: { id }, include: { tipo: true } });
   if (!local || !local.ativo) throw erroHttp(400, "Local de retirada não encontrado ou inativo.");
-  if (local.tipo.funcao !== "RETIRADA_ENTREGA") throw erroHttp(400, `"${local.nome}" não é um local de retirada (porto, terminal ferroviário…).`);
   return local;
+}
+function conferirRetirada(local, container) {
+  const regra = regrasDeLocal(container).portoRetiradaId;
+  const motivo = motivoLocalForaDaRegra(local, regra);
+  if (!motivo) return;
+  const onde = regra?.funcao === "CARREGAMENTO" ? "fábrica ou armazém" : regra?.funcao === "RETIRADA_ENTREGA" ? "porto, terminal ferroviário…" : "tipo de local do fluxo";
+  throw erroHttp(400, `"${local.nome}" não é um local de retirada deste container (${onde}).`);
 }
 
 qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
@@ -245,7 +268,8 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
 
   const retirada = await localDeRetirada(b.portoRetiradaId);
   // Carregamento e entrega: vêm preenchidos com a programação; quem lê confirma ou corrige.
-  const trajeto = await validarLocais(Object.fromEntries(["localCarregamentoId", "portoEntregaId"].filter((k) => b[k] !== undefined && b[k] !== "").map((k) => [k, b[k]])));
+  const informados = Object.fromEntries(["localCarregamentoId", "portoEntregaId"].filter((k) => b[k] !== undefined && b[k] !== "").map((k) => [k, b[k]]));
+  let trajeto = {};
   const coletadoEm = dataHora(b.coletadoEm, "Data/hora da coleta") ?? new Date();
   const lidaEm = new Date();
   const posicao = lerLocalizacao(b);
@@ -263,11 +287,17 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
       if (!b.novo) {
         throw erroHttp(404, `O container ${numero} ainda não está cadastrado. Preencha os dados abaixo para cadastrá-lo.`, { codigo: "CONTAINER_NAO_CADASTRADO", numero });
       }
+      // Locais conferidos pela regra do Tipo de Operação escolhido (b.novo.tipoOperacaoId; vazio = padrão).
       novo = await validarNovoContainer(
-        { ...b.novo, numero: b.numero, confirmarDigito: b.confirmarDigito, portoRetiradaId: retirada.id, ...trajeto, coletadoEm },
+        { ...b.novo, numero: b.numero, confirmarDigito: b.confirmarDigito, portoRetiradaId: retirada.id, ...informados, coletadoEm },
         email
       );
     }
+  }
+  if (container) {
+    // Container já cadastrado: retirada, carregamento e entrega seguem o fluxo do tipo dele.
+    conferirRetirada(retirada, container);
+    trajeto = await validarLocais(informados, container);
   }
   const reefer = controlaTemperatura(container ?? novo);
   const temperatura = reefer ? decimal(b.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 }) : null;

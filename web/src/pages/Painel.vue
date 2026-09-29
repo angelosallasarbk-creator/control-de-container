@@ -15,13 +15,14 @@ const ATUALIZAR_MS = 60000;
 const CHAVE_ABA = "cc_painel_aba";
 let timer = null;
 
-// Fases do pátio: onde o container está fisicamente.
+// Fases do pátio: onde o container está fisicamente. Vale para qualquer Tipo de Operação: sem local
+// de operação (ex.: Coleta de cheio, Transferência) o container vai direto para "A caminho da entrega".
+const STATUS_NA_FABRICA = ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"];
 const FASES = [
-  { chave: "chegando", titulo: "A caminho da fábrica", status: ["PROGRAMADO", "COLETADO"] },
-  { chave: "fabrica", titulo: "Na fábrica", status: ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"] },
-  { chave: "porto", titulo: "A caminho do porto", status: ["SAIU_FABRICA"] },
+  { chave: "chegando", titulo: "A caminho do local de operação", pertence: (c) => c.temOperacao !== false && ["PROGRAMADO", "COLETADO"].includes(c.status) },
+  { chave: "fabrica", titulo: "No local de operação", pertence: (c) => STATUS_NA_FABRICA.includes(c.status) },
+  { chave: "porto", titulo: "A caminho da entrega", pertence: (c) => c.status === "SAIU_FABRICA" || (c.temOperacao === false && ["PROGRAMADO", "COLETADO"].includes(c.status)) },
 ];
-const STATUS_NA_FABRICA = FASES[1].status;
 
 async function carregar() {
   try {
@@ -115,7 +116,7 @@ const grupos = computed(() =>
       const visiveis = g.containers.filter((c) => !soProblemas.value || c.semaforo !== "VERDE");
       return {
         ...g,
-        fases: FASES.map((f) => ({ ...f, containers: visiveis.filter((c) => f.status.includes(c.status)) })).filter((f) => f.containers.length),
+        fases: FASES.map((f) => ({ ...f, containers: visiveis.filter(f.pertence) })).filter((f) => f.containers.length),
       };
     })
     .filter((g) => !soProblemas.value || g.fases.length)
@@ -144,7 +145,7 @@ const grupos = computed(() =>
 
     <div class="kpis">
       <div class="kpi"><div class="rotulo">Containers ativos</div><div class="valor">{{ indicadores.ativos }}</div></div>
-      <div class="kpi"><div class="rotulo">Na fábrica agora</div><div class="valor">{{ indicadores.naFabrica }}</div></div>
+      <div class="kpi"><div class="rotulo">No local de operação agora</div><div class="valor">{{ indicadores.naFabrica }}</div></div>
       <div class="kpi vermelho"><div class="rotulo">Em situação crítica</div><div class="valor">{{ indicadores.vermelhos }}</div></div>
       <div class="kpi amarelo"><div class="rotulo">Em atenção</div><div class="valor">{{ indicadores.amarelos }}</div></div>
       <div class="kpi" :class="{ vermelho: Object.keys(indicadores.custoDemurrage).length }">

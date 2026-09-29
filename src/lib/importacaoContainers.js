@@ -8,6 +8,7 @@
 import ExcelJS from "exceljs";
 import { prisma } from "./prisma.js";
 import { erroHttp } from "./asyncHandler.js";
+import { fluxoDoTipo, regrasDeLocal, motivoLocalForaDaRegra, SELECT_TIPO_OPERACAO } from "./fluxo.js";
 
 export const MAX_LINHAS = 1000;
 
@@ -17,12 +18,14 @@ export const ROTULO_TIPO = { DRY_20: "20' Dry", DRY_40: "40' Dry", HC_40: "40' H
 export const COLUNAS = [
   { chave: "numero", titulo: "Número do container", obrigatorio: true, largura: 20, ajuda: "4 letras + 7 dígitos (ex.: MSKU1234565)." },
   { chave: "tipo", titulo: "Tipo", obrigatorio: true, largura: 13, lista: "tipos", ajuda: "20' Dry, 40' Dry, 40' HC, 20' Reefer ou 40' Reefer." },
+  { chave: "tipoOperacao", titulo: "Tipo de Operação", largura: 24, lista: "tiposOperacao", ajuda: "Exatamente como no cadastro (ex.: Coleta de cheio). Em branco = o tipo padrão. Define o fluxo e os locais aceitos." },
   { chave: "grupo", titulo: "Ponto de Carregamento", obrigatorio: true, largura: 38, lista: "grupos", ajuda: "Exatamente como no cadastro: Cliente / Fábrica." },
   { chave: "armador", titulo: "Armador", obrigatorio: true, largura: 22, lista: "armadores" },
   { chave: "produto", titulo: "Produto", obrigatorio: true, largura: 24, lista: "produtos", ajuda: "Produto da carga (no reefer define a faixa de temperatura)." },
-  { chave: "portoRetirada", titulo: "Local de retirada", obrigatorio: true, largura: 30, lista: "retirada", ajuda: "Porto ou terminal de retirada do vazio." },
-  { chave: "localCarregamento", titulo: "Local de carregamento", obrigatorio: true, largura: 30, lista: "carregamento", ajuda: "Fábrica ou armazém onde o container será ovado." },
-  { chave: "portoEntrega", titulo: "Local de entrega", obrigatorio: true, largura: 30, lista: "retirada", ajuda: "Porto ou terminal de entrega do cheio." },
+  { chave: "portoRetirada", titulo: "Local de retirada", obrigatorio: true, largura: 30, lista: "locais", ajuda: "Onde o container é coletado (na exportação: porto ou terminal do vazio)." },
+  // Obrigatório só quando o Tipo de Operação tem local de operação (conferido linha a linha).
+  { chave: "localCarregamento", titulo: "Local de carregamento", largura: 30, lista: "carregamento", ajuda: "Fábrica ou armazém da operação (ovação/desova). Obrigatório quando o tipo de operação tem local de operação; em branco nos tipos sem (ex.: Coleta de cheio)." },
+  { chave: "portoEntrega", titulo: "Local de entrega", obrigatorio: true, largura: 30, lista: "locais", ajuda: "Onde o container é entregue (na exportação: porto ou terminal do cheio)." },
   { chave: "coletaProgramadaEm", titulo: "Coleta programada", obrigatorio: true, largura: 18, data: true, ajuda: "Data/hora (dd/mm/aaaa hh:mm), horário de Brasília." },
   { chave: "booking", titulo: "Booking", largura: 16 },
   { chave: "navio", titulo: "Navio", largura: 20 },
@@ -40,14 +43,18 @@ export const normalizar = (s) =>
 const nomeGrupo = (g) => `${g.cliente} / ${g.fabrica}`;
 
 async function carregarCadastros() {
-  const [grupos, armadores, produtos, locais] = await Promise.all([
+  const [grupos, armadores, produtos, locais, tiposOperacao] = await Promise.all([
     prisma.grupoOperacao.findMany({ where: { ativo: true }, orderBy: [{ cliente: "asc" }, { fabrica: "asc" }], select: { id: true, cliente: true, fabrica: true } }),
     prisma.armador.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
     prisma.produto.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } }),
-    prisma.local.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true, tipo: { select: { funcao: true } } } }),
+    prisma.local.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true, tipoId: true, tipo: { select: { nome: true, funcao: true } } } }),
+    prisma.tipoOperacao.findMany({ where: { ativo: true }, orderBy: [{ padrao: "desc" }, { nome: "asc" }], ...SELECT_TIPO_OPERACAO }),
   ]);
+  const tipoLocalNome = new Map(locais.map((l) => [l.tipoId, l.tipo.nome]));
   return {
-    grupos, armadores, produtos,
+    grupos, armadores, produtos, tiposOperacao, tipoLocalNome,
+    // Locais do trajeto (sem pontos de parada): a regra de cada campo vem do tipo de operação da linha.
+    locais: locais.filter((l) => l.tipo.funcao !== "PARADA"),
     retirada: locais.filter((l) => l.tipo.funcao === "RETIRADA_ENTREGA"),
     carregamento: locais.filter((l) => l.tipo.funcao === "CARREGAMENTO"),
   };
@@ -64,6 +71,8 @@ export async function gerarModelo() {
     produtos: cad.produtos.map((p) => p.nome),
     retirada: cad.retirada.map((l) => l.nome),
     carregamento: cad.carregamento.map((l) => l.nome),
+    locais: cad.locais.map((l) => l.nome),
+    tiposOperacao: cad.tiposOperacao.map((t) => t.nome),
     simNao: ["SIM"],
   };
 
@@ -117,6 +126,7 @@ export async function gerarModelo() {
   for (const t of [
     "Preencha uma linha por container na aba \"Containers\" (não mude os nomes das colunas; a ordem pode mudar).",
     "Colunas com * são obrigatórias. As listas suspensas trazem os cadastros ativos do sistema no momento do download.",
+    "Tipo de Operação em branco = o tipo padrão. O tipo define os locais aceitos em cada coluna; nos tipos sem local de operação (ex.: Coleta de cheio, Transferência) deixe o Local de carregamento em branco.",
     "Datas: use o formato de data do Excel ou escreva dd/mm/aaaa hh:mm (horário de Brasília).",
     "Só cadastra containers NOVOS. Número já ativo no sistema ou repetido na planilha é recusado (nada é sobrescrito).",
     "No sistema, o upload mostra uma prévia linha a linha; só grava depois que você confirmar. Linhas com erro ficam de fora.",
@@ -203,8 +213,13 @@ export async function lerPlanilha(buffer) {
     if (linhas.length >= MAX_LINHAS) throw erroHttp(400, `A planilha passa de ${MAX_LINHAS} containers. Divida em arquivos menores.`);
     const numero = v.numero === null ? null : String(v.numero).toUpperCase().replace(/\s/g, "");
     try {
-      // Colunas obrigatórias (as com * no modelo) preenchidas.
-      const emBranco = COLUNAS.filter((c) => c.obrigatorio && v[c.chave] === null).map((c) => c.titulo);
+      // Tipo de Operação (em branco = padrão): define as regras de local da linha.
+      const tipoOp = v.tipoOperacao === null
+        ? cad.tiposOperacao.find((t) => t.padrao) ?? null
+        : cad.tiposOperacao.find((t) => t.id === porNome(cad.tiposOperacao, v.tipoOperacao, "Tipo de Operação"));
+      const regras = regrasDeLocal({ fluxo: tipoOp ? fluxoDoTipo(tipoOp) : null });
+      // Colunas obrigatórias (as com * no modelo) preenchidas; carregamento só com local de operação.
+      const emBranco = COLUNAS.filter((c) => (c.obrigatorio || (c.chave === "localCarregamento" && regras.localCarregamentoId !== null)) && v[c.chave] === null).map((c) => c.titulo);
       if (emBranco.length) throw new Error(`Obrigatório(s) em branco: ${emBranco.join(", ")}.`);
       const repetida = vistos.get(numero);
       if (repetida) throw new Error(`Número repetido na planilha (também na linha ${repetida}).`);
@@ -221,21 +236,22 @@ export async function lerPlanilha(buffer) {
         deadline: paraDataIso(v.deadline, "Deadline do navio"),
         confirmarDigito: normalizar(v.confirmarDigito) === "sim",
       };
-      // Locais: só manda o campo quando preenchido (vazio no carregamento = local padrão do ponto).
+      if (tipoOp) corpo.tipoOperacaoId = tipoOp.id;
+      // Locais: só manda o campo quando preenchido; confere contra a regra do tipo de operação.
       for (const campo of ["portoRetirada", "localCarregamento", "portoEntrega"]) {
         if (v[campo] === null) continue;
         const col = COLUNAS.find((c) => c.chave === campo);
-        const lista = campo === "localCarregamento" ? cad.carregamento : cad.retirada;
-        const outra = campo === "localCarregamento" ? cad.retirada : cad.carregamento;
-        try {
-          corpo[`${campo}Id`] = porNome(lista, v[campo], col.titulo);
-        } catch (err) {
-          // Existe, mas é da outra função (ex.: fábrica como local de retirada): mensagem clara.
-          if (outra.some((l) => normalizar(l.nome) === normalizar(v[campo]))) {
-            throw new Error(`${col.titulo}: "${v[campo]}" não é um local de ${campo === "localCarregamento" ? "carregamento (fábrica/armazém)" : "retirada/entrega (porto/terminal)"}.`);
-          }
-          throw err;
+        const regra = regras[`${campo}Id`];
+        if (regra === null) throw new Error(`${col.titulo}: o tipo de operação "${tipoOp.nome}" não usa este local (deixe em branco).`);
+        const localId = porNome(cad.locais, v[campo], col.titulo);
+        const local = cad.locais.find((l) => l.id === localId);
+        if (motivoLocalForaDaRegra(local, regra, cad.tipoLocalNome.get(regra?.tipoLocalId))) {
+          const exigido = regra.tipoLocalId
+            ? `do tipo ${cad.tipoLocalNome.get(regra.tipoLocalId) ?? "definido no fluxo"}`
+            : regra.funcao === "CARREGAMENTO" ? "de carregamento (fábrica/armazém)" : "de retirada/entrega (porto/terminal)";
+          throw new Error(`${col.titulo}: "${v[campo]}" não é um local ${exigido}${tipoOp && !tipoOp.padrao ? ` (tipo de operação ${tipoOp.nome})` : ""}.`);
         }
+        corpo[`${campo}Id`] = localId;
       }
       for (const campo of ["booking", "navio", "lacre", "placa", "motorista", "observacao"]) {
         if (v[campo] !== null) corpo[campo] = String(v[campo]);

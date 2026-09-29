@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { api, qrMotorista } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal } from "../formato.js";
+import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal, atendeRegraLocal } from "../formato.js";
 import { conferirNumero } from "../iso6346.js";
 
 // Página aberta pela câmera do celular ao ler a etiqueta. Exige login (o App mostra o login
@@ -53,7 +53,7 @@ const f = reactive({ numero: "", temperatura: "", lidaEm: paraInputLocal(), plac
 // Etiqueta nova: programação do container digitado (trajeto, placa e se controla temperatura).
 const programacao = ref(null);
 // Transportador: onde retirou (Tipo > Local) e, se o container não existir, os dados do cadastro.
-const col = reactive({ tipoId: "", localId: "", carregamentoId: "", entregaId: "", tipoContainer: "", grupoId: "", armadorId: "", produtoId: "" });
+const col = reactive({ tipoId: "", localId: "", carregamentoId: "", entregaId: "", tipoContainer: "", grupoId: "", armadorId: "", produtoId: "", tipoOperacaoId: "" });
 // Trajeto (retirada, carregamento, entrega) preenchido com a programação: quem lê só confere.
 const trajetoPreenchido = ref(false);
 const opcoes = ref(null);
@@ -70,7 +70,11 @@ async function carregar() {
     // Transportador: busca as opções da coleta junto (a tela já abre com Tipo/Local prontos).
     const transportador = Boolean(props.motorista) || auth.usuario?.perfil === "TRANSPORTADOR";
     const [r, op] = await Promise.all([q.qr(props.token), transportador && !opcoes.value ? q.qrOpcoesColeta() : null]);
-    if (op) opcoes.value = op;
+    if (op) {
+      opcoes.value = op;
+      // Cadastro pelo QR: começa no Tipo de Operação padrão.
+      col.tipoOperacaoId = (op.tiposOperacao ?? []).find((x) => x.padrao)?.id ?? "";
+    }
     info.value = r;
     erroFatal.value = null;
     if (r.container?.trajeto && r.container.status === "PROGRAMADO") await aplicarTrajeto(r.container.trajeto);
@@ -91,7 +95,46 @@ const modoColeta = computed(
   () => info.value?.modoTransportador && info.value.podeRegistrar &&
     (estado.value === "LIVRE" || (estado.value === "VINCULADA" && container.value?.status === "PROGRAMADO"))
 );
-const locaisDoTipo = computed(() => (opcoes.value?.locais ?? []).filter((l) => l.tipoId === col.tipoId));
+// Tipo de local aceito em cada campo: do fluxo do container (já cadastrado), ou do Tipo de Operação
+// escolhido no cadastro pelo QR; sem saber ainda, o da exportação (porto → fábrica → porto).
+const REGRA_PADRAO = { portoRetiradaId: { funcao: "RETIRADA_ENTREGA" }, localCarregamentoId: { funcao: "CARREGAMENTO" }, portoEntregaId: { funcao: "RETIRADA_ENTREGA" } };
+const tipoOperacaoNovo = computed(() => (opcoes.value?.tiposOperacao ?? []).find((x) => x.id === Number(col.tipoOperacaoId)) ?? null);
+function regrasDoTipo(tipo) {
+  const etapa = (acao) => tipo.etapas.find((e) => e.acao === acao);
+  const regra = (e) => (e ? { funcao: e.funcaoLocal, tipoLocalId: e.tipoLocalId } : null);
+  return { portoRetiradaId: regra(etapa("COLETA")), localCarregamentoId: regra(etapa("CHEGADA")), portoEntregaId: regra(etapa("ENTREGA")) };
+}
+const regras = computed(() =>
+  container.value?.regrasLocal ?? programacao.value?.regrasLocal ?? (precisaCadastro.value && tipoOperacaoNovo.value ? regrasDoTipo(tipoOperacaoNovo.value) : REGRA_PADRAO)
+);
+// Listas completas (v2.0) com recuo para as antigas (servidor anterior).
+const todosLocais = computed(() => opcoes.value?.todosLocais ?? [...(opcoes.value?.locais ?? []).map((l) => ({ ...l, tipo: { id: l.tipoId, funcao: "RETIRADA_ENTREGA" } })), ...(opcoes.value?.locaisCarregamento ?? []).map((l) => ({ ...l, tipo: { funcao: "CARREGAMENTO" } }))]);
+const locaisDoCampo = (campo) => todosLocais.value.filter((l) => atendeRegraLocal(l, regras.value[campo]));
+const locaisRetirada = computed(() => locaisDoCampo("portoRetiradaId"));
+const locaisCarregamento = computed(() => locaisDoCampo("localCarregamentoId"));
+const locaisEntrega = computed(() => locaisDoCampo("portoEntregaId"));
+const temCarregamento = computed(() => regras.value.localCarregamentoId !== null);
+// Tipos de local (1º select da retirada) que têm local aceito.
+const tiposRetirada = computed(() => (opcoes.value?.todosTipos ?? opcoes.value?.tipos ?? []).filter((x) => locaisRetirada.value.some((l) => l.tipoId === x.id)));
+const locaisDoTipo = computed(() => locaisRetirada.value.filter((l) => l.tipoId === col.tipoId));
+// Mudou a regra (tipo do container/cadastro): limpa o que não serve e aplica os locais sugeridos.
+watch(regras, () => {
+  if (col.tipoId && !tiposRetirada.value.some((x) => x.id === col.tipoId)) col.tipoId = "";
+  if (col.carregamentoId && !locaisCarregamento.value.some((l) => l.id === col.carregamentoId)) col.carregamentoId = "";
+  if (col.entregaId && !locaisEntrega.value.some((l) => l.id === col.entregaId)) col.entregaId = "";
+});
+watch(tipoOperacaoNovo, async (tipo) => {
+  if (!tipo || !precisaCadastro.value) return;
+  const sugerido = (acao) => tipo.etapas.find((e) => e.acao === acao)?.localSugeridoId ?? null;
+  const retirada = todosLocais.value.find((l) => l.id === sugerido("COLETA"));
+  if (retirada) {
+    col.tipoId = retirada.tipoId;
+    await nextTick();
+    col.localId = retirada.id;
+  }
+  if (sugerido("CHEGADA")) col.carregamentoId = sugerido("CHEGADA");
+  if (sugerido("ENTREGA")) col.entregaId = sugerido("ENTREGA");
+});
 watch(() => col.tipoId, () => {
   col.localId = locaisDoTipo.value.length === 1 ? locaisDoTipo.value[0].id : "";
 });
@@ -99,7 +142,7 @@ watch(() => col.tipoId, () => {
 // Preenche retirada (tipo + local), carregamento e entrega com a programação do container.
 async function aplicarTrajeto(t) {
   if (!t) return;
-  const retirada = (opcoes.value?.locais ?? []).find((l) => l.id === t.portoRetiradaId);
+  const retirada = todosLocais.value.find((l) => l.id === t.portoRetiradaId);
   if (retirada) {
     col.tipoId = retirada.tipoId;
     await nextTick(); // deixa o "trocou o tipo" limpar o local antes de preencher
@@ -207,14 +250,14 @@ async function coletar({ substituir = false, confirmarDigito = false } = {}) {
     const dados = {
       numero: f.numero,
       portoRetiradaId: col.localId,
-      localCarregamentoId: col.carregamentoId || undefined,
+      localCarregamentoId: temCarregamento.value ? col.carregamentoId || undefined : undefined,
       portoEntregaId: col.entregaId || undefined,
       coletadoEm: horarioDaLeitura(),
       temperatura: f.temperatura === "" ? undefined : String(f.temperatura).replace(",", "."),
       substituir,
       confirmarDigito,
       novo: precisaCadastro.value
-        ? { tipo: col.tipoContainer, grupoId: col.grupoId, armadorId: col.armadorId, produtoId: novoReefer.value ? col.produtoId : null }
+        ? { tipo: col.tipoContainer, grupoId: col.grupoId, armadorId: col.armadorId, produtoId: novoReefer.value ? col.produtoId : null, tipoOperacaoId: col.tipoOperacaoId || undefined }
         : undefined,
       ...(await obterLocalizacao()),
     };
@@ -262,6 +305,10 @@ function escolherMovimento(m) {
   movimento.value = m;
   erro.value = null;
 }
+
+// Portaria: container de tipo sem local de operação (ex.: Coleta de cheio) não tem entrada/saída.
+const semOperacaoPortaria = computed(() => container.value?.temOperacao === false || (estado.value === "LIVRE" && programacao.value?.temOperacao === false));
+const tipoSemOperacao = computed(() => container.value?.tipoOperacao ?? programacao.value?.tipoOperacao ?? "");
 
 // Portaria: placa obrigatória; diferente da vinculada ao container → motivo obrigatório.
 const normalizarPlaca = (p) => String(p ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -465,6 +512,10 @@ async function registrarPassagemQr() {
         <form v-else-if="modoPortaria" class="cartao formulario" @submit.prevent="registrarPortaria()">
           <h1>Portaria: entrada ou saída</h1>
           <div v-if="erro" class="erro">{{ erro }}</div>
+          <div v-if="semOperacaoPortaria" class="aviso" role="alert">
+            Este container é do tipo de operação <strong>{{ tipoSemOperacao }}</strong>, que não passa por entrada/saída em local de operação.
+            Não há registro de portaria para ele — avise a operação se estiver no lugar errado.
+          </div>
           <div v-if="confirmarSubstituicao" class="aviso">
             Este container já tem a etiqueta <strong class="mono">{{ confirmarSubstituicao }}</strong>. Substituir por
             <strong class="mono">{{ info.etiqueta.codigo }}</strong>? A antiga será cancelada.
@@ -529,7 +580,7 @@ async function registrarPassagemQr() {
 
           <label v-if="podeLocalizar" class="check-local pequeno"><input v-model="enviarLocalizacao" type="checkbox" /> Registrar minha localização (prova de que a leitura foi no local)</label>
 
-          <button type="submit" class="primario bloco" :disabled="enviando">
+          <button type="submit" class="primario bloco" :disabled="enviando || semOperacaoPortaria">
             {{ enviando ? "Salvando…" : movimento === "SAIDA" ? "Registrar saída" : movimento === "ENTRADA" ? "Registrar entrada" : "Registrar" }}
           </button>
         </form>
@@ -558,11 +609,14 @@ async function registrarPassagemQr() {
             <span v-else-if="conferencia" class="dica txt-OK">✓ {{ conferencia.numero }}</span>
           </div>
 
+          <div v-if="container?.tipoOperacao || programacao?.tipoOperacao" class="dica pequeno">
+            Tipo de operação: <strong>{{ container?.tipoOperacao ?? programacao?.tipoOperacao }}</strong>
+          </div>
           <div class="campo">
             <label for="tipo-retirada">Onde o container foi retirado?</label>
             <select id="tipo-retirada" v-model="col.tipoId" class="grande-campo" required>
               <option value="" disabled>Selecione o tipo de local</option>
-              <option v-for="t in opcoes?.tipos ?? []" :key="t.id" :value="t.id">{{ t.nome }}</option>
+              <option v-for="t in tiposRetirada" :key="t.id" :value="t.id">{{ t.nome }}</option>
             </select>
           </div>
           <div v-if="col.tipoId" class="campo">
@@ -573,18 +627,18 @@ async function registrarPassagemQr() {
             </select>
             <span v-if="!locaisDoTipo.length" class="dica txt-ATENCAO">Nenhum local deste tipo cadastrado. Avise a operação.</span>
           </div>
-          <div class="campo">
+          <div v-if="temCarregamento" class="campo">
             <label for="local-carregamento">Local de carregamento</label>
             <select id="local-carregamento" v-model="col.carregamentoId" class="grande-campo">
               <option value="">— {{ precisaCadastro ? "o do Ponto de Carregamento" : "não informado" }} —</option>
-              <option v-for="l in opcoes?.locaisCarregamento ?? []" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+              <option v-for="l in locaisCarregamento" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
           <div class="campo">
             <label for="local-entrega">Local de entrega</label>
             <select id="local-entrega" v-model="col.entregaId" class="grande-campo">
               <option value="">— não informado —</option>
-              <option v-for="l in opcoes?.locais ?? []" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+              <option v-for="l in locaisEntrega" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
           <div v-if="trajetoPreenchido" class="aviso pequeno trajeto-aviso">
@@ -594,6 +648,13 @@ async function registrarPassagemQr() {
           <!-- Container ainda não cadastrado: dados mínimos -->
           <fieldset v-if="precisaCadastro" class="cadastro">
             <legend>Cadastrar o container</legend>
+            <div v-if="(opcoes?.tiposOperacao ?? []).length > 1" class="campo">
+              <label for="tipo-operacao">Tipo de operação</label>
+              <select id="tipo-operacao" v-model="col.tipoOperacaoId" class="grande-campo" required>
+                <option v-for="x in opcoes.tiposOperacao" :key="x.id" :value="x.id">{{ x.nome }}</option>
+              </select>
+              <span class="dica">Define os locais aceitos na retirada, no carregamento e na entrega.</span>
+            </div>
             <div class="campo">
               <label for="tipo-container">Tipo do container</label>
               <select id="tipo-container" v-model="col.tipoContainer" class="grande-campo" required>

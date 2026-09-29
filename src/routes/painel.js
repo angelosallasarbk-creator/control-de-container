@@ -90,6 +90,10 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
       reefer: c.reefer,
       status: c.status,
       rotulosEtapa: c.rotulosEtapa,
+      // Tipo de Operação: sem local de operação o container vai direto da coleta à entrega (seção
+      // "A caminho da entrega"); o nome aparece no card quando não é o tipo padrão.
+      temOperacao: c.temOperacao,
+      tipoOperacao: bruto.fluxo && !bruto.fluxo.padrao ? bruto.fluxo.tipo : null,
       semaforo: c.semaforo,
       posicaoPatio: c.posicaoPatio,
       armador: c.armador.nome,

@@ -59,9 +59,14 @@ Menu **Cadastros → Tipo de Operação**. Cada tipo define o fluxo que o contai
   carregamento nem estadia; a previsão vai direto da retirada à entrega).
 - O fluxo é **copiado para o container** na criação: alterar um tipo depois vale só para containers novos.
 - Ficha: aba Etapas, próxima etapa, avançar/desfazer e Editar trajeto seguem o fluxo do container.
-- Ainda na versão anterior (entra na 2.0-B): leitura pelo QR (coleta do transportador e portaria) segue o fluxo de exportação;
-  a portaria recusa containers de tipos sem local de operação. Planilha de cadastro ainda sem a coluna "Tipo de Operação"
-  (cadastra no tipo padrão).
+- **QR do transportador:** a retirada, o carregamento e a entrega aceitam os locais do fluxo do container (ex.: na Coleta
+  de cheio a retirada é na fábrica/armazém e não há local de carregamento). No cadastro pelo QR escolhe-se o tipo de operação.
+- **Portaria:** entrada/saída seguem as etapas do tipo; tipos sem local de operação (Coleta de cheio, Transferência) não têm
+  registro de portaria (a tela avisa).
+- **Planilha:** coluna opcional "Tipo de Operação" (em branco = padrão); os locais de cada linha são conferidos pelo tipo e o
+  Local de carregamento só é obrigatório quando o tipo tem local de operação.
+- **Home:** seções "A caminho do local de operação", "No local de operação" e "A caminho da entrega" (tipos sem local de
+  operação vão direto para a última); o card mostra o tipo quando não é o padrão.
 
 ## Produtos: categoria e temperatura (v1.4)
 

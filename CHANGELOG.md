@@ -6,7 +6,7 @@ Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno e
 
 ## 2.0.0 — em desenvolvimento (branch `versao-2.0`)
 
-**2.0-A (pronto no branch):**
+**2.0-A:**
 
 - **Tipo de Operação** (menu Cadastros): fluxo de etapas personalizável por tipo (arrastar), com nome
   livre, tipo de local exigido e local sugerido por etapa, passagens (pontos de parada) e etapas de
@@ -21,8 +21,18 @@ Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno e
   telas respondem). Atenção: na 1.4, containers de tipos sem local de operação voltam a seguir o fluxo
   de exportação (as etapas deles não são perdidas, mas a 1.4 pediria chegada/saída).
 
-**2.0-B (a fazer):** QR do transportador e portaria seguindo o fluxo; coluna "Tipo de Operação" na
-planilha; seções da Home genéricas.
+**2.0-B:**
+
+- **QR do transportador** segue o fluxo do container: locais de retirada/carregamento/entrega pela
+  regra do tipo (Coleta de cheio: retirada na fábrica/armazém, sem carregamento); cadastro pelo QR
+  com escolha do tipo de operação. `/api/qr/opcoes/coleta` ganha todosTipos, todosLocais e
+  tiposOperacao (chaves antigas mantidas).
+- **Portaria:** tipos sem local de operação não têm entrada/saída (aviso na tela, 409 na API).
+- **Planilha:** coluna "Tipo de Operação" (opcional; em branco = padrão), locais conferidos pelo
+  tipo da linha, Local de carregamento obrigatório só com local de operação.
+- **Home:** seções genéricas (a caminho do local de operação / no local de operação / a caminho da
+  entrega) e tipo de operação no card quando não é o padrão.
+- Sem migração nova na 2.0-B.
 
 ## 1.4.0 — 28/09/2026 (tag `v1.4.0`)
 
