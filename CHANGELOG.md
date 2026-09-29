@@ -4,6 +4,21 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 2.1.0 — em desenvolvimento (branch `versao-2.1`)
+
+- **Mapa na ficha** (aba Rastreamento): cada posição registrada é um ponto, ligados pelo caminho
+  percorrido; a última posição fica destacada; passar o mouse mostra data/hora (etapa, quem,
+  precisão). Locais do trajeto aparecem como referência. Leaflet + OpenStreetMap (sem chave).
+  Rastreamento passa a devolver até 500 posições.
+- **Paginação** 10/20/50 por página (lembrada no navegador, por tela): Containers (tabela e lista
+  do Grid), Alertas, Etiquetas, Custo estimado, Locais, Cadastros, Usuários, Motoristas, Log e,
+  na ficha, leituras, posições, SMS e Histórico.
+- **Menu com ícones**; recolhido na tela larga vira uma faixa só com os ícones (nome no passar do
+  mouse). No celular continua a gaveta.
+- **Histórico da ficha** mostra as mudanças no trajeto (retirada, carregamento, entrega, paradas)
+  com antes/depois, quem e por onde (edição, Editar trajeto, QR), marcando as feitas após o
+  Planejado. Migração `20261002090000_mudanca_trajeto` (só acréscimo; voltar para a 2.0 sem script).
+
 ## 2.0.0 — 28/09/2026 (tag `v2.0.0`)
 
 **2.0-A:**

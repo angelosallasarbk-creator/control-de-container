@@ -6,6 +6,8 @@ import { fmtDataHora } from "../formato.js";
 import EtiquetaVisual from "../components/EtiquetaVisual.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const auth = useAuthStore();
 const lista = ref([]);
@@ -223,6 +225,9 @@ async function cancelar(e) {
     erro.value = err.message;
   }
 }
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => linhas.value, "etiquetas");
 </script>
 
 <template>
@@ -351,7 +356,7 @@ async function cancelar(e) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="e in linhas" :key="e.id">
+          <tr v-for="e in pag.itens.value" :key="e.id">
             <td><input type="checkbox" :checked="selecionadas.has(e.id)" :aria-label="`Selecionar ${e.codigo}`" @change="alternar(e)" /></td>
             <td class="mono negrito">{{ e.codigo }}</td>
             <td>
@@ -381,6 +386,7 @@ async function cancelar(e) {
           <tr v-if="!lista.length && !carregando"><td :colspan="filtro.todos ? 10 : 9" class="vazio">Nenhuma etiqueta ainda. {{ auth.pode("etiquetas.emitir") ? "Informe a quantidade e clique em Gerar etiquetas." : "" }}</td></tr>
         </tbody>
       </table>
+      <Paginacao :p="pag" />
     </div>
   </div>
 </template>

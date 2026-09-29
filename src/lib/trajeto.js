@@ -23,6 +23,8 @@ export const serializarParadas = (paradas = []) =>
   ordenarParadas(paradas).map((p) => ({
     id: p.id, localId: p.localId, fase: p.fase, ordem: p.ordem, passouEm: p.passouEm, registradoPor: p.registradoPor, origemRegistro: p.origemRegistro,
     nome: p.local?.nome, cidade: p.local?.cidade, uf: p.local?.uf,
+    latitude: p.local?.latitude === null || p.local?.latitude === undefined ? null : Number(p.local.latitude),
+    longitude: p.local?.longitude === null || p.local?.longitude === undefined ? null : Number(p.local.longitude),
     // Ponto de Carregamento usado como parada aparece com esse rótulo (não "Fábrica"/"Armazém").
     tipo: p.local?.tipo?.funcao === "PARADA" ? p.local.tipo.nome : "Ponto de Carregamento",
     tempoParadaHoras: tempoParadaDoLocal(p.local),
@@ -114,17 +116,45 @@ export async function validarTrajeto(pontos, container) {
 
 const descreverTrajeto = (nomes) => nomes.join(" → ");
 
+const seqDe = (c, paradas) => {
+  const ord = ordenarParadas(paradas);
+  return [c.portoRetiradaId, ...ord.filter((p) => p.fase === "ANTES_CARREGAMENTO").map((p) => p.localId), ...(c.localCarregamentoId ? [c.localCarregamentoId] : []), ...ord.filter((p) => p.fase === "APOS_CARREGAMENTO").map((p) => p.localId), c.portoEntregaId];
+};
+const CAMPOS_TRAJETO = [["portoRetiradaId", "Retirada"], ["localCarregamentoId", "Carregamento"], ["portoEntregaId", "Entrega"]];
+
+/**
+ * Registra a mudança no trajeto (aba Histórico): antes/depois e a lista do que mudou. Sem mudança,
+ * não grava nada. antes/depois: { portoRetiradaId, localCarregamentoId, portoEntregaId, paradas? }
+ * (paradas ausentes = as atuais do container, que não mudaram). origem: FICHA | TRAJETO | QR.
+ */
+export async function registrarMudancaTrajeto(tx, { container, antes, depois, usuarioEmail, origem }) {
+  const atuais = antes.paradas ?? depois.paradas ?? await tx.paradaContainer.findMany({ where: { containerId: container.id }, select: { localId: true, fase: true, ordem: true } });
+  const pa = antes.paradas ?? atuais;
+  const pd = depois.paradas ?? atuais;
+  const ids = [...new Set([...seqDe(antes, pa), ...seqDe(depois, pd), ...CAMPOS_TRAJETO.flatMap(([c]) => [antes[c], depois[c]])].filter(Boolean))];
+  const nome = new Map((await tx.local.findMany({ where: { id: { in: ids } }, select: { id: true, nome: true } })).map((l) => [l.id, l.nome]));
+  const n = (id) => (id ? nome.get(id) ?? "?" : "—");
+  const detalhes = [];
+  for (const [campo, rotulo] of CAMPOS_TRAJETO) {
+    if ((antes[campo] ?? null) !== (depois[campo] ?? null)) detalhes.push(`${rotulo}: ${n(antes[campo])} → ${n(depois[campo])}`);
+  }
+  const chave = (p) => `${p.localId}`;
+  const idsAntes = new Set(pa.map(chave));
+  const idsDepois = new Set(pd.map(chave));
+  for (const p of pd) if (!idsAntes.has(chave(p))) detalhes.push(`+ parada: ${n(p.localId)}`);
+  for (const p of pa) if (!idsDepois.has(chave(p))) detalhes.push(`− parada: ${n(p.localId)}`);
+  const textoAntes = descreverTrajeto(seqDe(antes, pa).map(n));
+  const textoDepois = descreverTrajeto(seqDe(depois, pd).map(n));
+  if (!detalhes.length && textoAntes !== textoDepois) detalhes.push("Ordem dos pontos de parada alterada");
+  if (!detalhes.length) return null;
+  return tx.mudancaTrajeto.create({
+    data: { containerId: container.id, usuarioEmail, origem, antes: textoAntes, depois: textoDepois, detalhes, aposPlanejado: Boolean(container.planejamento) },
+  });
+}
+
 /** Grava o trajeto validado (dentro da transação de quem chama) e devolve a descrição antes/depois. */
 export async function gravarTrajeto(tx, container, t, usuarioEmail) {
-  const nomes = async (seq) => {
-    const locais = new Map((await tx.local.findMany({ where: { id: { in: seq.filter(Boolean) } }, select: { id: true, nome: true } })).map((l) => [l.id, l.nome]));
-    return seq.map((id) => locais.get(id) ?? "—");
-  };
-  const seqDe = (c, paradas) => {
-    const ord = ordenarParadas(paradas);
-    return [c.portoRetiradaId, ...ord.filter((p) => p.fase === "ANTES_CARREGAMENTO").map((p) => p.localId), ...(c.localCarregamentoId ? [c.localCarregamentoId] : []), ...ord.filter((p) => p.fase === "APOS_CARREGAMENTO").map((p) => p.localId), c.portoEntregaId];
-  };
-  const antes = descreverTrajeto(await nomes(seqDe(container, container.paradas ?? [])));
+  const paradasAntes = (container.paradas ?? []).map((p) => ({ localId: p.localId, fase: p.fase, ordem: p.ordem }));
 
   await tx.container.update({
     where: { id: container.id },
@@ -136,7 +166,9 @@ export async function gravarTrajeto(tx, container, t, usuarioEmail) {
     if (p.id) await tx.paradaContainer.update({ where: { id: p.id }, data: { localId: p.localId, fase: p.fase, ordem: p.ordem } });
     else await tx.paradaContainer.create({ data: { containerId: container.id, localId: p.localId, fase: p.fase, ordem: p.ordem } });
   }
-  const depois = descreverTrajeto(await nomes(seqDe(t, t.paradas)));
+  const mudanca = await registrarMudancaTrajeto(tx, { container, antes: { ...container, paradas: paradasAntes }, depois: t, usuarioEmail, origem: "TRAJETO" });
+  const antes = mudanca?.antes ?? "sem mudança";
+  const depois = mudanca?.depois ?? "sem mudança";
   await registrarLog({
     usuarioEmail, acao: "TRAJETO", entidade: "Container", entidadeId: container.id,
     descricao: `Container ${container.numero}: trajeto alterado — antes: ${antes} | agora: ${depois}`,

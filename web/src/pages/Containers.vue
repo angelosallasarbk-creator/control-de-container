@@ -11,6 +11,8 @@ import MarcaQr from "../components/MarcaQr.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
 import { passaFiltroContainers } from "../filtroContainers.js";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -73,6 +75,9 @@ function textoDemurrage(d) {
   if (d.diasExcedidos > 0) return `+${d.diasExcedidos}d · ${fmtMoeda(d.custo, d.moeda)}`;
   return d.encerrada ? "no prazo" : `${d.diasRestantes}d livres`;
 }
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => linhas.value, "containers");
 </script>
 
 <template>
@@ -127,7 +132,7 @@ function textoDemurrage(d) {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in linhas" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
+        <tr v-for="c in pag.itens.value" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
           <td><span class="ponto" :class="c.semaforo" :title="c.semaforo"></span></td>
           <td class="mono negrito" style="white-space: nowrap"><MarcaQr v-if="c.qrVinculado" /> {{ c.numero }}<div v-if="c.booking" class="mudo pequeno">BK {{ c.booking }}</div></td>
           <td>{{ ROTULO_TIPO[c.tipo] }}</td>
@@ -161,6 +166,7 @@ function textoDemurrage(d) {
         <tr v-if="!lista.length && !carregando"><td colspan="12" class="vazio">Nenhum container encontrado.</td></tr>
       </tbody>
     </table>
+      <Paginacao :p="pag" />
   </div>
 
   <NovoContainer v-if="novoAberto" @fechar="novoAberto = false" @criado="criado" />

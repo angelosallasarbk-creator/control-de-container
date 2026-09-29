@@ -6,6 +6,8 @@ import { ROTULO_ALERTA, rotuloEtapa, fmtDataHora, tempoDesde } from "../formato.
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
 import { useOrdenacao } from "../composables/useOrdenacao.js";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const atualizarAlertas = inject("atualizarAlertas", () => {});
 const auth = useAuthStore();
@@ -49,6 +51,9 @@ const ordem = useOrdenacao({
   tratamento: (a) => (a.reconhecidoEm ? `1 ${a.reconhecidoPor}` : "0"),
 });
 const linhas = computed(() => ordem.ordenar(lista.value));
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => linhas.value, "alertas");
 </script>
 
 <template>
@@ -92,7 +97,7 @@ const linhas = computed(() => ordem.ordenar(lista.value));
         </tr>
       </thead>
       <tbody>
-        <tr v-for="a in linhas" :key="a.id">
+        <tr v-for="a in pag.itens.value" :key="a.id">
           <td><span class="chip" :class="a.nivel === 'CRITICO' ? 'vermelho' : 'amarelo'">{{ a.nivel === "CRITICO" ? "Crítico" : "Atenção" }}</span></td>
           <td class="negrito">{{ ROTULO_ALERTA[a.tipo] }}</td>
           <td>
@@ -116,6 +121,7 @@ const linhas = computed(() => ordem.ordenar(lista.value));
         </tr>
       </tbody>
     </table>
+      <Paginacao :p="pag" />
   </div>
 
   <ReconhecerAlerta v-if="selecionado" :alerta="selecionado" @fechar="selecionado = null" @reconhecido="reconhecido" />

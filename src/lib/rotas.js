@@ -111,7 +111,7 @@ export function tempoParadaDoLocal(local) {
 }
 // Select do local de uma parada com o necessário para o nome e o tempo de parada.
 export const SELECT_LOCAL_PARADA = {
-  id: true, nome: true, cidade: true, uf: true, tempoParadaHoras: true,
+  id: true, nome: true, cidade: true, uf: true, tempoParadaHoras: true, latitude: true, longitude: true,
   tipo: { select: { nome: true, funcao: true } },
   grupos: { where: { podeSerParada: true, ativo: true }, select: { cliente: true, fabrica: true, tempoParadaHoras: true }, orderBy: { id: "asc" }, take: 1 },
 };

@@ -453,7 +453,7 @@ export async function resumoRastreamento(containerId) {
   if (!c) return null;
   const [posicoes, mensagens, alertas] = await Promise.all([
     prisma.posicaoContainer.findMany({
-      where: { containerId }, orderBy: { registradaEm: "desc" }, take: 50,
+      where: { containerId }, orderBy: { registradaEm: "desc" }, take: 500,
       select: { id: true, latitude: true, longitude: true, precisaoM: true, origem: true, etapa: true, registradaEm: true, usuario: { select: { nome: true } }, motorista: { select: { nome: true } } },
     }),
     prisma.mensagemSms.findMany({

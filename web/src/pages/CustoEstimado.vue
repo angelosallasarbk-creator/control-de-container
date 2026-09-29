@@ -6,6 +6,8 @@ import { useAuthStore } from "../stores/auth.js";
 import { rotuloEtapa, ROTULO_TIPO, fmtMoeda, fmtDataHora, fmtData } from "../formato.js";
 import { resumir, serieTendencia, impactos, emReais, fmtPorMoeda, moedasSemCotacao, totalContainer, somarEm } from "../custos.js";
 import GraficoBarras from "../components/GraficoBarras.vue";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -177,10 +179,6 @@ const detalhamento = computed(() => {
 });
 
 // Mostra os mais relevantes primeiro; o CSV sempre leva todos.
-const LIMITE_INICIAL = 15;
-const mostrarTodos = ref(false);
-const linhasVisiveis = computed(() => (mostrarTodos.value ? detalhamento.value : detalhamento.value.slice(0, LIMITE_INICIAL)));
-watch([escopoIds, ordem], () => (mostrarTodos.value = false));
 
 const fmtH = (h) => (h ? `${String(h).replace(".", ",")}h` : "—");
 const fmtDias = (h) => (h === null || h === undefined ? "—" : `${(h / 24).toFixed(1).replace(".", ",")}d`);
@@ -206,6 +204,9 @@ function exportarCsv() {
 watch(preset, (p) => {
   if (p !== "custom") carregar();
 });
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => detalhamento.value, "custos");
 </script>
 
 <template>
@@ -352,7 +353,7 @@ watch(preset, (p) => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="c in linhasVisiveis" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
+            <tr v-for="c in pag.itens.value" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
               <td class="mono negrito">{{ c.numero }}<div class="mudo">{{ ROTULO_TIPO[c.tipo] }}</div></td>
               <td v-if="grupoAtual === 'geral'">{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</td>
               <td>{{ c.armador }}</td>
@@ -369,11 +370,7 @@ watch(preset, (p) => {
             <tr v-if="!detalhamento.length"><td colspan="12" class="vazio">Nenhum container gerou custo neste período.</td></tr>
           </tbody>
         </table>
-      </div>
-      <div v-if="detalhamento.length > LIMITE_INICIAL" style="text-align: center; margin-top: 10px">
-        <button class="pequeno" @click="mostrarTodos = !mostrarTodos">
-          {{ mostrarTodos ? `Mostrar só os ${LIMITE_INICIAL} maiores` : `Mostrar todos (${detalhamento.length})` }}
-        </button>
+      <Paginacao :p="pag" />
       </div>
       <div class="mudo pequeno" style="margin-top: 8px">
         Valores estimados a partir das datas registradas e dos parâmetros de cada container (free time, diária, meta e custo/h). Containers cancelados não entram.

@@ -3,6 +3,8 @@ import { onMounted, reactive, ref } from "vue";
 import { api } from "../api.js";
 import { ROTULO_PERFIL, fmtDataHora } from "../formato.js";
 import CampoSenha from "../components/CampoSenha.vue";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const lista = ref([]);
 const erro = ref(null);
@@ -79,6 +81,9 @@ async function alternarAtivo(u) {
     erro.value = e.message;
   }
 }
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => lista.value, "usuarios");
 </script>
 
 <template>
@@ -92,7 +97,7 @@ async function alternarAtivo(u) {
     <table>
       <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Celular</th><th>Criado</th><th>Situação</th><th></th></tr></thead>
       <tbody>
-        <tr v-for="u in lista" :key="u.id" :style="{ opacity: u.ativo ? 1 : 0.55 }">
+        <tr v-for="u in pag.itens.value" :key="u.id" :style="{ opacity: u.ativo ? 1 : 0.55 }">
           <td>{{ u.nome }}</td>
           <td>{{ u.email }}</td>
           <td>
@@ -110,6 +115,7 @@ async function alternarAtivo(u) {
         </tr>
       </tbody>
     </table>
+      <Paginacao :p="pag" />
   </div>
 
   <div v-if="editando" class="fundo-modal" @mousedown.self="editando = null">

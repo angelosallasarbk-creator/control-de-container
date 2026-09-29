@@ -6,6 +6,8 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { fmtDataHora, tempoDesde } from "../formato.js";
 import Icone from "../components/Icone.vue";
+import Paginacao from "../components/Paginacao.vue";
+import { usePaginacao } from "../composables/usePaginacao.js";
 
 const auth = useAuthStore();
 const ehGestor = computed(() => auth.usuario?.perfil === "GESTOR_TRANSPORTADORA");
@@ -139,6 +141,9 @@ async function confirmarPlanilha() {
   }
 }
 const linhasPlanilha = computed(() => (planilha.value?.resultado ?? planilha.value?.previa)?.linhas ?? []);
+
+// Paginação da lista (10/20/50 por página, lembrado neste navegador).
+const pag = usePaginacao(() => visiveis.value, "motoristas");
 </script>
 
 <template>
@@ -190,7 +195,7 @@ const linhasPlanilha = computed(() => (planilha.value?.resultado ?? planilha.val
         <tr><th>Nome</th><th>Celular</th><th v-if="!ehGestor">Transportadora</th><th>Placa</th><th>Situação</th><th>Último acesso</th><th>Acessos</th><th></th></tr>
       </thead>
       <tbody>
-        <tr v-for="m in visiveis" :key="m.id" :style="{ opacity: m.bloqueado ? 0.6 : 1 }">
+        <tr v-for="m in pag.itens.value" :key="m.id" :style="{ opacity: m.bloqueado ? 0.6 : 1 }">
           <td class="negrito">{{ m.nome }}</td>
           <td class="mono" style="white-space: nowrap">{{ fmtCelular(m.celular) }}</td>
           <td v-if="!ehGestor">{{ m.transportadora.nome }}</td>
@@ -205,6 +210,7 @@ const linhasPlanilha = computed(() => (planilha.value?.resultado ?? planilha.val
         </tr>
       </tbody>
     </table>
+      <Paginacao :p="pag" />
   </div>
 
   <!-- Acessos -->
