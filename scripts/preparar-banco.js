@@ -30,10 +30,20 @@ export async function prepararBanco({ url = process.env.DATABASE_URL, senha = pr
     await db.$executeRawUnsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${USUARIO_APP}`);
     await db.$executeRawUnsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${USUARIO_APP}`);
     console.log(`preparar-banco: usuário ${USUARIO_APP} ${existe.length ? "atualizado" : "criado"} (RLS aplicado a ele).`);
-    return true;
   } finally {
     await db.$disconnect();
   }
+  // Confere de verdade a conexão do sistema (pelo mesmo endereço que ele vai usar, ex.: pooler do
+  // Supabase). No build roda ANTES das migrações: se falhar, o deploy para sem mexer no banco.
+  const app = new PrismaClient({ datasourceUrl: urlDaAplicacao({ DATABASE_URL: url, APP_DB_ROLE_PASSWORD: senha }) });
+  try {
+    const [{ usuario, ignora_rls: ignoraRls }] = await app.$queryRaw`SELECT current_user AS usuario, (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS ignora_rls`;
+    if (usuario !== USUARIO_APP || ignoraRls) throw new Error(`conexão do sistema ficou como ${usuario} (ignora RLS: ${ignoraRls}).`);
+    console.log(`preparar-banco: conexão do sistema conferida (${usuario}, sem ignorar o RLS).`);
+  } finally {
+    await app.$disconnect();
+  }
+  return true;
 }
 
 // Endereço de conexão do sistema: o mesmo servidor/banco de DATABASE_URL com o usuário ccs_app.
