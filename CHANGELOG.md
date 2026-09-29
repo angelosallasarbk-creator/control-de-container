@@ -4,6 +4,13 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.0.2 — 29/09/2026 (tag `v3.0.2`)
+
+- **Mapa do Rastreamento em produção mostrava "Access blocked" (403) do OpenStreetMap:** o sistema
+  envia `Referrer-Policy: no-referrer` (segurança) e a política de uso do OpenStreetMap exige saber
+  de qual site vem o pedido. Só as imagens do mapa passam a informar a **origem** do site (sem o
+  caminho da página — nenhum dado do container sai); endereço atualizado para `tile.openstreetmap.org`.
+
 ## 3.0.1 — 29/09/2026 (tag `v3.0.1`)
 
 - **Correção do deploy da 3.0.0** (o build falhou depois das migrações e a 3.0.0 nunca entrou no ar):
