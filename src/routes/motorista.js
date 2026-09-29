@@ -11,8 +11,26 @@ import {
 import { prisma } from "../lib/prisma.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { qrRouter } from "./qr.js";
+import { comOrganizacao, comoPlataforma, comoSistema } from "../lib/tenant.js";
 
 export const motoristaRouter = Router();
+// O motorista é da plataforma (sem organização). No QR, a organização vem da etiqueta lida.
+motoristaRouter.use((_req, _res, next) => comoPlataforma(next));
+
+const TOKEN_ETIQUETA = /^[A-Za-z0-9_-]{22}$/;
+async function organizacaoDaEtiqueta(req) {
+  const [, primeiro, segundo] = req.path.split("/");
+  if (primeiro === "codigo" && segundo) {
+    const codigo = `CC-${String(segundo).toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^CC/, "")}`;
+    return (await comoSistema(() => prisma.etiquetaQR.findUnique({ where: { codigo }, select: { organizacaoId: true } })))?.organizacaoId ?? null;
+  }
+  const token = TOKEN_ETIQUETA.test(primeiro ?? "") ? primeiro : req.query.etiqueta;
+  if (!token || !TOKEN_ETIQUETA.test(String(token))) return null;
+  return (await comoSistema(() => prisma.etiquetaQR.findUnique({ where: { token: String(token) }, select: { organizacaoId: true } })))?.organizacaoId ?? null;
+}
+function naOrganizacaoDaEtiqueta(req, _res, next) {
+  organizacaoDaEtiqueta(req).then((org) => (org ? comOrganizacao(org, next) : next())).catch(next);
+}
 
 const limitador = (limit, mensagem) => rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: true, legacyHeaders: false, message: { erro: mensagem } });
 const limiteCodigo = limitador(10, "Muitos pedidos de código deste aparelho. Aguarde alguns minutos.");
@@ -59,7 +77,7 @@ comSessao.post("/sair", asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
-comSessao.use("/qr", qrRouter);
+comSessao.use("/qr", naOrganizacaoDaEtiqueta, qrRouter);
 
 motoristaRouter.use(comSessao);
 motoristaRouter.use((_req, _res, next) => next(erroHttp(404, "Rota não encontrada.")));

@@ -14,6 +14,8 @@
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
+import { comoSistema } from "./tenant.js";
+import { paraCadaOrganizacao } from "./organizacoes.js";
 import { registrarLog } from "./auditoria.js";
 import { erroHttp } from "./asyncHandler.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -413,6 +415,13 @@ async function pedidoDoCodigo(codigo, agora) {
   return { pedido: p };
 }
 
+// Organização dona do link (o link público chega sem login): consulta em modo sistema.
+export async function organizacaoDoCodigo(codigo) {
+  if (!codigo || !/^[A-Za-z0-9_-]{16,64}$/.test(String(codigo))) return null;
+  const p = await comoSistema(() => prisma.solicitacaoPosicao.findUnique({ where: { tokenHash: hashDoCodigo(codigo) }, select: { organizacaoId: true } }));
+  return p?.organizacaoId ?? null;
+}
+
 export async function conferirPedido(codigo, agora = new Date()) {
   const { pedido, erro, respondida } = await pedidoDoCodigo(codigo, agora);
   if (!pedido) return { valido: false, mensagem: erro, respondida: Boolean(respondida) };
@@ -500,15 +509,19 @@ export async function resumoRastreamento(containerId) {
  * Só apaga pelo critério de data, nada mais (posições recentes e sessões válidas ficam).
  */
 export async function purgarDadosAntigos(agora = new Date()) {
-  const config = await lerConfiguracao();
   const dias = (n) => new Date(agora.getTime() - n * 24 * 60 * MIN);
-  const [posicoes, codigos, sessoes] = await Promise.all([
-    prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } }),
+  // Posições: pela retenção configurada em cada organização.
+  const porOrg = await paraCadaOrganizacao(async () => {
+    const config = await lerConfiguracao();
+    return prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } });
+  }, "Retenção");
+  const posicoes = { count: porOrg.reduce((s, x) => s + (x?.count ?? 0), 0) };
+  const [codigos, sessoes] = await Promise.all([
     prisma.codigoAcessoMotorista.deleteMany({ where: { criadoEm: { lt: dias(1) } } }),
     prisma.sessaoMotorista.deleteMany({ where: { OR: [{ expiraEm: { lt: dias(30) } }, { revogadaEm: { lt: dias(30) } }] } }),
   ]);
   if (posicoes.count || codigos.count || sessoes.count) {
-    console.log(`Retenção: ${posicoes.count} posição(ões) com mais de ${config.retencaoPosicoesDias} dias, ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
+    console.log(`Retenção: ${posicoes.count} posição(ões) antiga(s), ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
   }
   return { posicoes: posicoes.count, codigos: codigos.count, sessoes: sessoes.count };
 }
@@ -520,7 +533,8 @@ export async function rodadaRastreamento() {
   if (rodando) return null;
   rodando = true;
   try {
-    const r = await executarRastreamento();
+    const porOrg = await paraCadaOrganizacao(() => executarRastreamento(), "Rastreamento");
+    const r = { enviados: porOrg.reduce((s, x) => s + (x?.enviados ?? 0), 0) };
     if (r.enviados) console.log(`Rastreamento: ${r.enviados} pedido(s) de posição enviado(s).`);
     return r;
   } catch (err) {

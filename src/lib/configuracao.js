@@ -1,4 +1,5 @@
 import { prisma } from "./prisma.js";
+import { organizacaoAtual, contextoAtual } from "./tenant.js";
 
 // Parâmetros globais editáveis na tela de Configurações.
 export const CONFIG_PADRAO = {
@@ -45,6 +46,9 @@ export const CONFIG_PADRAO = {
 };
 
 export async function lerConfiguracao() {
+  // Configurações são por organização. Em modo sistema (sem organização escolhida) só os padrões —
+  // nunca misturar as configurações de clientes diferentes.
+  if (contextoAtual()?.sistema) return { ...CONFIG_PADRAO };
   const linhas = await prisma.configuracao.findMany();
   const config = { ...CONFIG_PADRAO };
   for (const { chave, valor } of linhas) {
@@ -58,7 +62,8 @@ export async function salvarConfiguracao(parcial) {
   for (const [chave, valor] of Object.entries(parcial)) {
     if (!(chave in CONFIG_PADRAO)) continue;
     await prisma.configuracao.upsert({
-      where: { chave },
+      // Chave única por organização (v3.0).
+      where: { organizacaoId_chave: { organizacaoId: organizacaoAtual(), chave } },
       create: { chave, valor: String(valor) },
       update: { valor: String(valor) },
     });

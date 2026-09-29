@@ -12,6 +12,21 @@ if (!/_test(\?|$)/.test(TEST_DATABASE_URL)) {
   throw new Error("TEST_DATABASE_URL precisa apontar para um banco cujo nome termina em _test (o teste apaga tudo).");
 }
 process.env.DATABASE_URL = TEST_DATABASE_URL;
+// Multi-tenant: as consultas DIRETAS deste arquivo (fora de uma requisição) rodam na organização da
+// migração (AS TECH LOG, id 1) por meio de naOrg/naOrgPrisma. O código do sistema não tem atalho de
+// teste: rota sem contexto de organização falha aqui também.
+const ORG_TESTE = 1;
+let comOrganizacao;
+const naOrg = (fn) => (...args) => comOrganizacao(ORG_TESTE, () => fn(...args));
+const naOrgPrisma = (cliente) => new Proxy(cliente, {
+  get(alvo, prop) {
+    const v = alvo[prop];
+    if (typeof prop === "string" && !prop.startsWith("$") && v && typeof v === "object") {
+      return new Proxy(v, { get: (m, metodo) => (typeof m[metodo] === "function" ? naOrg(m[metodo].bind(m)) : m[metodo]) });
+    }
+    return v;
+  },
+});
 process.env.JWT_SECRET ??= "segredo-apenas-para-teste";
 // Testes nunca chamam o serviço de rota externo: sem chave, distância = linha reta × fator.
 process.env.ORS_API_KEY = "";
@@ -28,8 +43,9 @@ async function logar(email) {
 
 before(async () => {
   execSync("npx prisma migrate reset --force --skip-seed", { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL }, stdio: "ignore" });
-  ({ prisma } = await import("./lib/prisma.js"));
-  ({ sincronizarTodos } = await import("./lib/alertas.js"));
+  ({ comOrganizacao } = await import("./lib/tenant.js"));
+  prisma = naOrgPrisma((await import("./lib/prisma.js")).prisma);
+  sincronizarTodos = naOrg((await import("./lib/alertas.js")).sincronizarTodos);
   const { criarApp } = await import("./app.js");
   app = criarApp();
 
@@ -905,7 +921,7 @@ test("atraso na coleta programada: alerta abre, escala para crítico e encerra n
   const cfgAtual = (await agentes.ADMIN.get("/api/configuracao")).body;
   assert.equal(cfgAtual.atrasoColetaCriticoHoras, 4);
   await agentes.ADMIN.put("/api/configuracao").send({ ...cfgAtual, atrasoColetaCriticoHoras: 10 });
-  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  const sincronizarAlertas = naOrg((await import("./lib/alertas.js")).sincronizarAlertas);
   await sincronizarAlertas(atrasado.body.id);
   assert.equal((await aberto())?.nivel, "ATENCAO");
   await agentes.ADMIN.put("/api/configuracao").send({ ...cfgAtual });
@@ -931,7 +947,7 @@ test("mensagem do alerta aberto acompanha o tempo (não fica congelada no texto 
   const aberto = () => prisma.alerta.findFirst({ where: { containerId: c.body.id, tipo: "ATRASO_COLETA", chaveAberta: { not: null } } });
   const antes = await aberto();
   await prisma.alerta.update({ where: { id: antes.id }, data: { mensagem: "texto antigo: atrasada há 6 min" } });
-  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  const sincronizarAlertas = naOrg((await import("./lib/alertas.js")).sincronizarAlertas);
   await sincronizarAlertas(c.body.id);
   const depois = await aberto();
   assert.equal(depois.id, antes.id, "mesmo alerta (não reabre)");
@@ -1037,7 +1053,7 @@ test("login: 'lembrar' = cookie persistente de 30 dias; sem lembrar = cookie de 
 
 test("esqueci minha senha: link por e-mail, uso único, expira, resposta não revela a conta", async () => {
   const { caixaDeSaida } = await import("./lib/email.js");
-  const { prisma: db } = await import("./lib/prisma.js");
+  const db = prisma;
   await agentes.ADMIN.post("/api/usuarios").send({ email: "reset@teste.local", nome: "Pessoa Reset", perfil: "OPERADOR", senha: "senha-antiga-123" });
   const sessaoAntiga = request.agent(app);
   assert.equal((await sessaoAntiga.post("/api/auth/login").send({ email: "reset@teste.local", senha: "senha-antiga-123", lembrar: true })).status, 200);
@@ -1096,7 +1112,7 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
 });
 
 test("reset de senha: log diz quando o envio é simulado e registra falha do Brevo (e libera novo pedido)", async () => {
-  const { prisma: db } = await import("./lib/prisma.js");
+  const db = prisma;
   await agentes.ADMIN.post("/api/usuarios").send({ email: "falha-envio@teste.local", nome: "Falha Envio", perfil: "OPERADOR", senha: "senha-teste-123" });
 
   // IP próprio para este cenário: o limite de 5 pedidos/15 min por IP já foi usado nos testes anteriores.
@@ -1235,7 +1251,7 @@ test("planilha de containers: modelo com listas, prévia sem gravar, confirma s�
 });
 
 test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de responsável, intervalos, link de posição", async () => {
-  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const { caixaDeSaidaSms } = await import("./lib/sms.js");
   const MIN = 60e3;
   const smsPara = (tel) => caixaDeSaidaSms.filter((s) => s.para === tel);
@@ -1377,7 +1393,7 @@ test("rastreamento por SMS: QR → Container → Usuário → Celular; troca de 
 });
 
 test("rastreamento em trechos críticos: previsão estourada, risco de prazo, parado, sem posição e pedido manual", async () => {
-  const { executarRastreamento } = await import("./lib/rastreamento.js");
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const MIN = 60e3, H = 60 * MIN;
   const T = new Date();
   const at = (ms) => new Date(T.getTime() + ms);
@@ -1482,7 +1498,8 @@ test("rastreamento em trechos críticos: previsão estourada, risco de prazo, pa
 
 test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor da transportadora e retenção", async () => {
   const { caixaDeSaidaSms } = await import("./lib/sms.js");
-  const { executarRastreamento, purgarDadosAntigos } = await import("./lib/rastreamento.js");
+  const { purgarDadosAntigos } = await import("./lib/rastreamento.js");
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const XFF = { "X-Forwarded-For": "198.51.100.20" };
   const codigoDe = (tel) => /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
   const pedir = (ag, celular) => ag.post("/api/motorista/codigo").set(XFF).send({ celular });
@@ -1835,7 +1852,7 @@ test("v1.2 trajeto com Ponto Fiscal: cadastro, editar trajeto, recálculo, Plane
 });
 
 test("v1.3: Ponto de Carregamento como parada (checkbox) e motorista/placa do QR no container", async () => {
-  const { assumirRastreio } = await import("./lib/rastreamento.js");
+  const assumirRastreio = naOrg((await import("./lib/rastreamento.js")).assumirRastreio);
   // Ponto de Carregamento marcado como possível ponto de parada.
   const g = await agentes.SUPERVISOR.post("/api/grupos").send({ cliente: "Parada SA", fabrica: "Fábrica Parada", metaEstadiaHoras: 12 });
   assert.equal(g.status, 201);
@@ -2232,4 +2249,54 @@ test("v2.1: celular do motorista só com os 4 últimos dígitos; completo ao cri
   assert.equal(ed.body.celular, "(••) •••••-7777");
   assert.equal((await prisma.motorista.findUnique({ where: { id: m.id } })).celular, "+5511988887777");
   assert.equal((await agentes.OPERADOR.get(`/api/motoristas/${m.id}`)).status, 403, "sem permissão de cadastro não vê");
+});
+
+test("v3.0 multi-tenant: usuário da organização B não enxerga nem altera dados da A", async () => {
+  const { comoSistema } = await import("./lib/tenant.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const orgB = await comoSistema(() => bruto.organizacao.create({ data: { nome: "Cliente B Teste" } }));
+  const senhaHash = await bcrypt.hash("senha-teste-123", 4);
+  await comOrganizacao(orgB.id, () => bruto.usuario.create({ data: { email: "admin@clienteb.local", nome: "Admin B", perfil: "ADMIN", senhaHash } }));
+  const b = await logar("admin@clienteb.local");
+  const a = agentes.ADMIN;
+
+  // Leituras: nada da A aparece para a B.
+  assert.deepEqual((await b.get("/api/containers?situacao=todos")).body, [], "containers");
+  assert.equal((await b.get(`/api/containers/${ids.reefer}`)).status, 404, "ficha de outra organização");
+  assert.deepEqual((await b.get("/api/locais")).body, [], "locais");
+  assert.deepEqual((await b.get("/api/grupos")).body, [], "pontos de carregamento");
+  assert.deepEqual((await b.get("/api/alertas")).body, [], "alertas");
+  assert.deepEqual((await b.get("/api/usuarios")).body.map((u) => u.email), ["admin@clienteb.local"], "usuários");
+  assert.ok((await b.get("/api/logs")).body.every((l) => !l.descricao.includes("TGHU")), "log");
+  const painel = (await b.get("/api/painel")).body;
+  assert.equal(painel.totais.ativos, 0, "painel");
+
+  // Escritas na A pela B: 404 (não existe para ela) e nada muda.
+  const antes = await prisma.container.findUnique({ where: { id: ids.reefer } });
+  assert.equal((await b.patch(`/api/containers/${ids.reefer}`).send({ booking: "INVADIDO" })).status, 404);
+  assert.equal((await b.post(`/api/containers/${ids.reefer}/avancar`).send({})).status, 404);
+  assert.equal((await b.post(`/api/containers/${ids.reefer}/cancelar`).send({ motivo: "x" })).status, 404);
+  assert.equal((await b.patch(`/api/locais/${ids.santos}`).send({ nome: "Invadido" })).status, 404);
+  const depois = await prisma.container.findUnique({ where: { id: ids.reefer } });
+  assert.equal(depois.booking, antes.booking);
+  assert.equal(depois.status, antes.status);
+
+  // Mesmo nome em organizações diferentes: permitido (únicos por organização).
+  const tipoB = await comOrganizacao(orgB.id, () => bruto.tipoLocal.create({ data: { nome: "Porto / Terminal", funcao: "RETIRADA_ENTREGA", rotuloColeta: "Coleta", rotuloEntrega: "Entrega" } }));
+  const localB = await b.post("/api/locais").send({ nome: "Porto de Santos", tipoId: tipoB.id });
+  assert.equal(localB.status, 201, JSON.stringify(localB.body));
+  assert.ok(!(await a.get("/api/locais")).body.some((l) => l.id === localB.body.id), "A não vê o local da B");
+  // B não usa o tipo de local da A.
+  const tipoA = (await a.get("/api/tipos-local")).body[0];
+  assert.equal((await b.post("/api/locais").send({ nome: "Outro", tipoId: tipoA.id })).status, 400);
+
+  // QR e etiquetas da A: invisíveis para a B.
+  const [etqA] = (await a.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  assert.equal((await b.get(`/api/qr/${etqA.token}`)).status, 404);
+  assert.deepEqual((await b.get("/api/etiquetas")).body.etiquetas ?? (await b.get("/api/etiquetas")).body, []);
+  // Configurações: cada uma com as suas.
+  const cfgB = (await b.get("/api/configuracao")).body;
+  assert.equal((await b.put("/api/configuracao").send({ ...cfgB, kmPorDia: 777 })).status, 200);
+  assert.equal((await b.get("/api/configuracao")).body.kmPorDia, 777);
+  assert.notEqual((await a.get("/api/configuracao")).body.kmPorDia, 777);
 });

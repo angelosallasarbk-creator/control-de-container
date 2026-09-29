@@ -15,6 +15,7 @@ enum Perfil {
   TRANSPORTADOR // só telas do QR; ao ler a etiqueta registra a coleta (local de retirada)
   PORTARIA // QR + Pátio (consulta); ao ler a etiqueta registra entrada/saída no ponto de carregamento
   GESTOR_TRANSPORTADORA // só a tela de Motoristas da própria transportadora (bloquear, sessões, importar)
+  PLATAFORMA // administrador da plataforma: cria organizações e o 1º admin; não vê dados dos clientes
 }
 
 // Ciclo de exportação: retira vazio no porto → ova na fábrica → entrega cheio no terminal.
@@ -94,11 +95,14 @@ enum StatusEtiqueta {
 }
 
 model Usuario {
-  id                 Int       @id @default(autoincrement())
-  email              String    @unique
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0). Vazio: plataforma.
+  organizacaoId      Int?
+  organizacao        Organizacao? @relation(fields: [organizacaoId], references: [id])
+  id                 Int          @id @default(autoincrement())
+  email              String       @unique
   nome               String
   senhaHash          String
-  perfil             Perfil    @default(VISUALIZACAO)
+  perfil             Perfil       @default(VISUALIZACAO)
   // Permissões personalizadas (lista de chaves de src/lib/permissoes.js). null = padrão do perfil.
   permissoes         Json?
   // Sessões (tokens) emitidas antes deste instante deixam de valer — ex.: senha redefinida.
@@ -106,13 +110,13 @@ model Usuario {
   sessoesValidasApos DateTime?
   // "Esqueci minha senha": só o HASH (SHA-256) do código do link fica no banco; uso único,
   // expira em 30 min; um pedido novo substitui o anterior.
-  resetTokenHash     String?   @unique
+  resetTokenHash     String?      @unique
   resetExpiraEm      DateTime?
   resetSolicitadoEm  DateTime?
   // Celular para SMS (formato E.164, ex.: +5511987654321). Lido no momento de cada envio.
   celular            String?
-  ativo              Boolean   @default(true)
-  criadoEm           DateTime  @default(now())
+  ativo              Boolean      @default(true)
+  criadoEm           DateTime     @default(now())
 
   rastreiosResponsavel Container[]          @relation("RastreioResponsavel")
   posicoesEnviadas     PosicaoContainer[]
@@ -121,21 +125,32 @@ model Usuario {
   // Perfil Gestor da transportadora: de qual transportadora ele cuida dos motoristas.
   transportadoraId     Int?
   transportadora       Transportadora?      @relation(fields: [transportadoraId], references: [id])
+
+  @@index([organizacaoId])
 }
 
 // Região agrupa fábricas; cada região vira uma aba no Pátio.
 model Regiao {
-  id       Int             @id @default(autoincrement())
-  nome     String          @unique
-  ativo    Boolean         @default(true)
-  criadoEm DateTime        @default(now())
-  grupos   GrupoOperacao[]
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao     @relation(fields: [organizacaoId], references: [id])
+  id            Int             @id @default(autoincrement())
+  nome          String
+  ativo         Boolean         @default(true)
+  criadoEm      DateTime        @default(now())
+  grupos        GrupoOperacao[]
+
+  @@unique([organizacaoId, nome])
+  @@index([organizacaoId])
 }
 
 // Grupo de operação = Ponto de Carregamento (Cliente + Fábrica). Cada grupo tem sua meta de estadia.
 // A região é da fábrica: todos os grupos da mesma fábrica ficam na mesma região
 // (garantido na validação do cadastro, ver routes/cadastros.js).
 model GrupoOperacao {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId       Int
+  organizacao         Organizacao    @relation(fields: [organizacaoId], references: [id])
   id                  Int            @id @default(autoincrement())
   cliente             String
   fabrica             String
@@ -156,16 +171,20 @@ model GrupoOperacao {
   criadoEm            DateTime       @default(now())
   containers          Container[]
 
-  @@unique([cliente, fabrica])
+  @@unique([organizacaoId, cliente, fabrica])
   @@index([regiaoId])
+  @@index([organizacaoId])
 }
 
 // Tipo de local cadastrável (Fábrica, Armazém, Porto / Terminal, Terminal Ferroviário…).
 // Os rótulos dão nome às etapas do container que acontecem nesse tipo de local
 // (ex.: "Coleta ferroviária"); só os da função do tipo são usados.
 model TipoLocal {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao  @relation(fields: [organizacaoId], references: [id])
   id            Int          @id @default(autoincrement())
-  nome          String       @unique
+  nome          String
   funcao        FuncaoLocal
   rotuloColeta  String? // RETIRADA_ENTREGA
   rotuloEntrega String? // RETIRADA_ENTREGA
@@ -175,13 +194,19 @@ model TipoLocal {
   criadoEm      DateTime     @default(now())
   locais        Local[]
   etapasFluxo   EtapaFluxo[]
+
+  @@unique([organizacaoId, nome])
+  @@index([organizacaoId])
 }
 
 // Tipo de Operação (Exportação padrão, Coleta de cheio, Importação, Transferência…): define o fluxo
 // de etapas do container. O fluxo é copiado para Container.fluxo na criação do container.
 model TipoOperacao {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId  Int
+  organizacao    Organizacao     @relation(fields: [organizacaoId], references: [id])
   id             Int             @id @default(autoincrement())
-  nome           String          @unique
+  nome           String
   descricao      String?
   ativo          Boolean         @default(true)
   padrao         Boolean         @default(false) // usado quando o container não informa o tipo
@@ -191,11 +216,17 @@ model TipoOperacao {
   criadoEm       DateTime        @default(now())
   etapas         EtapaFluxo[]
   containers     Container[]
+
+  @@unique([organizacaoId, nome])
+  @@index([organizacaoId])
 }
 
 // Etapa do fluxo de um Tipo de Operação, em ordem. O local pode ser restrito por função
 // (ex.: qualquer porto/terminal) ou por um tipo de local específico, com um local sugerido.
 model EtapaFluxo {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId   Int
+  organizacao     Organizacao  @relation(fields: [organizacaoId], references: [id])
   id              Int          @id @default(autoincrement())
   tipoOperacaoId  Int
   tipoOperacao    TipoOperacao @relation(fields: [tipoOperacaoId], references: [id], onDelete: Cascade)
@@ -209,12 +240,16 @@ model EtapaFluxo {
   localSugerido   Local?       @relation("LocalSugeridoEtapa", fields: [localSugeridoId], references: [id])
 
   @@index([tipoOperacaoId])
+  @@index([organizacaoId])
 }
 
 // Ponto físico do trajeto; o tipo define se é carregamento ou retirada/entrega.
 model Local {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId    Int
+  organizacao      Organizacao    @relation(fields: [organizacaoId], references: [id])
   id               Int            @id @default(autoincrement())
-  nome             String         @unique
+  nome             String
   tipoId           Int
   tipo             TipoLocal      @relation(fields: [tipoId], references: [id])
   endereco         String?
@@ -238,28 +273,37 @@ model Local {
   paradas           ParadaContainer[]
   etapasSugeridas   EtapaFluxo[]      @relation("LocalSugeridoEtapa")
 
+  @@unique([organizacaoId, nome])
   @@index([tipoId])
+  @@index([organizacaoId])
 }
 
 // Cache da distância rodoviária entre dois locais (calculada uma vez; recalculada se as
 // coordenadas mudarem). fonte: ORS = rota de caminhão; ESTIMADA = linha reta × fator.
 model DistanciaRota {
-  id          Int      @id @default(autoincrement())
-  origemId    Int
-  origem      Local    @relation("Origem", fields: [origemId], references: [id], onDelete: Cascade)
-  destinoId   Int
-  destino     Local    @relation("Destino", fields: [destinoId], references: [id], onDelete: Cascade)
-  distanciaKm Decimal  @db.Decimal(8, 1)
-  fonte       String
-  calculadoEm DateTime @default(now())
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id])
+  id            Int         @id @default(autoincrement())
+  origemId      Int
+  origem        Local       @relation("Origem", fields: [origemId], references: [id], onDelete: Cascade)
+  destinoId     Int
+  destino       Local       @relation("Destino", fields: [destinoId], references: [id], onDelete: Cascade)
+  distanciaKm   Decimal     @db.Decimal(8, 1)
+  fonte         String
+  calculadoEm   DateTime    @default(now())
 
   @@unique([origemId, destinoId])
+  @@index([organizacaoId])
 }
 
 // Armador = dono do container; define o free time e o valor da diária de demurrage.
 model Armador {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId       Int
+  organizacao         Organizacao @relation(fields: [organizacaoId], references: [id])
   id                  Int         @id @default(autoincrement())
-  nome                String      @unique
+  nome                String
   freeTimeDias        Int
   valorDiaria         Decimal     @db.Decimal(12, 2)
   moeda               String      @default("USD")
@@ -267,6 +311,9 @@ model Armador {
   ativo               Boolean     @default(true)
   criadoEm            DateTime    @default(now())
   containers          Container[]
+
+  @@unique([organizacaoId, nome])
+  @@index([organizacaoId])
 }
 
 // Produto = faixa de temperatura padrão para reefer.
@@ -279,8 +326,11 @@ enum CategoriaProduto {
 }
 
 model Produto {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId     Int
+  organizacao       Organizacao      @relation(fields: [organizacaoId], references: [id])
   id                Int              @id @default(autoincrement())
-  nome              String           @unique
+  nome              String
   categoria         CategoriaProduto @default(REFRIGERADO)
   setpoint          Decimal?         @db.Decimal(5, 1) // vazio em Carga Seca
   tempMin           Decimal?         @db.Decimal(5, 1)
@@ -289,11 +339,17 @@ model Produto {
   ativo             Boolean          @default(true)
   criadoEm          DateTime         @default(now())
   containers        Container[]
+
+  @@unique([organizacaoId, nome])
+  @@index([organizacaoId])
 }
 
 // Uma "passagem" do container pelo processo (coleta → entrega). O mesmo número físico pode
 // voltar em outra exportação, por isso o número não é único; só pode haver uma passagem ativa.
 model Container {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId       Int
+  organizacao         Organizacao     @relation(fields: [organizacaoId], references: [id])
   id                  Int             @id @default(autoincrement())
   numero              String
   tipo                TipoContainer
@@ -380,58 +436,74 @@ model Container {
   @@index([status])
   @@index([grupoId])
   @@index([localCarregamentoId])
+  @@index([organizacaoId])
 }
 
 model EventoContainer {
-  id           Int              @id @default(autoincrement())
-  containerId  Int
-  container    Container        @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  statusDe     StatusContainer?
-  statusPara   StatusContainer
-  ocorridoEm   DateTime // quando aconteceu de fato (pode ser informado retroativamente)
-  registradoEm DateTime         @default(now())
-  usuarioEmail String
-  observacao   String?
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao      @relation(fields: [organizacaoId], references: [id])
+  id            Int              @id @default(autoincrement())
+  containerId   Int
+  container     Container        @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  statusDe      StatusContainer?
+  statusPara    StatusContainer
+  ocorridoEm    DateTime // quando aconteceu de fato (pode ser informado retroativamente)
+  registradoEm  DateTime         @default(now())
+  usuarioEmail  String
+  observacao    String?
 
   @@index([containerId])
+  @@index([organizacaoId])
 }
 
 model LeituraTemperatura {
-  id           Int           @id @default(autoincrement())
-  containerId  Int
-  container    Container     @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  temperatura  Decimal       @db.Decimal(5, 1)
-  lidaEm       DateTime
-  origem       OrigemLeitura
-  fonte        String? // e-mail do operador ou nome do token de integração
-  registradaEm DateTime      @default(now())
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao   @relation(fields: [organizacaoId], references: [id])
+  id            Int           @id @default(autoincrement())
+  containerId   Int
+  container     Container     @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  temperatura   Decimal       @db.Decimal(5, 1)
+  lidaEm        DateTime
+  origem        OrigemLeitura
+  fonte         String? // e-mail do operador ou nome do token de integração
+  registradaEm  DateTime      @default(now())
   // Leitura pela etiqueta QR: qual etiqueta e (se o celular permitiu) onde foi feita.
-  etiquetaId   Int?
-  etiqueta     EtiquetaQR?   @relation(fields: [etiquetaId], references: [id])
-  latitude     Decimal?      @db.Decimal(9, 6)
-  longitude    Decimal?      @db.Decimal(9, 6)
-  precisaoM    Int?
+  etiquetaId    Int?
+  etiqueta      EtiquetaQR?   @relation(fields: [etiquetaId], references: [id])
+  latitude      Decimal?      @db.Decimal(9, 6)
+  longitude     Decimal?      @db.Decimal(9, 6)
+  precisaoM     Int?
 
   // Reenvio da mesma leitura (mesmo container e horário) não duplica.
   @@unique([containerId, lidaEm])
   @@index([containerId, lidaEm])
+  @@index([organizacaoId])
 }
 
 // Lote de etiquetas geradas de uma vez (para reimprimir e rastrear quem gerou).
 model LoteEtiquetas {
-  id         Int          @id @default(autoincrement())
-  quantidade Int
-  criadoEm   DateTime     @default(now())
-  criadoPor  String
-  etiquetas  EtiquetaQR[]
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao  @relation(fields: [organizacaoId], references: [id])
+  id            Int          @id @default(autoincrement())
+  quantidade    Int
+  criadoEm      DateTime     @default(now())
+  criadoPor     String
+  etiquetas     EtiquetaQR[]
 
   // Cada usuário só vê/imprime as etiquetas dos lotes que ele gerou.
   @@index([criadoPor])
+  @@index([organizacaoId])
 }
 
 // Etiqueta QR colada no container. O QR leva uma URL com o `token` (longo, impossível de
 // adivinhar); o `codigo` curto (ex.: CC-7K3F9P) vai impresso para leitura humana/digitação.
 model EtiquetaQR {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId      Int
+  organizacao        Organizacao          @relation(fields: [organizacaoId], references: [id])
   id                 Int                  @id @default(autoincrement())
   codigo             String               @unique
   token              String               @unique
@@ -455,9 +527,13 @@ model EtiquetaQR {
   @@index([containerId])
   @@index([loteId])
   @@index([status])
+  @@index([organizacaoId])
 }
 
 model Alerta {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId  Int
+  organizacao    Organizacao @relation(fields: [organizacaoId], references: [id])
   id             Int         @id @default(autoincrement())
   containerId    Int
   container      Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
@@ -475,105 +551,132 @@ model Alerta {
 
   @@index([containerId])
   @@index([encerradoEm])
+  @@index([organizacaoId])
 }
 
 model TokenIntegracao {
-  id          Int       @id @default(autoincrement())
-  nome        String
-  prefixo     String // primeiros caracteres, só para identificar na tela
-  tokenHash   String    @unique
-  ativo       Boolean   @default(true)
-  criadoEm    DateTime  @default(now())
-  criadoPor   String
-  ultimoUsoEm DateTime?
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id])
+  id            Int         @id @default(autoincrement())
+  nome          String
+  prefixo       String // primeiros caracteres, só para identificar na tela
+  tokenHash     String      @unique
+  ativo         Boolean     @default(true)
+  criadoEm      DateTime    @default(now())
+  criadoPor     String
+  ultimoUsoEm   DateTime?
+
+  @@index([organizacaoId])
 }
 
 model Configuracao {
-  chave String @id
-  valor String
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id])
+  chave         String
+  valor         String
+
+  @@id([organizacaoId, chave])
 }
 
 model LogAuditoria {
-  id           Int      @id @default(autoincrement())
-  usuarioEmail String
-  acao         String
-  entidade     String
-  entidadeId   String?
-  descricao    String
-  dadosAntes   String?
-  dadosDepois  String?
-  criadoEm     DateTime @default(now())
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0). Vazio: plataforma.
+  organizacaoId Int?
+  organizacao   Organizacao? @relation(fields: [organizacaoId], references: [id])
+  id            Int          @id @default(autoincrement())
+  usuarioEmail  String
+  acao          String
+  entidade      String
+  entidadeId    String?
+  descricao     String
+  dadosAntes    String?
+  dadosDepois   String?
+  criadoEm      DateTime     @default(now())
 
   @@index([criadoEm])
+  @@index([organizacaoId])
 }
 
 // Posição GPS do container: enviada pelo link do SMS ou junto de uma leitura do QR.
 model PosicaoContainer {
-  id           Int        @id @default(autoincrement())
-  containerId  Int
-  container    Container  @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  usuarioId    Int?
-  usuario      Usuario?   @relation(fields: [usuarioId], references: [id])
-  motoristaId  Int?
-  motorista    Motorista? @relation(fields: [motoristaId], references: [id])
-  latitude     Decimal    @db.Decimal(9, 6)
-  longitude    Decimal    @db.Decimal(9, 6)
-  precisaoM    Int?
-  origem       String // LINK_SMS | QR
-  etapa        String // status do container no momento
-  registradaEm DateTime   @default(now())
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id])
+  id            Int         @id @default(autoincrement())
+  containerId   Int
+  container     Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  usuarioId     Int?
+  usuario       Usuario?    @relation(fields: [usuarioId], references: [id])
+  motoristaId   Int?
+  motorista     Motorista?  @relation(fields: [motoristaId], references: [id])
+  latitude      Decimal     @db.Decimal(9, 6)
+  longitude     Decimal     @db.Decimal(9, 6)
+  precisaoM     Int?
+  origem        String // LINK_SMS | QR
+  etapa         String // status do container no momento
+  registradaEm  DateTime    @default(now())
 
   @@index([containerId, registradaEm])
+  @@index([organizacaoId])
 }
 
 // Um pedido de posição enviado por SMS. O link leva um código aleatório; só o hash fica aqui.
 model SolicitacaoPosicao {
-  id           Int        @id @default(autoincrement())
-  containerId  Int
-  container    Container  @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id])
+  id            Int         @id @default(autoincrement())
+  containerId   Int
+  container     Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
   // Destinatário: usuário OU motorista.
-  usuarioId    Int?
-  usuario      Usuario?   @relation(fields: [usuarioId], references: [id])
-  motoristaId  Int?
-  motorista    Motorista? @relation(fields: [motoristaId], references: [id])
-  tokenHash    String     @unique
-  criadaEm     DateTime   @default(now())
-  expiraEm     DateTime
-  respondidaEm DateTime?
-  motivo       String? // por que foi pedido (trecho crítico, intervalo, manual…)
+  usuarioId     Int?
+  usuario       Usuario?    @relation(fields: [usuarioId], references: [id])
+  motoristaId   Int?
+  motorista     Motorista?  @relation(fields: [motoristaId], references: [id])
+  tokenHash     String      @unique
+  criadaEm      DateTime    @default(now())
+  expiraEm      DateTime
+  respondidaEm  DateTime?
+  motivo        String? // por que foi pedido (trecho crítico, intervalo, manual…)
 
   @@index([containerId])
+  @@index([organizacaoId])
 }
 
 // Registro de cada SMS (enviado, simulado, falha ou sem celular): conferência e custo.
 model MensagemSms {
-  id          Int        @id @default(autoincrement())
-  containerId Int?
-  container   Container? @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  usuarioId   Int?
-  usuario     Usuario?   @relation(fields: [usuarioId], references: [id])
-  motoristaId Int?
-  motorista   Motorista? @relation(fields: [motoristaId], references: [id])
-  telefone    String?
-  tipo        String // VINCULO | POSICAO
-  status      String // ENVIADA | SIMULADA | FALHA | SEM_CELULAR
-  texto       String
-  erro        String?
-  motivo      String? // pedidos de posição: por que foi pedido
-  criadaEm    DateTime   @default(now())
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0). Vazio: plataforma.
+  organizacaoId Int?
+  organizacao   Organizacao? @relation(fields: [organizacaoId], references: [id])
+  id            Int          @id @default(autoincrement())
+  containerId   Int?
+  container     Container?   @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  usuarioId     Int?
+  usuario       Usuario?     @relation(fields: [usuarioId], references: [id])
+  motoristaId   Int?
+  motorista     Motorista?   @relation(fields: [motoristaId], references: [id])
+  telefone      String?
+  tipo          String // VINCULO | POSICAO
+  status        String // ENVIADA | SIMULADA | FALHA | SEM_CELULAR
+  texto         String
+  erro          String?
+  motivo        String? // pedidos de posição: por que foi pedido
+  criadaEm      DateTime     @default(now())
 
   @@index([containerId, criadaEm])
+  @@index([organizacaoId])
 }
 
 // Transportadora: agrupa os motoristas; o Gestor da transportadora cuida só dos dela.
 model Transportadora {
-  id         Int         @id @default(autoincrement())
-  nome       String      @unique
-  cnpj       String?
-  ativo      Boolean     @default(true)
-  criadoEm   DateTime    @default(now())
-  motoristas Motorista[]
-  gestores   Usuario[]
+  id           Int                         @id @default(autoincrement())
+  nome         String                      @unique
+  cnpj         String?
+  ativo        Boolean                     @default(true)
+  criadoEm     DateTime                    @default(now())
+  motoristas   Motorista[]
+  gestores     Usuario[]
+  organizacoes TransportadoraOrganizacao[]
 }
 
 // Motorista: NÃO é usuário do sistema. Identidade = celular verificado por código SMS; acessa só
@@ -595,7 +698,8 @@ model Motorista {
   criadoPor        String? // null = cadastrou-se pelo QR; senão, quem importou/cadastrou
 
   sessoes             SessaoMotorista[]
-  rastreios           Container[]          @relation("RastreioMotorista")
+  organizacoes        MotoristaOrganizacao[]
+  rastreios           Container[]            @relation("RastreioMotorista")
   posicoes            PosicaoContainer[]
   solicitacoesPosicao SolicitacaoPosicao[]
   mensagensSms        MensagemSms[]
@@ -637,6 +741,9 @@ model SessaoMotorista {
 // Ponto de parada no trajeto de um container (ex.: Ponto Fiscal). A ordem é a do trajeto dentro da
 // fase (antes/depois do carregamento). A passagem é um marco: não muda o status do container.
 model ParadaContainer {
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId  Int
+  organizacao    Organizacao   @relation(fields: [organizacaoId], references: [id])
   id             Int           @id @default(autoincrement())
   containerId    Int
   container      Container     @relation(fields: [containerId], references: [id], onDelete: Cascade)
@@ -653,15 +760,19 @@ model ParadaContainer {
   criadoEm       DateTime      @default(now())
 
   @@index([containerId])
+  @@index([organizacaoId])
 }
 
 // Mudança no trajeto do container (retirada, carregamento, entrega ou paradas), com o antes e o
 // depois. aposPlanejado = o container já tinha o Planejado (plano congelado) quando mudou.
 model MudancaTrajeto {
-  id            Int       @id @default(autoincrement())
+  // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id])
+  id            Int         @id @default(autoincrement())
   containerId   Int
-  container     Container @relation(fields: [containerId], references: [id], onDelete: Cascade)
-  ocorridoEm    DateTime  @default(now())
+  container     Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  ocorridoEm    DateTime    @default(now())
   usuarioEmail  String
   origem        String // FICHA (editar dados) | TRAJETO (Editar trajeto) | QR (leitura da coleta)
   antes         String
@@ -670,4 +781,68 @@ model MudancaTrajeto {
   aposPlanejado Boolean
 
   @@index([containerId])
+  @@index([organizacaoId])
+}
+
+// Organização = cliente da plataforma (multi-tenant, v3.0). Cada cliente só enxerga os próprios
+// dados: filtro automático na aplicação (lib/tenant.js) + Row-Level Security no PostgreSQL.
+model Organizacao {
+  id        Int      @id @default(autoincrement())
+  nome      String   @unique
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+  criadoPor String?
+
+  usuarios            Usuario[]
+  regioes             Regiao[]
+  grupos              GrupoOperacao[]
+  tiposLocal          TipoLocal[]
+  tiposOperacao       TipoOperacao[]
+  etapasFluxo         EtapaFluxo[]
+  locais              Local[]
+  distancias          DistanciaRota[]
+  armadores           Armador[]
+  produtos            Produto[]
+  containers          Container[]
+  eventos             EventoContainer[]
+  leituras            LeituraTemperatura[]
+  lotesEtiquetas      LoteEtiquetas[]
+  etiquetas           EtiquetaQR[]
+  alertas             Alerta[]
+  tokensIntegracao    TokenIntegracao[]
+  configuracoes       Configuracao[]
+  logs                LogAuditoria[]
+  posicoes            PosicaoContainer[]
+  solicitacoesPosicao SolicitacaoPosicao[]
+  mensagensSms        MensagemSms[]
+  paradas             ParadaContainer[]
+  mudancasTrajeto     MudancaTrajeto[]
+  motoristas          MotoristaOrganizacao[]
+  transportadoras     TransportadoraOrganizacao[]
+}
+
+// Motorista (cadastro único na plataforma) visível para a organização: criado quando ele lê um QR
+// ou registra uma carga daquele cliente (ou o cliente o cadastra).
+model MotoristaOrganizacao {
+  motoristaId   Int
+  motorista     Motorista   @relation(fields: [motoristaId], references: [id], onDelete: Cascade)
+  organizacaoId Int
+  organizacao   Organizacao @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+  desde         DateTime    @default(now())
+
+  @@id([motoristaId, organizacaoId])
+  @@index([organizacaoId])
+}
+
+// Transportadora (global) visível para a organização: quando um motorista dela passa a ser visível
+// ou quando o próprio cliente a cadastra.
+model TransportadoraOrganizacao {
+  transportadoraId Int
+  transportadora   Transportadora @relation(fields: [transportadoraId], references: [id], onDelete: Cascade)
+  organizacaoId    Int
+  organizacao      Organizacao    @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+  desde            DateTime       @default(now())
+
+  @@id([transportadoraId, organizacaoId])
+  @@index([organizacaoId])
 }

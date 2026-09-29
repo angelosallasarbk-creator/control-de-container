@@ -5,6 +5,7 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import { requireAuth } from "./lib/auth.js";
 import { carregarUsuarioAtual, restringirPerfisDeCampo } from "./lib/permissoes.js";
+import { contextoDaRequisicao } from "./lib/tenant.js";
 import { authRouter } from "./routes/auth.js";
 import { cadastrosRouter } from "./routes/cadastros.js";
 import { containersRouter } from "./routes/containers.js";
@@ -47,7 +48,8 @@ export function criarApp() {
 
   // Tudo em /api daqui para baixo exige sessão válida — e relê o usuário no banco (conta
   // desativada ou permissão alterada vale na hora, sem esperar a sessão expirar).
-  app.use("/api", requireAuth, carregarUsuarioAtual, restringirPerfisDeCampo);
+  // Daqui para baixo, toda consulta roda na organização do usuário (lib/tenant.js).
+  app.use("/api", requireAuth, carregarUsuarioAtual, contextoDaRequisicao, restringirPerfisDeCampo);
   app.use("/api", cadastrosRouter);
   app.use("/api/containers", containersRouter);
   app.use("/api/painel", painelRouter);

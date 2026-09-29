@@ -3,6 +3,7 @@
 // "administrar" (usuários, permissões, integração, configurações gerais) é exclusivo do perfil
 // ADMIN e não pode ser concedido — evita que alguém fique trancado fora ou se autopromova.
 import { prisma } from "./prisma.js";
+import { comoSistema } from "./tenant.js";
 
 export const CATALOGO_PERMISSOES = [
   { chave: "containers.operar", grupo: "Containers", nome: "Operar containers", descricao: "Cadastrar containers, avançar etapas, editar dados, registrar temperatura na ficha e reconhecer alertas." },
@@ -65,13 +66,15 @@ export const ehPersonalizado = (usuario) => usuario.perfil !== "ADMIN" && Array.
  */
 export async function carregarUsuarioAtual(req, res, next) {
   try {
-    const u = await prisma.usuario.findUnique({ where: { email: req.usuario.email } });
+    // Busca pelo e-mail (único na plataforma) antes de saber a organização: modo sistema.
+    const u = await comoSistema(() => prisma.usuario.findUnique({ where: { email: req.usuario.email }, include: { organizacao: { select: { nome: true, ativo: true } } } }));
     if (!u || !u.ativo) return res.status(401).json({ erro: "Conta desativada ou inexistente. Fale com um administrador." });
+    if (u.organizacao && !u.organizacao.ativo) return res.status(401).json({ erro: `A organização ${u.organizacao.nome} está desativada. Fale com o administrador da plataforma.` });
     // Sessão emitida antes da última troca de senha (versão diferente) não vale mais.
     if ((req.usuario.sv ?? 0) !== (u.sessoesValidasApos?.getTime() ?? 0)) {
       return res.status(401).json({ erro: "Sua senha foi alterada. Entre novamente." });
     }
-    req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil, transportadoraId: u.transportadoraId };
+    req.usuario = { ...req.usuario, id: u.id, nome: u.nome, perfil: u.perfil, transportadoraId: u.transportadoraId, organizacaoId: u.organizacaoId, organizacaoNome: u.organizacao?.nome ?? null };
     req.permissoes = permissoesEfetivas(u);
     next();
   } catch (err) {
