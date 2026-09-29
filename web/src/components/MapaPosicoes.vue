@@ -60,8 +60,12 @@ function desenhar() {
 
 onMounted(() => {
   mapa = L.map(refMapa.value, { scrollWheelZoom: false, attributionControl: true });
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  // Política de uso do OpenStreetMap: o pedido das imagens precisa dizer de qual site vem (Referer).
+  // O sistema manda "no-referrer" em tudo (helmet); só nas imagens do mapa enviamos a ORIGEM do site
+  // (sem o caminho da página — nenhum dado do container sai). Sem isso: "Access blocked" (403).
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
+    referrerPolicy: "strict-origin-when-cross-origin",
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
   }).addTo(mapa);
   camada = L.layerGroup().addTo(mapa);
