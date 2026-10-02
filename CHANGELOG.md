@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.4.0 — não publicada
+## 3.4.0 — 02/10/2026 (tag `v3.4.0`)
 
 **Estrutura e desempenho** (análise de segurança da v3.0.2: itens 7, 9 e 12). Publicada junto com
 a 3.1.2, a 3.2.0 e a 3.3.0.
@@ -24,7 +24,7 @@ a 3.1.2, a 3.2.0 e a 3.3.0.
   container — no banco local, 8 containers: de 35–39 para ~9–15 transações e de 211–490 ms para
   59–85 ms. Configurações com cache de 5 s por cliente (invalidado ao salvar).
 
-## 3.3.0 — não publicada
+## 3.3.0 — 02/10/2026 (tag `v3.3.0`, publicada junto com a 3.4.0)
 
 **Endurecimento, custo e LGPD** (análise de segurança da v3.0.2: itens 8, 10, 11, 13, 14, 15, 16, 17
 e 20). Publicada junto com a 3.1.2 e a 3.2.0.
@@ -55,7 +55,7 @@ e 20). Publicada junto com a 3.1.2 e a 3.2.0.
 - Migração `20261007100000_seguranca_3_3` (só acrescenta): `CodigoAcessoMotorista.organizacaoId`,
   `LogAuditoria.motoristaId` e a função `purgar_log_auditoria`.
 
-## 3.2.0 — não publicada
+## 3.2.0 — 02/10/2026 (tag `v3.2.0`, publicada junto com a 3.4.0)
 
 **Segurança antes do primeiro cliente real** (itens da análise de segurança da v3.0.2: 1, 2, 3, 4, 5,
 6, 18, 19 e CPF mascarado). Publicada junto com a 3.1.2.
@@ -88,7 +88,7 @@ e 20). Publicada junto com a 3.1.2 e a 3.2.0.
   `Container_numero_ativo_unico`. ⚠ O Prisma 5 não representa índice parcial: um `prisma migrate dev`
   futuro vai propor removê-lo — não aceite (README, "Banco de dados").
 
-## 3.1.2 — não publicada
+## 3.1.2 — 02/10/2026 (tag `v3.1.2`, publicada junto com a 3.4.0)
 
 - **Ficha → Rastreamento mostra quando o acompanhamento pela página parou.** Antes só virava
   "pausado" 20 min depois da última posição gravada — a ficha seguia "ativo" com a página já parada.
