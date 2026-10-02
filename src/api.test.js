@@ -1056,6 +1056,7 @@ test("login: 'lembrar' = cookie persistente de 30 dias; sem lembrar = cookie de 
 });
 
 test("esqueci minha senha: link por e-mail, uso único, expira, resposta não revela a conta", async () => {
+  const { aguardarEnviosDeRedefinicao } = await import("./routes/auth.js");
   const { caixaDeSaida } = await import("./lib/email.js");
   const db = prisma;
   await agentes.ADMIN.post("/api/usuarios").send({ email: "reset@teste.local", nome: "Pessoa Reset", perfil: "OPERADOR", senha: "senha-antiga-123" });
@@ -1065,7 +1066,9 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
   // Mesma resposta para e-mail existente e inexistente; só o existente recebe e-mail.
   const antes = caixaDeSaida.length;
   const inexistente = await request(app).post("/api/auth/esqueci-senha").send({ email: "ninguem@teste.local" });
+  await aguardarEnviosDeRedefinicao();
   const existente = await request(app).post("/api/auth/esqueci-senha").send({ email: "RESET@teste.local " });
+  await aguardarEnviosDeRedefinicao();
   assert.equal(inexistente.status, 200);
   assert.deepEqual(inexistente.body, existente.body, "resposta idêntica");
   assert.equal(caixaDeSaida.length, antes + 1);
@@ -1080,6 +1083,7 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
 
   // Pedido repetido em menos de 1 min não gera outro e-mail (mesma resposta).
   await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
+  await aguardarEnviosDeRedefinicao();
   assert.equal(caixaDeSaida.length, antes + 1);
 
   // Conferir e redefinir.
@@ -1097,6 +1101,7 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
   // Link expirado não vale.
   await db.usuario.update({ where: { email: "reset@teste.local" }, data: { resetSolicitadoEm: new Date(Date.now() - 120e3) } });
   await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
+  await aguardarEnviosDeRedefinicao();
   const codigo2 = caixaDeSaida.at(-1).texto.match(/\/redefinir-senha\/([A-Za-z0-9_-]+)/)[1];
   await db.usuario.update({ where: { email: "reset@teste.local" }, data: { resetExpiraEm: new Date(Date.now() - 1000) } });
   assert.equal((await request(app).get(`/api/auth/redefinir-senha/${codigo2}`)).body.valido, false, "expirado");
@@ -1112,10 +1117,12 @@ test("esqueci minha senha: link por e-mail, uso único, expira, resposta não re
   const n = caixaDeSaida.length;
   await db.usuario.update({ where: { id: u.id }, data: { resetSolicitadoEm: null } });
   await request(app).post("/api/auth/esqueci-senha").send({ email: "reset@teste.local" });
+  await aguardarEnviosDeRedefinicao();
   assert.equal(caixaDeSaida.length, n, "conta desativada não recebe link");
 });
 
 test("reset de senha: log diz quando o envio é simulado e registra falha do Brevo (e libera novo pedido)", async () => {
+  const { aguardarEnviosDeRedefinicao } = await import("./routes/auth.js");
   const db = prisma;
   await agentes.ADMIN.post("/api/usuarios").send({ email: "falha-envio@teste.local", nome: "Falha Envio", perfil: "OPERADOR", senha: "senha-teste-123" });
 
@@ -1123,6 +1130,7 @@ test("reset de senha: log diz quando o envio é simulado e registra falha do Bre
   const IP = "203.0.113.77";
   // Sem chave: log deixa claro que foi simulado.
   const r1 = await request(app).post("/api/auth/esqueci-senha").set("X-Forwarded-For", IP).send({ email: "falha-envio@teste.local" });
+  await aguardarEnviosDeRedefinicao();
   assert.equal(r1.status, 200, JSON.stringify(r1.body));
   let log = (await agentes.ADMIN.get("/api/logs?entidade=Usuario")).body;
   assert.ok(log.some((l) => l.acao === "RESET_SENHA_SOLICITADO" && /falha-envio@teste\.local.*envio simulado/.test(l.descricao)), "log indica envio simulado");
@@ -1134,6 +1142,7 @@ test("reset de senha: log diz quando o envio é simulado e registra falha do Bre
   try {
     await db.usuario.update({ where: { email: "falha-envio@teste.local" }, data: { resetSolicitadoEm: null } });
     const publico = await request(app).post("/api/auth/esqueci-senha").set("X-Forwarded-For", IP).send({ email: "falha-envio@teste.local" });
+    await aguardarEnviosDeRedefinicao();
     assert.equal(publico.status, 200, "tela de login continua com a resposta genérica");
     assert.match(publico.body.mensagem, /Se o e-mail estiver cadastrado/);
     log = (await agentes.ADMIN.get("/api/logs?entidade=Usuario")).body;
@@ -1664,7 +1673,9 @@ test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor 
   const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
   const XFF = { "X-Forwarded-For": "198.51.100.20" };
   const codigoDe = (tel) => /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
-  const pedir = (ag, celular) => ag.post("/api/motorista/codigo").set(XFF).send({ celular });
+  // v3.3: o pedido de código exige a etiqueta lida (define o cliente do teto de SMS).
+  const [etqLogin] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const pedir = (ag, celular) => ag.post("/api/motorista/codigo").set(XFF).send({ celular, etiqueta: etqLogin.token });
   const verificar = (ag, celular, codigo) => ag.post("/api/motorista/verificar").set(XFF).send({ celular, codigo });
   const liberarNovoPedido = (celular) => prisma.codigoAcessoMotorista.updateMany({ where: { celular }, data: { criadoEm: new Date(Date.now() - 2 * 60e3) } });
 
@@ -2610,6 +2621,7 @@ test("v3.0: invasão — organização B ataca TODAS as rotas com identificador 
     ["GET /api/motoristas/:id/sessoes", () => b.get(`/api/motoristas/${motoristaSoDaA.id}/sessoes`)],
     ["PATCH /api/motoristas/:id", () => b.patch(`/api/motoristas/${motoristaSoDaA.id}`).send({ bloqueado: true })],
     ["POST /api/motoristas/:id/encerrar-sessoes", () => b.post(`/api/motoristas/${motoristaSoDaA.id}/encerrar-sessoes`).send({})],
+    ["POST /api/motoristas/:id/anonimizar", () => b.post(`/api/motoristas/${motoristaSoDaA.id}/anonimizar`).send({})],
     ["PATCH /api/organizacoes/:id", () => b.patch(`/api/organizacoes/${ORG_TESTE}`).send({ ativo: false })],
     ["GET /api/qr/:token", () => b.get(`/api/qr/${etiqueta.token}`)],
     ["GET /api/qr/codigo/:codigo", () => b.get(`/api/qr/codigo/${etiqueta.codigo}`)],
@@ -2721,7 +2733,8 @@ test("v3.2 segurança: gestor, motorista compartilhado, código curto, cliente d
   const TEL = "+5511955557103";
   const mot = request.agent(app);
   const codigoDe = (tel, re = /codigo de acesso e (\d{6})/) => re.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
-  await mot.post("/api/motorista/codigo").set(XFF).send({ celular: TEL });
+  const [etqLogin] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  await mot.post("/api/motorista/codigo").set(XFF).send({ celular: TEL, etiqueta: etqLogin.token });
   const v = await mot.post("/api/motorista/verificar").set(XFF).send({ celular: TEL, codigo: codigoDe(TEL) });
   const cad = await mot.post("/api/motorista/cadastro").set(XFF).send({ comprovante: v.body.comprovante, nome: "Carlos Compartilhado", transportadoraId: tComum.body.id, aceite: true });
   assert.equal(cad.status, 201, JSON.stringify(cad.body));
@@ -2835,4 +2848,117 @@ test("v3.2 segurança: gestor, motorista compartilhado, código curto, cliente d
   await a.put("/api/configuracao").send(cfg);
 
   for (const id of [cA.body.id, c2.body.id, c3.body.id]) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste 3.2" });
+});
+
+test("v3.3 endurecimento: log imutável, SMS por cliente, ORS, login, LGPD, planilha, IPs e outros", async () => {
+  const { comoSistema } = await import("./lib/tenant.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const { purgarLogsExpirados } = await import("./lib/auditoria.js");
+  const { purgarDadosAntigos } = await import("./lib/rastreamento.js");
+  const { paraCadaOrganizacao } = await import("./lib/organizacoes.js");
+  const { MAX_CODIGOS_POR_HORA_CLIENTE } = await import("./lib/acessoMotorista.js");
+  const jwt = (await import("jsonwebtoken")).default;
+  const a = agentes.ADMIN;
+  const DIA = 24 * 3600e3;
+
+  // ---- Item 8: o sistema (ccs_app) não altera nem apaga o log; a purga vai pela função ----
+  const velho = await prisma.logAuditoria.create({ data: { usuarioEmail: "teste", acao: "TESTE", entidade: "Teste", descricao: "log antigo", criadoEm: new Date(Date.now() - 400 * DIA) } });
+  const novo = await prisma.logAuditoria.create({ data: { usuarioEmail: "teste", acao: "TESTE", entidade: "Teste", descricao: "log novo" } });
+  await assert.rejects(prisma.logAuditoria.deleteMany({ where: { id: novo.id } }), /permission denied|denied/i, "DELETE negado");
+  await assert.rejects(prisma.logAuditoria.updateMany({ where: { id: novo.id }, data: { descricao: "alterado" } }), /permission denied|denied/i, "UPDATE negado");
+  await assert.rejects(comoSistema(() => bruto.$queryRaw`SELECT purgar_log_auditoria(30)`), /365/, "retenção mínima");
+  assert.ok((await purgarLogsExpirados()) >= 1);
+  assert.equal(await prisma.logAuditoria.count({ where: { id: velho.id } }), 0, "antigo apagado pela função");
+  assert.equal(await prisma.logAuditoria.count({ where: { id: novo.id } }), 1, "recente fica");
+
+  // ---- Item 10: código SMS do motorista exige etiqueta válida; teto por cliente ----
+  const XFF = { "X-Forwarded-For": "198.51.100.40" };
+  assert.equal((await request(app).post("/api/motorista/codigo").set(XFF).send({ celular: "11955558001" })).status, 400, "sem etiqueta");
+  const [etq, etqCancelada] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 2 })).body.etiquetas;
+  await agentes.SUPERVISOR.post(`/api/etiquetas/${etqCancelada.id}/cancelar`).send({ motivo: "teste" });
+  assert.equal((await request(app).post("/api/motorista/codigo").set(XFF).send({ celular: "11955558001", etiqueta: etqCancelada.token })).status, 400, "etiqueta cancelada");
+  const ok = await request(app).post("/api/motorista/codigo").set(XFF).send({ celular: "11955558001", etiqueta: etq.token });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal((await prisma.codigoAcessoMotorista.findFirst({ where: { celular: "+5511955558001" } })).organizacaoId, ORG_TESTE);
+  // Cliente no teto: 429 para ele (os outros clientes seguem — o teto é por organizacaoId).
+  const enchidos = Array.from({ length: MAX_CODIGOS_POR_HORA_CLIENTE }, (_, i) => ({ celular: `+55119500${String(i).padStart(5, "0")}`, codigoHash: "x", expiraEm: new Date(Date.now() + 60e3), organizacaoId: ORG_TESTE }));
+  await prisma.codigoAcessoMotorista.createMany({ data: enchidos });
+  assert.equal((await request(app).post("/api/motorista/codigo").set({ "X-Forwarded-For": "198.51.100.41" }).send({ celular: "11955558002", etiqueta: etq.token })).status, 429);
+  await prisma.codigoAcessoMotorista.deleteMany({ where: { codigoHash: "x" } });
+
+  // ---- Item 11: simulação de rota só para quem cadastra container ----
+  assert.equal((await agentes.VISUALIZACAO.get("/api/rotas/estimar")).status, 403);
+
+  // ---- Item 13: e-mail inexistente leva o mesmo tempo (passa pelo bcrypt) ----
+  const tempo = async (email) => {
+    const t0 = performance.now();
+    await request(app).post("/api/auth/login").set("X-Forwarded-For", "198.51.100.42").send({ email, senha: "senha-errada-123" });
+    return performance.now() - t0;
+  };
+  const mediana = (v) => v.sort((x, y) => x - y)[Math.floor(v.length / 2)];
+  const existe = [], naoExiste = [];
+  for (let i = 0; i < 4; i++) { existe.push(await tempo("operador@teste.local")); naoExiste.push(await tempo(`ninguem${i}@teste.local`)); }
+  assert.ok(mediana(naoExiste) > mediana(existe) * 0.5, `inexistente ${mediana(naoExiste).toFixed(0)} ms × existente ${mediana(existe).toFixed(0)} ms`);
+
+  // ---- Item 15: retenção — organização desativada também; telefone dos SMS antigos sai ----
+  const orgInativa = await comoSistema(() => bruto.organizacao.create({ data: { nome: "Cliente Inativo 3.3", ativo: false } }));
+  const visitadas = [];
+  await paraCadaOrganizacao(async (o) => visitadas.push(o.id), "teste", { incluirInativas: true });
+  assert.ok(visitadas.includes(orgInativa.id), "purga percorre as desativadas");
+  const smsVelho = await prisma.mensagemSms.create({ data: { containerId: ids.reefer, telefone: "+5511999990000", tipo: "POSICAO", status: "SIMULADA", texto: "x", criadaEm: new Date(Date.now() - 100 * DIA) } });
+  await purgarDadosAntigos();
+  const depois = await prisma.mensagemSms.findUnique({ where: { id: smsVelho.id } });
+  assert.deepEqual([depois.telefone, depois.texto], [null, "x"], "fica a mensagem, sem o número");
+  // Anonimização do motorista (direito de exclusão).
+  const tr = await a.post("/api/transportadoras").send({ nome: "Transp LGPD 3.3" });
+  const mot = await a.post("/api/motoristas").send({ nome: "Fulano Exclusivo", celular: "11955558010", transportadoraId: tr.body.id, cpf: "529.982.247-25", placa: "ABC1D23" });
+  assert.equal((await logar("gestor-comum@teste.local").then((g) => g.post(`/api/motoristas/${mot.body.id}/anonimizar`))).status, 403, "gestor não anonimiza");
+  const an = await a.post(`/api/motoristas/${mot.body.id}/anonimizar`);
+  assert.equal(an.status, 200, JSON.stringify(an.body));
+  const dbMot = await comoSistema(() => bruto.motorista.findUnique({ where: { id: mot.body.id } }));
+  assert.deepEqual([dbMot.nome, dbMot.cpf, dbMot.placa, dbMot.bloqueado], [`Motorista anonimizado #${mot.body.id}`, null, null, true]);
+  assert.ok(dbMot.celular.startsWith("anonimizado-"));
+  assert.equal((await a.post(`/api/motoristas/${mot.body.id}/anonimizar`)).status, 409, "já anonimizado");
+  const compartilhado = await a.post("/api/motoristas").send({ nome: "Ciclano Compartilhado", celular: "11955558011", transportadoraId: tr.body.id });
+  await comoSistema(() => bruto.motoristaOrganizacao.create({ data: { motoristaId: compartilhado.body.id, organizacaoId: orgInativa.id } }));
+  assert.equal((await a.post(`/api/motoristas/${compartilhado.body.id}/anonimizar`)).status, 409, "compartilhado: pedido à plataforma");
+
+  // ---- Item 16: planilha maior que 1 MB recusada antes de abrir ----
+  const grande = await a.post("/api/containers/importar").set("Content-Type", "application/octet-stream").send(Buffer.alloc(1024 * 1024 + 10, 1));
+  assert.equal(grande.status, 413);
+
+  // ---- Item 17: IPs internos só para quem administra (e nunca em produção) ----
+  assert.deepEqual((await agentes.VISUALIZACAO.get("/api/etiquetas/impressao")).body.sugestoes, []);
+  assert.ok(Array.isArray((await a.get("/api/etiquetas/impressao")).body.sugestoes));
+
+  // ---- Item 20: mensagens que não revelam cadastro de outro cliente; comprovante separado; CSP; log ----
+  const { comOrganizacao: naOrganizacao } = await import("./lib/tenant.js");
+  await naOrganizacao(orgInativa.id, () => bruto.usuario.create({ data: { email: "de-outro-cliente@teste.local", nome: "X", perfil: "ADMIN", senhaHash: "x" } }));
+  const outro = await a.post("/api/usuarios").send({ email: "de-outro-cliente@teste.local", nome: "Y", perfil: "OPERADOR", senha: "senha-teste-123" });
+  assert.deepEqual([outro.status, /não pode ser usado/.test(outro.body.erro)], [409, true], "e-mail de outro cliente: genérico");
+  const mesmo = await a.post("/api/usuarios").send({ email: "operador@teste.local", nome: "Y", perfil: "OPERADOR", senha: "senha-teste-123" });
+  assert.deepEqual([mesmo.status, mesmo.body.erro], [409, "Já existe um usuário com esse e-mail."], "mesmo cliente: mensagem clara");
+  const forjado = jwt.sign({ tipo: "cadastro-motorista", celular: "+5511955558099" }, process.env.JWT_SECRET, { expiresIn: "30m" });
+  assert.equal((await request(app).post("/api/motorista/cadastro").set(XFF).send({ comprovante: forjado, nome: "Forjado Silva", transportadoraId: tr.body.id, aceite: true })).status, 401, "assinado com o segredo da sessão não vale");
+  const csp = (await request(app).get("/api/saude")).headers["content-security-policy"];
+  assert.match(csp ?? "", /script-src 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  // Ação do motorista pelo QR grava o id dele no log.
+  const XFFm = { "X-Forwarded-For": "198.51.100.43" };
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const m = request.agent(app);
+  await m.post("/api/motorista/codigo").set(XFFm).send({ celular: "11955558020", etiqueta: etq.token });
+  const cod = /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === "+5511955558020").at(-1).texto)[1];
+  const v = await m.post("/api/motorista/verificar").set(XFFm).send({ celular: "11955558020", codigo: cod });
+  const cad = await m.post("/api/motorista/cadastro").set(XFFm).send({ comprovante: v.body.comprovante, nome: "Beltrano Log", transportadoraId: tr.body.id, aceite: true });
+  assert.equal(cad.status, 201, JSON.stringify(cad.body));
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cadL = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const c = await a.post("/api/containers").send({ numero: "LOGU3300004", confirmarDigito: true, tipo: "DRY_40", ...cadL });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const vin = await m.post(`/api/motorista/qr/${etq.token}/vincular`).send({ numero: "LOGU3300004" });
+  assert.equal(vin.status, 201, JSON.stringify(vin.body));
+  const logVinculo = await prisma.logAuditoria.findFirst({ where: { acao: "VINCULAR", entidadeId: String(etq.id) } });
+  assert.equal(logVinculo.motoristaId, cad.body.motorista.id);
+  await a.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste 3.3" });
 });

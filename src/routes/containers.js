@@ -225,7 +225,7 @@ async function conferirLinhas(linhas, email) {
 containersRouter.post(
   "/importar",
   requirePermissao("containers.operar"),
-  express.raw({ type: () => true, limit: "5mb" }),
+  express.raw({ type: () => true, limit: "1mb" }),
   asyncHandler(async (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw erroHttp(400, "Envie o arquivo da planilha (.xlsx).");
     const email = req.usuario.email;

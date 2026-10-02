@@ -8,6 +8,7 @@ import { camposFreeTime } from "./fluxo.js";
 const HORA = 60 * 60 * 1000;
 const DIA = 24 * HORA;
 const OFFSET_BRASILIA = -3 * HORA;
+const arred = (v, casas = 2) => Math.round(v * 10 ** casas) / 10 ** casas;
 
 // Moeda do custo de estadia (cadastro "Custo por hora excedida (R$)").
 export const MOEDA_ESTADIA = "BRL";
@@ -21,9 +22,9 @@ export function inicioDoDiaISO(dia) {
   return new Date(Date.parse(`${dia}T00:00:00Z`) - OFFSET_BRASILIA);
 }
 
-const arred = (v, casas = 2) => Math.round(v * 10 ** casas) / 10 ** casas;
-
-// Devolve Map dia → { estadiaHoras, estadiaValor, diarias, demurrageValor }.
+// Devolve Map dia → { estadiaHoras, estadiaValor, diarias, demurrageValor }, SEM arredondar: quem
+// soma arredonda só no total (v3.3, item 14) — arredondar cada dia fazia a tela Custos diferir em
+// 1 centavo da ficha (calcularEstadia) em ~22% dos casos.
 export function custosDiarios(c, agora) {
   const dias = new Map();
   const no = (dia) => {
@@ -60,11 +61,6 @@ export function custosDiarios(c, agora) {
     }
   }
 
-  for (const d of dias.values()) {
-    d.estadiaHoras = arred(d.estadiaHoras, 2);
-    d.estadiaValor = arred(d.estadiaValor);
-    d.demurrageValor = arred(d.demurrageValor);
-  }
   return dias;
 }
 

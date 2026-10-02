@@ -49,7 +49,7 @@ async function baixarArquivo(caminho, nome) {
 async function enviarArquivo(caminho, arquivo) {
   const res = await fetch(`${BASE}${caminho}`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/octet-stream" }, body: arquivo });
   const corpo = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(corpo.erro || (res.status === 413 ? "Arquivo grande demais (máximo 5 MB)." : `Erro ${res.status}`));
+  if (!res.ok) throw new Error(corpo.erro || (res.status === 413 ? "Arquivo grande demais (máximo 1 MB — até 1.000 containers ou 5.000 motoristas por arquivo)." : `Erro ${res.status}`));
   return corpo;
 }
 
@@ -102,7 +102,7 @@ export const api = {
       method: "POST", credentials: "include", headers: { "Content-Type": "application/octet-stream" }, body: arquivo,
     });
     const corpo = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(corpo.erro || (res.status === 413 ? "Arquivo grande demais (máximo 5 MB)." : `Erro ${res.status}`));
+    if (!res.ok) throw new Error(corpo.erro || (res.status === 413 ? "Arquivo grande demais (máximo 1 MB — até 1.000 containers ou 5.000 motoristas por arquivo)." : `Erro ${res.status}`));
     return corpo;
   },
   // Link do SMS de rastreamento (público, sem login).
@@ -134,7 +134,8 @@ export const api = {
   qrPorCodigo: (codigo) => request(`/qr/codigo/${encodeURIComponent(codigo.trim())}`),
 
   // Motorista (sem usuário): entrar pelo celular com código SMS.
-  motoristaPedirCodigo: (celular) => request("/motorista/codigo", { method: "POST", body: { celular } }),
+  // etiqueta: token da etiqueta lida (o motorista sempre chega pelo QR; define o cliente — v3.3).
+  motoristaPedirCodigo: (celular, etiqueta) => request("/motorista/codigo", { method: "POST", body: { celular, etiqueta } }),
   motoristaVerificar: (celular, codigo) => request("/motorista/verificar", { method: "POST", body: { celular, codigo } }),
   motoristaCadastro: (dados) => request("/motorista/cadastro", { method: "POST", body: dados }),
   motoristaEu: () => request("/motorista/eu"),
@@ -154,6 +155,7 @@ export const api = {
   motorista: (id) => request(`/motoristas/${id}`),
   sessoesMotorista: (id) => request(`/motoristas/${id}/sessoes`),
   encerrarSessoesMotorista: (id) => request(`/motoristas/${id}/encerrar-sessoes`, { method: "POST" }),
+  anonimizarMotorista: (id) => request(`/motoristas/${id}/anonimizar`, { method: "POST" }),
   baixarModeloMotoristas: () => baixarArquivo("/motoristas/modelo", "modelo-motoristas.xlsx"),
   importarMotoristas: (arquivo, confirmar = false) => enviarArquivo(`/motoristas/importar${confirmar ? "?confirmar=1" : ""}`, arquivo),
 

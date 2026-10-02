@@ -82,6 +82,20 @@ async function salvarEdicao() {
   }
 }
 
+// LGPD (v3.3): direito de exclusão — só administração e motorista exclusivo deste cliente.
+async function anonimizar() {
+  const e = edicao.value;
+  if (!confirm(`Anonimizar ${e.nome}? Nome, celular, CPF e placa saem do cadastro e dos containers, e o acesso dele é encerrado. Não dá para desfazer.`)) return;
+  try {
+    await api.anonimizarMotorista(e.id);
+    edicao.value = null;
+    mostrar("Motorista anonimizado.");
+    await carregar();
+  } catch (err) {
+    erroEdicao.value = err.message;
+  }
+}
+
 function mostrar(msg) {
   aviso.value = msg;
   setTimeout(() => (aviso.value = null), 5000);
@@ -284,6 +298,7 @@ const pag = usePaginacao(() => visiveis.value, "motoristas");
       </div>
       <div class="campo"><label for="ed-placa">Placa</label><input id="ed-placa" v-model="edicao.placa" maxlength="8" style="text-transform: uppercase" :disabled="edicao.compartilhado" /></div>
       <div class="modal-acoes">
+        <button v-if="!ehGestor && !edicao.compartilhado" type="button" class="perigo" style="margin-right: auto" title="Direito de exclusão (LGPD)" @click="anonimizar">Anonimizar (LGPD)</button>
         <button type="button" @click="edicao = null">{{ edicao.compartilhado ? "Fechar" : "Cancelar" }}</button>
         <button v-if="!edicao.compartilhado" type="submit" class="primario">Salvar</button>
       </div>

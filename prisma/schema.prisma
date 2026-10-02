@@ -592,6 +592,7 @@ model LogAuditoria {
   organizacao   Organizacao? @relation(fields: [organizacaoId], references: [id])
   id            Int          @id @default(autoincrement())
   usuarioEmail  String
+  motoristaId   Int? // ação feita por motorista (o nome em usuarioEmail é texto digitado por ele) — v3.3
   acao          String
   entidade      String
   entidadeId    String?
@@ -717,16 +718,18 @@ model Motorista {
 // Código de 6 dígitos enviado por SMS para entrar (vale 15 min; pedir outro encerra o anterior).
 // Só o hash (HMAC) fica no banco.
 model CodigoAcessoMotorista {
-  id          Int       @id @default(autoincrement())
-  celular     String
-  codigoHash  String
-  criadoEm    DateTime  @default(now())
-  expiraEm    DateTime
-  tentativas  Int       @default(0)
-  encerradoEm DateTime? // usado, substituído por um novo ou esgotou as tentativas
-  ip          String?
+  id            Int       @id @default(autoincrement())
+  celular       String
+  codigoHash    String
+  criadoEm      DateTime  @default(now())
+  expiraEm      DateTime
+  tentativas    Int       @default(0)
+  encerradoEm   DateTime? // usado, substituído por um novo ou esgotou as tentativas
+  ip            String?
+  organizacaoId Int? // cliente da etiqueta pela qual o motorista pediu o código (teto por cliente, v3.3)
 
   @@index([celular, criadoEm])
+  @@index([organizacaoId, criadoEm])
 }
 
 // Sessão do motorista no celular (cookie httpOnly, 60 dias). Só o hash do token fica no banco.

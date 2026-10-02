@@ -112,9 +112,11 @@ usuariosRouter.post("/", asyncHandler(async (req, res) => {
     senhaHash: await bcrypt.hash(validarSenha(b.senha), 10),
   };
   dados.transportadoraId = await transportadoraDoPerfil(dados.perfil, b.transportadoraId, req.usuario.organizacaoId);
-  const criado = await prisma.usuario.create({ data: dados, select: { ...SELECT, permissoes: true } }).catch((err) => {
-    if (err.code === "P2002") throw erroHttp(409, "Já existe um usuário com esse e-mail.");
-    throw err;
+  const criado = await prisma.usuario.create({ data: dados, select: { ...SELECT, permissoes: true } }).catch(async (err) => {
+    if (err.code !== "P2002") throw err;
+    // E-mail de usuário de OUTRO cliente: mensagem genérica — não confirma que a conta existe (v3.3, item 20).
+    const aqui = await prisma.usuario.findFirst({ where: { email: dados.email }, select: { id: true } });
+    throw erroHttp(409, aqui ? "Já existe um usuário com esse e-mail." : "Este e-mail não pode ser usado. Use outro e-mail ou fale com o suporte.");
   });
   await registrarLog({ usuarioEmail: req.usuario.email, acao: "CRIAR", entidade: "Usuario", entidadeId: criado.id, descricao: `Usuário criado: ${email} (${dados.perfil})` });
   res.status(201).json(comPermissoes(criado));

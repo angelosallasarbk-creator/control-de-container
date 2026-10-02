@@ -33,7 +33,25 @@ export function criarApp() {
   // Atrás do proxy do Render: sem isso o rate limit enxergaria o IP do proxy, não o do cliente.
   app.set("trust proxy", 1);
   // Front e back são same-origin (Express serve o build do Vue; no dev o Vite faz proxy).
-  app.use(helmet({ contentSecurityPolicy: false }));
+  // CSP (v3.3, item 20): só scripts do próprio site; imagens também do OpenStreetMap (mapa) e
+  // data:/blob: (QR, ícone); estilo inline liberado (Vue :style e Leaflet posicionam por estilo).
+  // Fora de produção não força https (teste do celular na rede local por http://IP).
+  app.use(helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:", "https://tile.openstreetmap.org"],
+        "font-src": ["'self'", "data:"],
+        "connect-src": ["'self'"],
+        "frame-ancestors": ["'none'"],
+        "object-src": ["'none'"],
+        "upgrade-insecure-requests": process.env.NODE_ENV === "production" ? [] : null,
+      },
+    },
+  }));
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
 

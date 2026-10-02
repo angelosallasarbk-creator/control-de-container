@@ -8,6 +8,7 @@ import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 export const custosRouter = Router();
 
 const DIA = 24 * 60 * 60 * 1000;
+const arred = (v, casas = 2) => Math.round(v * 10 ** casas) / 10 ** casas;
 const PERIODO_PADRAO_DIAS = 90;
 const PERIODO_MAXIMO_DIAS = 731;
 const FORMATO_DIA = /^\d{4}-\d{2}-\d{2}$/;
@@ -112,7 +113,13 @@ custosRouter.get("/", asyncHandler(async (req, res) => {
       custoEstadiaPorHora: g.custoEstadiaPorHora === null ? null : Number(g.custoEstadiaPorHora),
       containersNoPeriodo: containersPorGrupo.get(g.id) ?? 0,
     })),
-    dias: [...diasAgregados.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
+    // Série por dia: arredondada só na saída (os totais por container somam os valores exatos).
+    dias: [...diasAgregados.values()].sort((a, b) => a.dia.localeCompare(b.dia)).map((l) => ({
+      ...l,
+      estadiaHoras: arred(l.estadiaHoras, 2),
+      estadia: Object.fromEntries(Object.entries(l.estadia).map(([m, v]) => [m, arred(v)])),
+      demurrage: Object.fromEntries(Object.entries(l.demurrage).map(([m, v]) => [m, arred(v)])),
+    })),
     containers: detalhes,
   });
 }));

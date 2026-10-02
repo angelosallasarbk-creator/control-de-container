@@ -15,7 +15,11 @@ import { enviarSms, normalizarCelular } from "./sms.js";
 export const VALIDADE_CODIGO_MIN = 15;
 export const MAX_TENTATIVAS = 5;
 export const SESSAO_DIAS = 60;
-export const MAX_CODIGOS_POR_HORA = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA) || 500;
+// Teto de códigos SMS por CLIENTE por hora (v3.3, item 10): abuso numa etiqueta de um cliente não
+// para o login dos motoristas dos outros. O total da plataforma vira só alarme de custo (log).
+export const MAX_CODIGOS_POR_HORA_CLIENTE = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA_CLIENTE) || 100;
+export const ALARME_CODIGOS_POR_HORA = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA) || 500;
+let ultimoAlarme = 0;
 export const COOKIE_MOTORISTA = "cc_motorista";
 const MIN = 60 * 1000;
 const COMPROVANTE_MIN = 30;
@@ -24,6 +28,9 @@ const segredo = () => {
   if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET não configurado.");
   return process.env.JWT_SECRET;
 };
+// Comprovante de celular (cadastro do motorista) assinado com um segredo DERIVADO, diferente do que
+// assina a sessão da equipe (v3.3, item 20): um não serve no lugar do outro.
+const segredoComprovante = () => crypto.createHmac("sha256", segredo()).update("comprovante-cadastro-motorista").digest("hex");
 // HMAC com o segredo do servidor: sem ele, o hash de um código de 6 dígitos não é "quebrável" por tabela.
 const hashCodigo = (celular, codigo) => crypto.createHmac("sha256", segredo()).update(`${celular}:${codigo}`).digest("hex");
 const hashToken = (token) => crypto.createHash("sha256").update(String(token)).digest("hex");
@@ -41,18 +48,26 @@ export function celularValido(valor) {
 // Identificação do motorista nos registros (log, leituras, etapas, etiqueta).
 export const identidadeMotorista = (m) => `${m.nome} (motorista · ${m.transportadora?.nome ?? "transportadora"})`;
 
-export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), texto = null, conferirBloqueio = true }) {
+export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), texto = null, conferirBloqueio = true, organizacaoId = null }) {
   const celular = celularValido(bruto);
   const recentes = await prisma.codigoAcessoMotorista.findMany({
     where: { celular, criadoEm: { gte: new Date(agora.getTime() - 60 * MIN) } }, orderBy: { criadoEm: "desc" }, select: { criadoEm: true },
   });
   if (recentes[0] && agora - recentes[0].criadoEm < MIN) throw erroHttp(429, "Aguarde 1 minuto para pedir outro código.");
   if (recentes.length >= 5) throw erroHttp(429, "Muitos códigos pedidos para este celular. Tente de novo em 1 hora.");
-  // Teto global (proteção contra robô disparando SMS para muitos números = custo): 500 códigos/hora (ajustável).
-  const ultimaHora = await prisma.codigoAcessoMotorista.count({ where: { criadoEm: { gte: new Date(agora.getTime() - 60 * MIN) } } });
-  if (ultimaHora >= MAX_CODIGOS_POR_HORA) {
-    console.error(`Acesso do motorista: teto de ${MAX_CODIGOS_POR_HORA} códigos/hora atingido — possível abuso.`);
-    throw erroHttp(429, "Muitos pedidos de código no momento. Tente de novo em alguns minutos.");
+  const umaHora = new Date(agora.getTime() - 60 * MIN);
+  if (organizacaoId) {
+    const doCliente = await prisma.codigoAcessoMotorista.count({ where: { organizacaoId, criadoEm: { gte: umaHora } } });
+    if (doCliente >= MAX_CODIGOS_POR_HORA_CLIENTE) {
+      console.error(`Acesso do motorista: teto de ${MAX_CODIGOS_POR_HORA_CLIENTE} códigos/hora do cliente ${organizacaoId} atingido — possível abuso.`);
+      throw erroHttp(429, "Muitos pedidos de código no momento. Tente de novo em alguns minutos.");
+    }
+  }
+  // Total da plataforma: só alarme de custo (no máximo 1 aviso a cada 10 min no log).
+  const total = await prisma.codigoAcessoMotorista.count({ where: { criadoEm: { gte: umaHora } } });
+  if (total >= ALARME_CODIGOS_POR_HORA && agora - ultimoAlarme > 10 * MIN) {
+    ultimoAlarme = agora.getTime();
+    console.error(`ALARME de custo: ${total} códigos SMS de motorista na última hora (alarme: ${ALARME_CODIGOS_POR_HORA}).`);
   }
   if (conferirBloqueio) {
     const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
@@ -64,7 +79,7 @@ export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), text
     // Pedido novo encerra os anteriores ainda válidos deste celular.
     prisma.codigoAcessoMotorista.updateMany({ where: { celular, encerradoEm: null }, data: { encerradoEm: agora } }),
     prisma.codigoAcessoMotorista.create({
-      data: { celular, codigoHash: hashCodigo(celular, codigo), criadoEm: agora, expiraEm: new Date(agora.getTime() + VALIDADE_CODIGO_MIN * MIN), ip: ip ?? null },
+      data: { celular, codigoHash: hashCodigo(celular, codigo), criadoEm: agora, expiraEm: new Date(agora.getTime() + VALIDADE_CODIGO_MIN * MIN), ip: ip ?? null, organizacaoId },
     }),
   ]);
   const r = await enviarSms({ para: celular, texto: texto ? texto(codigo) : `CCS: seu codigo de acesso e ${codigo}. Vale por ${VALIDADE_CODIGO_MIN} min. Nao compartilhe.` });
@@ -97,7 +112,7 @@ export async function verificarCodigo({ celular: bruto, codigo, agora = new Date
   if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
   if (motorista && motorista.consentimentoEm && motorista.transportadora.ativo) return { motorista };
   // Primeiro acesso (ou importado pelo gestor e ainda sem o termo aceito): completa o cadastro.
-  const comprovante = jwt.sign({ tipo: "cadastro-motorista", celular }, segredo(), { expiresIn: `${COMPROVANTE_MIN}m` });
+  const comprovante = jwt.sign({ tipo: "cadastro-motorista", celular }, segredoComprovante(), { expiresIn: `${COMPROVANTE_MIN}m`, audience: "cadastro-motorista" });
   const transportadoras = await prisma.transportadora.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } });
   return {
     precisaCadastro: true,
@@ -109,7 +124,7 @@ export async function verificarCodigo({ celular: bruto, codigo, agora = new Date
 
 function lerComprovante(comprovante) {
   try {
-    const p = jwt.verify(String(comprovante ?? ""), segredo());
+    const p = jwt.verify(String(comprovante ?? ""), segredoComprovante(), { audience: "cadastro-motorista" });
     if (p.tipo !== "cadastro-motorista" || !p.celular) throw new Error();
     return p.celular;
   } catch {
@@ -156,7 +171,7 @@ export async function concluirCadastro({ comprovante, dados: b, agora = new Date
         throw err;
       });
   await registrarLog({
-    usuarioEmail: identidadeMotorista(motorista), acao: existente ? "MOTORISTA_ACEITE" : "MOTORISTA_CADASTRO", entidade: "Motorista", entidadeId: motorista.id,
+    usuarioEmail: identidadeMotorista(motorista), motoristaId: motorista.id, acao: existente ? "MOTORISTA_ACEITE" : "MOTORISTA_CADASTRO", entidade: "Motorista", entidadeId: motorista.id,
     descricao: existente ? `Motorista ${motorista.nome} aceitou o termo no primeiro acesso` : `Motorista ${motorista.nome} (${transp.nome}) cadastrou-se pelo QR`,
   });
   return motorista;
@@ -198,7 +213,7 @@ export async function confirmarTrocaCelular({ motorista, celular: bruto, codigo,
     console.error("Troca de celular do motorista: aviso ao número antigo falhou:", err.message);
   }
   await registrarLog({
-    usuarioEmail: identidadeMotorista(m), acao: "ALTERAR", entidade: "Motorista", entidadeId: m.id,
+    usuarioEmail: identidadeMotorista(m), motoristaId: m.id, acao: "ALTERAR", entidade: "Motorista", entidadeId: m.id,
     descricao: `Motorista ${m.nome} trocou o próprio celular (final ${antigo.slice(-4)} → ${celular.slice(-4)}), confirmado por SMS`,
   });
   return m;

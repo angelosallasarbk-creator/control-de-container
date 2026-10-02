@@ -130,7 +130,7 @@ const CADASTROS = {
     modelo: "transportadora",
     // Cadastro único na plataforma: o cliente vê as vinculadas a ele e só altera/exclui as que
     // são exclusivamente dele (compartilhadas com outro cliente ficam protegidas).
-    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", erroNome: "Já existe uma transportadora com esse nome na plataforma." },
+    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", erroNome: "Não foi possível usar esse nome de transportadora. Use outro nome (ex.: com a cidade) ou fale com o suporte." },
     entidade: "Transportadora",
     uso: "motoristas",
     rotulo: (r) => r.nome,

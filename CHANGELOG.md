@@ -4,6 +4,37 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.3.0 — não publicada
+
+**Endurecimento, custo e LGPD** (análise de segurança da v3.0.2: itens 8, 10, 11, 13, 14, 15, 16, 17
+e 20). Publicada junto com a 3.1.2 e a 3.2.0.
+
+- **Log de auditoria imutável para o sistema (item 8):** o usuário da aplicação (`ccs_app`) não
+  altera nem apaga o log (REVOKE em `scripts/preparar-banco.js`). A purga de 365 dias passa pela
+  função `purgar_log_auditoria` (roda com o dono das tabelas e recusa retenção menor que 365 dias).
+- **SMS do motorista por cliente (item 10):** pedir o código exige a etiqueta lida (válida, de cliente
+  ativo) e o teto passa a ser **por cliente** (`MOTORISTA_MAX_CODIGOS_HORA_CLIENTE`, padrão 100/h); o
+  total da plataforma (`MOTORISTA_MAX_CODIGOS_HORA`, 500/h) vira só alarme de custo no log.
+- **Cota do OpenRouteService (item 11):** limite por cliente — busca de endereço 100/h, simulação de
+  rota 600/h — e a simulação exige "operar containers" (é usada só no Novo container).
+- **Login e "Esqueci minha senha" (item 13):** e-mail inexistente também passa pelo bcrypt (hash
+  fictício) e o e-mail de redefinição sai depois da resposta — o tempo não revela quais contas existem.
+- **Custo de estadia (item 14):** a tela Custos soma os valores exatos e arredonda só no total — não
+  difere mais 1 centavo da ficha (0 diferenças em 200 mil casos, teste de regressão).
+- **LGPD (item 15):** a limpeza diária vale também para clientes desativados e apaga o celular dos SMS
+  mais antigos que a retenção (a mensagem fica). **Anonimizar motorista** (Motoristas → Editar →
+  "Anonimizar (LGPD)"): nome, celular, CPF e placa saem do cadastro e dos containers do cliente, o
+  acesso é encerrado; só a administração e só motorista exclusivo do cliente.
+- **Planilhas (item 16):** upload limitado a 1 MB (1.000 containers ou 5.000 motoristas cabem).
+- **IPs internos (item 17):** as sugestões de endereço com os IPs do servidor só aparecem fora de
+  produção e para quem administra.
+- **Outros (item 20):** e-mail de usuário/nome de transportadora já usados em **outro** cliente
+  recebem mensagem genérica; o comprovante de celular do motorista tem segredo próprio (derivado) e
+  audience — não se confunde com a sessão; **Content-Security-Policy ligado** (só scripts do próprio
+  site; imagens também do OpenStreetMap); o log das ações do motorista guarda o id dele (`motoristaId`).
+- Migração `20261007100000_seguranca_3_3` (só acrescenta): `CodigoAcessoMotorista.organizacaoId`,
+  `LogAuditoria.motoristaId` e a função `purgar_log_auditoria`.
+
 ## 3.2.0 — não publicada
 
 **Segurança antes do primeiro cliente real** (itens da análise de segurança da v3.0.2: 1, 2, 3, 4, 5,

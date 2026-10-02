@@ -5,7 +5,8 @@
 import { computed, onBeforeUnmount, ref } from "vue";
 import { api } from "../api.js";
 
-defineProps({ aviso: { type: String, default: null } });
+// etiqueta: token da etiqueta lida — o pedido de código SMS exige (define o cliente; v3.3).
+const props = defineProps({ aviso: { type: String, default: null }, etiqueta: { type: String, default: null } });
 const emit = defineEmits(["entrou", "equipe"]);
 
 const etapa = ref("celular"); // celular | codigo | cadastro
@@ -41,7 +42,7 @@ async function executar(fn) {
 }
 
 const pedirCodigo = () => executar(async () => {
-  const r = await api.motoristaPedirCodigo(celular.value);
+  const r = await api.motoristaPedirCodigo(celular.value, props.etiqueta);
   info.value = r.simulado ? `${r.mensagem} (teste: SMS simulado — veja o código no console do servidor)` : r.mensagem;
   codigo.value = "";
   etapa.value = "codigo";

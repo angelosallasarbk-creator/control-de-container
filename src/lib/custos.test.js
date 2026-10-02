@@ -8,7 +8,29 @@ const base = {
   metaEstadiaHoras: 24, alertaEstadiaHoras: 6, custoEstadiaPorHora: 100,
   freeTimeDias: 3, valorDiaria: 120, moeda: "USD", alertaDemurrageDias: 1,
 };
-const somar = (mapa, campo) => [...mapa.values()].reduce((s, d) => s + d[campo], 0);
+// Soma dos dias arredondada no fim (como a tela Custos faz).
+const somar = (mapa, campo) => Math.round([...mapa.values()].reduce((s, d) => s + d[campo], 0) * 100) / 100;
+
+test("estadia: soma dos dias bate com a ficha em 200 mil casos aleatórios (v3.3, item 14)", () => {
+  // Antes: arredondar cada dia dava 1 centavo de diferença em ~22% dos casos.
+  let semente = 42;
+  const aleatorio = () => ((semente = (semente * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const agora = new Date("2026-09-30T12:00:00Z");
+  let diferencas = 0;
+  for (let i = 0; i < 200000; i++) {
+    const chegada = new Date(agora.getTime() - aleatorio() * 20 * 24 * HORA);
+    const c = {
+      ...base,
+      metaEstadiaHoras: 1 + Math.floor(aleatorio() * 72),
+      custoEstadiaPorHora: Math.round(aleatorio() * 50000) / 100,
+      chegadaFabricaEm: chegada,
+      saidaFabricaEm: aleatorio() < 0.5 ? new Date(chegada.getTime() + aleatorio() * 10 * 24 * HORA) : null,
+    };
+    const ficha = calcularEstadia(c, agora).custo ?? 0;
+    if (somar(custosDiarios(c, agora), "estadiaValor") !== ficha) diferencas++;
+  }
+  assert.equal(diferencas, 0);
+});
 
 test("dia de Brasília: 01:00Z ainda é o dia anterior", () => {
   assert.equal(diaBrasilia("2026-09-25T01:00:00Z"), "2026-09-24");

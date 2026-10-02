@@ -1,4 +1,5 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao } from "../lib/permissoes.js";
@@ -71,6 +72,15 @@ const serializar = ({ _count, ...l }) => ({
   temCoordenadas: l.latitude !== null && l.longitude !== null,
 });
 
+// Cota do OpenRouteService (chave única da plataforma): limite por CLIENTE (v3.3, item 11) — um
+// cliente não esgota a cota dos outros. A busca de endereço faz até 2 chamadas ao serviço.
+const porCliente = (limit, mensagem) => rateLimit({
+  windowMs: 60 * 60 * 1000, limit, standardHeaders: true, legacyHeaders: false, message: { erro: mensagem },
+  keyGenerator: (req) => `org:${req.usuario?.organizacaoId ?? "plataforma"}`,
+});
+const limiteGeocodificar = porCliente(100, "Limite de buscas de endereço deste cliente na última hora. Tente de novo mais tarde ou informe as coordenadas.");
+const limiteEstimar = porCliente(600, "Limite de simulações de rota deste cliente na última hora. Tente de novo mais tarde.");
+
 export const locaisRouter = Router();
 
 locaisRouter.get("/", asyncHandler(async (req, res) => {
@@ -82,7 +92,7 @@ locaisRouter.get("/", asyncHandler(async (req, res) => {
 }));
 
 // Busca de endereço (ORS). Não grava nada: a tela usa o resultado para preencher o formulário.
-locaisRouter.get("/geocodificar", requirePermissao("cadastros.editar"), asyncHandler(async (req, res) => {
+locaisRouter.get("/geocodificar", requirePermissao("cadastros.editar"), limiteGeocodificar, asyncHandler(async (req, res) => {
   const q = texto(req.query.q, "Texto da busca", { obrigatorio: true, max: 200 });
   try {
     res.json(await geocodificar(q));
@@ -169,7 +179,8 @@ locaisRouter.delete("/:id", requirePermissao("cadastros.editar"), asyncHandler(a
 // "Se coletar agora": distâncias do trajeto, tempo estimado e comparação com o free time.
 export const rotasRouter = Router();
 
-rotasRouter.get("/estimar", asyncHandler(async (req, res) => {
+// Só quem cadastra container (é usado no Novo container) — v3.3, item 11.
+rotasRouter.get("/estimar", requirePermissao("containers.operar"), limiteEstimar, asyncHandler(async (req, res) => {
   const q = req.query;
   // Tipo de Operação (opcional): fluxo sem local de operação vai direto da retirada à entrega.
   const tipoOp = q.tipoOperacaoId ? await prisma.tipoOperacao.findUnique({ where: { id: validarId(q.tipoOperacaoId, "Tipo de operação") }, ...SELECT_TIPO_OPERACAO }) : null;

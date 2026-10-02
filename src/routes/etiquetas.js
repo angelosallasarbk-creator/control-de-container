@@ -2,9 +2,9 @@ import { Router } from "express";
 import os from "node:os";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
-import { requirePermissao } from "../lib/permissoes.js";
+import { requirePermissao, tem } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
-import { enderecoConfiguradoDoSistema } from "../lib/enderecoPublico.js";
+import { enderecoConfiguradoDoSistema, emProducao } from "../lib/enderecoPublico.js";
 import { gerarCodigo, gerarToken, urlDaEtiqueta, zplDoLote, MODELOS_ETIQUETA, DPI_SUPORTADOS } from "../lib/etiquetas.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, inteiro, decimal, id as validarId, umDe } from "../lib/validacao.js";
@@ -131,8 +131,9 @@ etiquetasRouter.get("/lotes", asyncHandler(async (req, res) => {
 }));
 
 // Dados para a tela de impressão: modelos de etiqueta, DPIs e endereço configurado.
-// "sugestoes" (IPs da rede) aparecem só em Configurações, para quem define o endereço.
-etiquetasRouter.get("/impressao", asyncHandler(async (_req, res) => {
+// "sugestoes" (IPs da rede): só fora de produção e só para quem administra (v3.3, item 17) — em
+// produção não têm utilidade e expunham a rede interna do servidor a qualquer usuário.
+etiquetasRouter.get("/impressao", asyncHandler(async (req, res) => {
   const porta = process.env.PORT || 3000;
   res.json({
     modelos: MODELOS_ETIQUETA,
@@ -140,7 +141,7 @@ etiquetasRouter.get("/impressao", asyncHandler(async (_req, res) => {
     // Endereço que vai dentro do QR (em produção, sempre o da plataforma — v3.2, item 19).
     urlPublica: (await enderecoConfiguradoDoSistema()) ?? "",
     // Em desenvolvimento a tela roda no Vite (5174); no build, o próprio servidor serve tudo.
-    sugestoes: enderecosDaRede().flatMap(({ interface: nome, ip, virtual }) => {
+    sugestoes: emProducao() || !tem(req, "administrar") ? [] : enderecosDaRede().flatMap(({ interface: nome, ip, virtual }) => {
       const obs = virtual ? " — adaptador virtual, o celular não alcança" : "";
       return [
         { rotulo: `${ip} · porta 5174 (tela em desenvolvimento) · ${nome}${obs}`, url: `http://${ip}:5174`, virtual },

@@ -621,26 +621,33 @@ export async function resumoRastreamento(containerId) {
 // ---------- Retenção (LGPD) ----------
 
 /**
- * Limpeza diária: posições GPS mais antigas que retencaoPosicoesDias (padrão 90), códigos de
- * acesso de motorista com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias.
- * Só apaga pelo critério de data, nada mais (posições recentes e sessões válidas ficam).
+ * Limpeza diária: posições GPS mais antigas que retencaoPosicoesDias (padrão 90), o celular dos
+ * SMS enviados há mais que o mesmo prazo (a mensagem fica, sem o número), códigos de acesso de
+ * motorista com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias. Vale também para
+ * organizações desativadas (v3.3, item 15). Só apaga pelo critério de data.
  */
 export async function purgarDadosAntigos(agora = new Date()) {
   const dias = (n) => new Date(agora.getTime() - n * 24 * 60 * MIN);
   // Posições: pela retenção configurada em cada organização.
   const porOrg = await paraCadaOrganizacao(async () => {
     const config = await lerConfiguracao();
-    return prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } });
-  }, "Retenção");
+    const limite = dias(config.retencaoPosicoesDias);
+    const [pos, sms] = await Promise.all([
+      prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: limite } } }),
+      prisma.mensagemSms.updateMany({ where: { criadaEm: { lt: limite }, telefone: { not: null } }, data: { telefone: null } }),
+    ]);
+    return { count: pos.count, telefones: sms.count };
+  }, "Retenção", { incluirInativas: true });
   const posicoes = { count: porOrg.reduce((s, x) => s + (x?.count ?? 0), 0) };
+  const telefones = porOrg.reduce((s, x) => s + (x?.telefones ?? 0), 0);
   const [codigos, sessoes] = await Promise.all([
     prisma.codigoAcessoMotorista.deleteMany({ where: { criadoEm: { lt: dias(1) } } }),
     prisma.sessaoMotorista.deleteMany({ where: { OR: [{ expiraEm: { lt: dias(30) } }, { revogadaEm: { lt: dias(30) } }] } }),
   ]);
-  if (posicoes.count || codigos.count || sessoes.count) {
-    console.log(`Retenção: ${posicoes.count} posição(ões) antiga(s), ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
+  if (posicoes.count || telefones || codigos.count || sessoes.count) {
+    console.log(`Retenção: ${posicoes.count} posição(ões) antiga(s), ${telefones} telefone(s) de SMS, ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
   }
-  return { posicoes: posicoes.count, codigos: codigos.count, sessoes: sessoes.count };
+  return { posicoes: posicoes.count, telefones, codigos: codigos.count, sessoes: sessoes.count };
 }
 
 // ---------- Agendador ----------

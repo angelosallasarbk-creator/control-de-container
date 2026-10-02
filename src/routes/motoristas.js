@@ -183,6 +183,36 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
   res.json(serializar(m));
 }));
 
+// Direito de exclusão (LGPD, v3.3 item 15): anonimiza o motorista — nome, celular, CPF e placa
+// somem do cadastro, o acesso é bloqueado e encerrado, e saem o telefone dos SMS e o nome gravado
+// nos containers deste cliente. Ficam as posições/etapas dos containers (registro da operação) e o
+// log de auditoria (imutável, retenção legal de 365 dias). Só a administração do cliente e só com
+// motorista exclusivo dele (compartilhado: pedido à plataforma, que fala com todos os clientes).
+motoristasRouter.post("/:id/anonimizar", asyncHandler(async (req, res) => {
+  if (req.escopoTransportadora) throw erroHttp(403, "Só a administração do cliente pode anonimizar um motorista.");
+  const m = await buscarNoEscopo(req, validarId(req.params.id));
+  const outros = await prisma.motoristaOrganizacao.count({ where: { motoristaId: m.id, organizacaoId: { not: req.escopoOrganizacao } } });
+  if (outros > 0) throw erroHttp(409, "Este motorista também atende outros clientes: o pedido de exclusão precisa ser feito ao suporte da plataforma.");
+  if (m.celular.startsWith("anonimizado-")) throw erroHttp(409, "Este motorista já foi anonimizado.");
+  const agora = new Date();
+  const anonimo = `Motorista anonimizado #${m.id}`;
+  await prisma.$transaction(async (tx) => {
+    await tx.motorista.update({
+      where: { id: m.id },
+      data: { nome: anonimo, celular: `anonimizado-${m.id}`, cpf: null, placa: null, bloqueado: true, bloqueadoEm: agora, bloqueadoPor: "anonimização (LGPD)", consentimentoEm: null },
+    });
+    await tx.sessaoMotorista.deleteMany({ where: { motoristaId: m.id } });
+    await tx.codigoAcessoMotorista.deleteMany({ where: { celular: m.celular } });
+  });
+  const sms = await prisma.mensagemSms.updateMany({ where: { motoristaId: m.id }, data: { telefone: null } });
+  const containers = await prisma.container.updateMany({ where: { OR: [{ rastreioMotoristaId: m.id }, { motorista: m.nome }] }, data: { motorista: anonimo, placa: null } });
+  await registrarLog({
+    usuarioEmail: req.usuario.email, acao: "ANONIMIZAR", entidade: "Motorista", entidadeId: m.id,
+    descricao: `Motorista #${m.id} anonimizado (LGPD): cadastro, ${sms.count} telefone(s) de SMS e ${containers.count} container(s)`,
+  });
+  res.json(serializar(await prisma.motorista.findUnique({ where: { id: m.id }, include: incluir(req.escopoOrganizacao) })));
+}));
+
 motoristasRouter.get("/:id/sessoes", asyncHandler(async (req, res) => {
   const m = await buscarNoEscopo(req, validarId(req.params.id));
   const sessoes = await prisma.sessaoMotorista.findMany({
@@ -239,7 +269,7 @@ const valor = (cell) => {
 };
 
 // Corpo = arquivo .xlsx. Sem ?confirmar=1 só confere; com, cadastra as linhas válidas.
-motoristasRouter.post("/importar", express.raw({ type: () => true, limit: "5mb" }), asyncHandler(async (req, res) => {
+motoristasRouter.post("/importar", express.raw({ type: () => true, limit: "1mb" }), asyncHandler(async (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw erroHttp(400, "Envie a planilha (.xlsx).");
   const wb = new ExcelJS.Workbook();
   try {
