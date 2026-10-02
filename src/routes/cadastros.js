@@ -130,7 +130,25 @@ const CADASTROS = {
     modelo: "transportadora",
     // Cadastro único na plataforma: o cliente vê as vinculadas a ele e só altera/exclui as que
     // são exclusivamente dele (compartilhadas com outro cliente ficam protegidas).
-    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", erroNome: "Não foi possível usar esse nome de transportadora. Use outro nome (ex.: com a cidade) ou fale com o suporte." },
+    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", erroNome: "Não foi possível usar esse CNPJ. Confira o número ou fale com o suporte." },
+    // v3.4 (item 9): nome único só dentro do cliente; CNPJ igual = mesma empresa → reaproveita o
+    // cadastro (cria só o vínculo). Sem CNPJ ou com CNPJ diferente, é outro cadastro.
+    reaproveitar: async (tx, dados, req, antes = null) => {
+      const org = req.usuario.organizacaoId;
+      if (dados.nome !== undefined) {
+        const homonima = await tx.transportadora.findFirst({
+          where: { nome: { equals: dados.nome, mode: "insensitive" }, organizacoes: { some: { organizacaoId: org } }, ...(antes ? { id: { not: antes.id } } : {}) },
+          select: { id: true },
+        });
+        if (homonima) throw erroHttp(409, "Já existe uma transportadora com esse nome no seu cadastro.");
+      }
+      if (antes || !dados.cnpj) return null;
+      const mesma = await tx.transportadora.findUnique({ where: { cnpj: dados.cnpj }, select: { id: true, organizacoes: { where: { organizacaoId: org }, select: { organizacaoId: true } } } });
+      if (!mesma) return null;
+      if (mesma.organizacoes.length) throw erroHttp(409, "Essa transportadora (mesmo CNPJ) já está no seu cadastro.");
+      await tx.transportadoraOrganizacao.create({ data: { transportadoraId: mesma.id, organizacaoId: org } });
+      return mesma.id;
+    },
     entidade: "Transportadora",
     uso: "motoristas",
     rotulo: (r) => r.nome,
@@ -240,7 +258,9 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     const corpo = req.body ?? {};
     const dados = cfg.validar(corpo, false);
     cfg.validarConjunto?.(dados);
-    const { criado, propagados } = await prisma.$transaction(async (tx) => {
+    const { criado, propagados, reaproveitado } = await prisma.$transaction(async (tx) => {
+      const existente = cfg.reaproveitar ? await cfg.reaproveitar(tx, dados, req) : null;
+      if (existente) return { criado: await repo(tx).findUnique({ where: { id: existente }, include: includeDe(req) }), propagados: 0, reaproveitado: true };
       const depoisDeSalvar = cfg.antesDeSalvar ? await cfg.antesDeSalvar(tx, dados, corpo, null) : null;
       const vinculo = cfg.global ? { [cfg.global.vinculo]: { create: { organizacaoId: req.usuario.organizacaoId } } } : {};
       const criado = await repo(tx).create({ data: { ...dados, ...vinculo }, include: includeDe(req) }).catch(erroUnico);
@@ -251,7 +271,9 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
       acao: "CRIAR",
       entidade: cfg.entidade,
       entidadeId: criado.id,
-      descricao: `Cadastro criado: ${cfg.rotulo(criado)}${propagados ? ` (região aplicada a mais ${propagados} cliente(s) da mesma fábrica)` : ""}`,
+      descricao: reaproveitado
+        ? `Cadastro vinculado: ${cfg.rotulo(criado)} (mesmo CNPJ já cadastrado na plataforma)`
+        : `Cadastro criado: ${cfg.rotulo(criado)}${propagados ? ` (região aplicada a mais ${propagados} cliente(s) da mesma fábrica)` : ""}`,
       dadosDepois: criado,
     });
     res.status(201).json(serializar(criado));
@@ -267,6 +289,7 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     cfg.validarConjunto?.({ ...antes, ...dados });
     const aplicar = Boolean(corpo.aplicarEmAndamento && cfg.aplicarNosContainers);
     const { depois, propagados, containersAtualizados } = await prisma.$transaction(async (tx) => {
+      if (cfg.reaproveitar) await cfg.reaproveitar(tx, dados, req, antes);
       const depoisDeSalvar = cfg.antesDeSalvar ? await cfg.antesDeSalvar(tx, dados, corpo, antes) : null;
       const depois = await repo(tx).update({ where: { id: registroId }, data: dados, include: includeDe(req) }).catch(erroUnico);
       let containersAtualizados = [];

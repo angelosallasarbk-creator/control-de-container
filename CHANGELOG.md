@@ -4,6 +4,26 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.4.0 — não publicada
+
+**Estrutura e desempenho** (análise de segurança da v3.0.2: itens 7, 9 e 12). Publicada junto com
+a 3.1.2, a 3.2.0 e a 3.3.0.
+
+- **Isolamento entre clientes (item 7):** em produção o sistema **não sobe** sem `APP_DB_ROLE_PASSWORD`
+  (antes era só um aviso) — sem ela não haveria o RLS. README corrigido: o filtro automático da
+  aplicação vale para a consulta de primeiro nível; relações carregadas junto ficam a cargo do RLS e
+  da validação das rotas. Teste novo de "referência cruzada": o cliente B tenta usar ponto de
+  carregamento, armador, produto, local, região e tipo de local da A em containers e cadastros — tudo
+  recusado, e nenhum container no banco aponta para cadastro de outro cliente. (Chaves estrangeiras
+  compostas ficaram para depois, como recomendado na análise: custo alto, e o teste cobre o risco hoje.)
+- **Transportadora (item 9):** nome único só dentro do cliente; CNPJ único na plataforma; mesmo CNPJ
+  reaproveita o cadastro (só o vínculo é criado, e fica no log). Migração
+  `20261008100000_transportadora_cnpj` (troca o índice único do nome pelo do CNPJ; não apaga nada).
+- **Desempenho (item 12):** a varredura de alertas (a cada minuto, por cliente) carrega containers,
+  leituras, contexto de rota e alertas abertos **em lote** (4 consultas) em vez de ~4 consultas por
+  container — no banco local, 8 containers: de 35–39 para ~9–15 transações e de 211–490 ms para
+  59–85 ms. Configurações com cache de 5 s por cliente (invalidado ao salvar).
+
 ## 3.3.0 — não publicada
 
 **Endurecimento, custo e LGPD** (análise de segurança da v3.0.2: itens 8, 10, 11, 13, 14, 15, 16, 17

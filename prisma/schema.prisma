@@ -678,13 +678,15 @@ model MensagemSms {
 // Transportadora: agrupa os motoristas; o Gestor da transportadora cuida só dos dela.
 model Transportadora {
   id           Int                         @id @default(autoincrement())
-  nome         String                      @unique
-  cnpj         String?
+  nome         String // único só dentro de cada cliente (v3.4) — conferido na rota
+  cnpj         String?                     @unique // mesmo CNPJ = mesma empresa (cadastro reaproveitado)
   ativo        Boolean                     @default(true)
   criadoEm     DateTime                    @default(now())
   motoristas   Motorista[]
   gestores     Usuario[]
   organizacoes TransportadoraOrganizacao[]
+
+  @@index([nome])
 }
 
 // Motorista: NÃO é usuário do sistema. Identidade = celular verificado por código SMS; acessa só

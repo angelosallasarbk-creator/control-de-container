@@ -48,11 +48,15 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
   cadastros, etiquetas, alertas, configurações, log, usuários). Os dados existentes antes da v3.0 são da **AS TECH LOG**.
 - **Isolamento em duas camadas:**
   1. *Aplicação* (`src/lib/tenant.js` + `src/lib/prisma.js`): a organização da requisição fica num contexto e o Prisma
-     acrescenta o filtro `organizacaoId` em toda consulta e o preenche em toda criação. Sem contexto, a consulta **falha**.
+     acrescenta o filtro `organizacaoId` em toda consulta de **primeiro nível** às tabelas de cliente e o preenche em toda
+     criação. Sem contexto, a consulta **falha**. ⚠ Relações carregadas junto (`include`/`select` aninhado) **não** recebem
+     esse filtro na aplicação — quem garante é o RLS (camada 2) e a validação das rotas, que só aceitam referências
+     (armador, local, ponto…) da própria organização (teste "referência cruzada" em `src/api.test.js`).
      Rotinas automáticas rodam organização por organização (`paraCadaOrganizacao`).
   2. *Banco* (Row-Level Security): cada consulta roda com `app.org_id` definido; as políticas só liberam linhas daquela
      organização. O sistema conecta pelo usuário `ccs_app` (criado no build por `scripts/preparar-banco.js`), que não
-     ignora o RLS e não é dono das tabelas. As migrações usam o usuário dono (não sujeito ao RLS).
+     ignora o RLS e não é dono das tabelas. As migrações usam o usuário dono (não sujeito ao RLS). **Em produção o sistema
+     não sobe sem `APP_DB_ROLE_PASSWORD`** (v3.4) — sem ela não haveria a camada 2.
 - **Administrador da plataforma** (menu **Organizações**): cria clientes com os cadastros padrão e o primeiro admin,
   renomeia e desativa. Não vê dados dos clientes.
 - **Motoristas e transportadoras**: cadastro único na plataforma; o cliente só vê os que registraram pelo QR uma carga dele
@@ -131,7 +135,7 @@ Motorista **não é usuário do sistema** — com milhares de motoristas, criar 
 - **Sessão no celular por 60 dias** (cookie httpOnly `cc_motorista`, só para `/api/motorista`; só o hash do token no banco). Nas próximas leituras o QR abre direto.
 - **O que ele faz:** as mesmas telas do QR do perfil Transportador (coleta com local de retirada, cadastro do container se não existir, vínculo, temperatura) — rotas `/api/motorista/qr/*`, as mesmas do QR da equipe. Nos registros aparece como "Nome (motorista · Transportadora)". Portaria e o resto do sistema ficam fechados.
 - **Rastreamento:** a cadeia vira QR → Container → **Motorista** → celular verificado (ou usuário da equipe, se for ele quem registrou). A regra de troca continua: quem registrar pelo QR por último recebe os SMS.
-- **Transportadoras:** Cadastros → Transportadoras (nome, CNPJ opcional).
+- **Transportadoras:** Cadastros → Transportadoras (nome, CNPJ opcional). Desde a v3.4 o **nome é único só dentro de cada cliente** (clientes diferentes podem ter homônimas) e o **CNPJ é único na plataforma**: cadastrar um CNPJ que outro cliente já cadastrou reaproveita o cadastro (só cria o vínculo). Na lista do primeiro acesso do motorista, homônimas aparecem com o final do CNPJ.
 - **Gestor da transportadora** (perfil novo, ligado a uma transportadora **vinculada ao cliente**): vê só a tela **Motoristas** com os motoristas dela vinculados ao seu cliente — pré-cadastrar (tela ou planilha "Baixar modelo"/"Upload"), **bloquear/desbloquear pela transportadora** (vale para todos os clientes, derruba o acesso na hora e para os SMS), **encerrar acessos** (celular perdido) e ver os aparelhos com acesso. Quem tem "Editar cadastros" vê os motoristas do cliente, com filtro por transportadora.
 - **Bloqueio por cliente (v3.2):** o bloqueio feito pela administração vale **só para aquele cliente** (o motorista não registra pelo QR dele nem recebe os SMS dele; com outros clientes segue normal). A lista mostra "Bloqueado pela transportadora" ou "Bloqueado para este cliente".
 - **Motorista compartilhado (atende mais de um cliente):** nome, placa e celular valem para todos, então só ele altera — na tela do QR, "Trocar placa" e **"Trocar celular"** (código SMS no número novo; os outros acessos caem e o número antigo recebe aviso). O cliente edita só motoristas exclusivos dele.

@@ -113,7 +113,13 @@ export async function verificarCodigo({ celular: bruto, codigo, agora = new Date
   if (motorista && motorista.consentimentoEm && motorista.transportadora.ativo) return { motorista };
   // Primeiro acesso (ou importado pelo gestor e ainda sem o termo aceito): completa o cadastro.
   const comprovante = jwt.sign({ tipo: "cadastro-motorista", celular }, segredoComprovante(), { expiresIn: `${COMPROVANTE_MIN}m`, audience: "cadastro-motorista" });
-  const transportadoras = await prisma.transportadora.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true } });
+  const lista = await prisma.transportadora.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cnpj: true } });
+  // Nomes iguais (empresas diferentes, v3.4): mostra o final do CNPJ (ou o código) para diferenciar.
+  const repetidos = new Set(lista.map((t) => t.nome.toLowerCase()).filter((n, i, a) => a.indexOf(n) !== i));
+  const transportadoras = lista.map((t) => ({
+    id: t.id,
+    nome: repetidos.has(t.nome.toLowerCase()) ? `${t.nome} · ${t.cnpj ? `CNPJ final ${t.cnpj.slice(-6)}` : `cód. ${t.id}`}` : t.nome,
+  }));
   return {
     precisaCadastro: true,
     comprovante,

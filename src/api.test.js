@@ -2962,3 +2962,77 @@ test("v3.3 endurecimento: log imutável, SMS por cliente, ORS, login, LGPD, plan
   assert.equal(logVinculo.motoristaId, cad.body.motorista.id);
   await a.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste 3.3" });
 });
+
+test("v3.4 referência cruzada: cliente B não consegue apontar para cadastros da A (item 7)", async () => {
+  const { criarOrganizacao } = await import("./lib/organizacoes.js");
+  await criarOrganizacao({ nome: "Cliente Ref 3.4", admin: { email: "admin@ref34.local", nome: "Admin Ref", senha: "senha-teste-123" }, criadoPor: "teste" });
+  const b = await logar("admin@ref34.local");
+  const a = agentes.ADMIN;
+  const primeiro = async (ag, rota) => (await ag.get(rota)).body[0];
+  const doA = {
+    grupoId: (await primeiro(a, "/api/grupos?ativos=1")).id,
+    armadorId: (await primeiro(a, "/api/armadores?ativos=1")).id,
+    produtoId: (await primeiro(a, "/api/produtos?ativos=1")).id,
+    localId: ids.santos,
+    tipoLocalId: (await primeiro(a, "/api/tipos-local")).id,
+  };
+  const regiaoA = await a.post("/api/regioes").send({ nome: "Região Só da A" });
+  assert.equal(regiaoA.status, 201, JSON.stringify(regiaoA.body));
+
+  // Cadastros válidos da própria B (para cada recusa ser pela referência cruzada, não por falta de dado).
+  const tipoRetB = (await b.get("/api/tipos-local")).body.find((t) => t.funcao === "RETIRADA_ENTREGA");
+  const localB = await b.post("/api/locais").send({ nome: "Porto B", tipoId: tipoRetB.id });
+  const grupoB = await b.post("/api/grupos").send({ cliente: "Cli B", fabrica: "Fab B", metaEstadiaHoras: 24 });
+  const armB = await b.post("/api/armadores").send({ nome: "Arm B", freeTimeDias: 10, valorDiaria: 100 });
+  for (const r of [localB, grupoB, armB]) assert.equal(r.status, 201, JSON.stringify(r.body));
+  const base = { numero: "REFU3400005", confirmarDigito: true, tipo: "DRY_40", grupoId: grupoB.body.id, armadorId: armB.body.id };
+  const recusado = (r, oQue) => assert.ok([400, 404, 409].includes(r.status), `${oQue} → ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
+
+  // Container: cada campo com o id da A é recusado.
+  recusado(await b.post("/api/containers").send({ ...base, grupoId: doA.grupoId }), "container com ponto de carregamento da A");
+  recusado(await b.post("/api/containers").send({ ...base, armadorId: doA.armadorId }), "container com armador da A");
+  recusado(await b.post("/api/containers").send({ ...base, tipo: "REEFER_40", produtoId: doA.produtoId }), "container com produto da A");
+  recusado(await b.post("/api/containers").send({ ...base, portoRetiradaId: doA.localId }), "container com local de retirada da A");
+  const cB = await b.post("/api/containers").send(base);
+  assert.equal(cB.status, 201, JSON.stringify(cB.body));
+  // armadorId não é editável no PATCH: o pedido é aceito, mas o campo é ignorado (fica o da B).
+  const editado = await b.patch(`/api/containers/${cB.body.id}`).send({ armadorId: doA.armadorId });
+  assert.ok(editado.status >= 400 || editado.body.armadorId === armB.body.id, "armador da A não gravado");
+  recusado(await b.patch(`/api/containers/${cB.body.id}`).send({ portoEntregaId: doA.localId }), "editar container com local da A");
+  // Cadastros apontando para cadastros da A.
+  recusado(await b.post("/api/grupos").send({ cliente: "X", fabrica: "Y", metaEstadiaHoras: 24, regiaoId: regiaoA.body.id }), "ponto de carregamento com região da A");
+  recusado(await b.post("/api/grupos").send({ cliente: "X", fabrica: "Z", metaEstadiaHoras: 24, localId: doA.localId }), "ponto de carregamento com local da A");
+  recusado(await b.post("/api/locais").send({ nome: "Outro", tipoId: doA.tipoLocalId }), "local com tipo da A");
+  // Nada da A foi tocado e nada da B aponta para a A.
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const { comoSistema } = await import("./lib/tenant.js");
+  const cruzados = await comoSistema(() => bruto.$queryRaw`
+    SELECT count(*)::int AS n FROM "Container" c
+    LEFT JOIN "GrupoOperacao" g ON g.id = c."grupoId" LEFT JOIN "Armador" ar ON ar.id = c."armadorId"
+    WHERE g."organizacaoId" <> c."organizacaoId" OR ar."organizacaoId" <> c."organizacaoId"`);
+  assert.equal(cruzados[0].n, 0, "nenhum container no banco aponta para cadastro de outro cliente");
+});
+
+test("v3.4 transportadora: nome único só no cliente; mesmo CNPJ reaproveita o cadastro (item 9)", async () => {
+  const b = await logar("admin@ref34.local");
+  const a = agentes.ADMIN;
+  // Mesmo nome, sem CNPJ, em clientes diferentes: cadastros separados (podem ser empresas diferentes).
+  const ra = await a.post("/api/transportadoras").send({ nome: "Rodo Homônima" });
+  const rb = await b.post("/api/transportadoras").send({ nome: "rodo homônima" });
+  assert.deepEqual([ra.status, rb.status], [201, 201], JSON.stringify([ra.body, rb.body]));
+  assert.notEqual(ra.body.id, rb.body.id);
+  assert.equal((await a.post("/api/transportadoras").send({ nome: "RODO HOMÔNIMA" })).status, 409, "no mesmo cliente o nome é único");
+  // Mesmo CNPJ = mesma empresa: o segundo cliente só ganha o vínculo.
+  const ca = await a.post("/api/transportadoras").send({ nome: "Transp CNPJ", cnpj: "11.222.333/0001-81" });
+  assert.equal(ca.status, 201);
+  const cb = await b.post("/api/transportadoras").send({ nome: "Transp CNPJ (filial)", cnpj: "11222333000181" });
+  assert.equal(cb.status, 201, JSON.stringify(cb.body));
+  assert.equal(cb.body.id, ca.body.id, "cadastro reaproveitado");
+  assert.ok((await b.get("/api/transportadoras")).body.some((t) => t.id === ca.body.id), "B passa a ver");
+  assert.equal((await b.post("/api/transportadoras").send({ nome: "De novo", cnpj: "11222333000181" })).status, 409, "já está no cadastro da B");
+  // Compartilhada: nenhum dos dois altera sozinho; CNPJ de outra empresa na edição → 409.
+  assert.equal((await b.patch(`/api/transportadoras/${ca.body.id}`).send({ nome: "Renomeada" })).status, 409);
+  assert.equal((await a.patch(`/api/transportadoras/${ra.body.id}`).send({ cnpj: "11222333000181" })).status, 409);
+  const log = (await b.get(`/api/logs?entidade=Transportadora&entidadeId=${ca.body.id}`)).body;
+  assert.ok(log.some((l) => /vinculado.*mesmo CNPJ/.test(l.descricao)));
+});
