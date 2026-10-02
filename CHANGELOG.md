@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.1.0 — não publicada
+## 3.1.0 — 02/10/2026 (tag `v3.1.0`)
 
 **Geolocalização do navegador (`watchPosition`) como reforço do rastreamento — o SMS continua sendo o principal.**
 
