@@ -123,15 +123,32 @@ async function talvezEnviar(forcar = false) {
   }
 }
 
+// Avisa o servidor da situação (a ficha mostra na hora se parou). Ao esconder/fechar a página o
+// navegador pode encerrar o script a qualquer momento: sendBeacon entrega mesmo assim.
+function avisarEstado(estado, { beacon = false } = {}) {
+  const url = `/api/posicao/${encodeURIComponent(props.codigo)}/acompanhar/estado`;
+  try {
+    if (beacon && navigator.sendBeacon?.(url, new Blob([JSON.stringify({ estado })], { type: "application/json" }))) return;
+  } catch {
+    // sem sendBeacon: tenta pelo fetch normal abaixo
+  }
+  api.estadoAcompanhamento(props.codigo, estado).catch(() => {});
+}
+
 function aoVoltarParaPagina() {
   if (!acompanhando.value) return;
   if (document.visibilityState === "visible") {
     statusAcomp.value = "Acompanhando";
+    avisarEstado("ATIVO");
     manterTelaLigada();
     talvezEnviar(true); // voltou: manda a posição atual (respeitando 1 por minuto)
   } else {
     statusAcomp.value = "Pausado (página minimizada)";
+    avisarEstado("PAUSADO", { beacon: true });
   }
+}
+function aoFecharPagina() {
+  if (acompanhando.value) avisarEstado("PAUSADO", { beacon: true });
 }
 
 function iniciar() {
@@ -151,7 +168,16 @@ function iniciar() {
   // Parado no mesmo lugar o GPS quase não manda leituras novas: confere o relógio a cada 30 s.
   timer = setInterval(() => talvezEnviar(), 30000);
   document.addEventListener("visibilitychange", aoVoltarParaPagina);
+  window.addEventListener("pagehide", aoFecharPagina);
+  avisarEstado("ATIVO");
   manterTelaLigada();
+}
+
+// "Parar" tocado pelo motorista avisa o servidor (ENCERRADO); as outras paradas (link não vale mais,
+// sem permissão) não precisam — o servidor já recusa ou a ficha mostra "sem sinal".
+function pararPeloMotorista() {
+  if (acompanhando.value) avisarEstado("ENCERRADO");
+  parar();
 }
 
 function parar() {
@@ -162,6 +188,7 @@ function parar() {
   clearInterval(timer);
   timer = null;
   document.removeEventListener("visibilitychange", aoVoltarParaPagina);
+  window.removeEventListener("pagehide", aoFecharPagina);
   wakeLock?.release().catch(() => {});
   wakeLock = null;
   telaLigada.value = false;
@@ -207,7 +234,7 @@ onBeforeUnmount(parar);
             <p class="mudo pequeno" style="margin: 0">
               Deixe esta página aberta na tela{{ telaLigada ? " (a tela vai ficar ligada)" : "" }}. Se minimizar, ao voltar o envio continua.
             </p>
-            <button type="button" class="grande" @click="parar">Parar acompanhamento</button>
+            <button type="button" class="grande" @click="pararPeloMotorista">Parar acompanhamento</button>
           </template>
           <div v-if="erroAcomp" class="erro" role="alert">{{ erroAcomp }}</div>
         </div>

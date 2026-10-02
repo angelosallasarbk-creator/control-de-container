@@ -1549,14 +1549,33 @@ test("v3.1 acompanhamento pela página do link (reforço do SMS): regras, até a
 
   // Ficha: acompanhamento ativo e posições com a origem.
   const r = (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body;
-  assert.equal(r.acompanhamento.ativo, true);
+  assert.equal(r.acompanhamento.estado, "ATIVO");
   assert.equal(r.posicoes.filter((p) => p.origem === "ACOMPANHAMENTO").length, 2);
+  const situacao = async () => (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body.acompanhamento;
+  const estado = (e) => request(app).post(`/api/posicao/${codigo}/acompanhar/estado`).send({ estado: e });
+  // Parou sem avisar (fechou, sem internet): sem sinal há mais de 7 min → "SEM_SINAL".
+  await prisma.container.update({ where: { id: c.body.id }, data: { acompanhamentoSinalEm: new Date(Date.now() - 8 * MIN) } });
+  const semSinal = await situacao();
+  assert.equal(semSinal.estado, "SEM_SINAL");
+  assert.equal(new Date(semSinal.desde).getTime() > Date.now() - 9 * MIN, true);
+  // Avisos da página: minimizada → PAUSADO; voltou → ATIVO; Parar → ENCERRADO; inválido → 400.
+  assert.equal((await estado("QUALQUER")).status, 400);
+  assert.equal((await estado("PAUSADO")).status, 200);
+  assert.equal((await situacao()).estado, "PAUSADO");
+  assert.equal((await estado("ATIVO")).status, 200);
+  assert.equal((await situacao()).estado, "ATIVO");
+  assert.equal((await estado("ENCERRADO")).status, 200);
+  assert.equal((await situacao()).estado, "ENCERRADO");
+  // Uma posição nova reativa (o motorista recomeçou).
   await prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - 20 * MIN) } });
-  assert.equal((await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body.acompanhamento.ativo, false, "sem posição há 20 min = pausado");
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.53 })).status, 201);
+  assert.equal((await situacao()).estado, "ATIVO");
+  await prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - 20 * MIN) } });
 
-  // Responsável mudou: link não vale mais para acompanhar.
+  // Responsável mudou: link não vale mais para acompanhar (nem para avisar a situação).
   await prisma.container.update({ where: { id: c.body.id }, data: { rastreioResponsavelId: null } });
   assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos)).status, 409);
+  assert.equal((await estado("ATIVO")).status, 409);
   await prisma.container.update({ where: { id: c.body.id }, data: { rastreioResponsavelId: u.body.id } });
   assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos)).status, 201);
 
@@ -2619,7 +2638,7 @@ test("v3.0: invasão — organização B ataca TODAS as rotas com identificador 
     assert.ok([400, 403, 404].includes(r.status), `${nome} → ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
   }
   // Rotas cujo código identifica a própria organização (o atacante não escolhe a organização).
-  const FORA = new Set(["GET /api/auth/redefinir-senha/:codigo", "GET /api/posicao/:codigo", "POST /api/posicao/:codigo", "POST /api/posicao/:codigo/acompanhar", "GET /api/qr/opcoes/container/:numero"]);
+  const FORA = new Set(["GET /api/auth/redefinir-senha/:codigo", "GET /api/posicao/:codigo", "POST /api/posicao/:codigo", "POST /api/posicao/:codigo/acompanhar", "POST /api/posicao/:codigo/acompanhar/estado", "GET /api/qr/opcoes/container/:numero"]);
 
   // Ids da A no CORPO / na busca.
   assert.equal((await b.post("/api/containers").send({ numero: "INVU1234567", confirmarDigito: true, tipo: "DRY_40", grupoId: grupo.id, armadorId: armador.id })).status, 400, "container com cadastros da A");

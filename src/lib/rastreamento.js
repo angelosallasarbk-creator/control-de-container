@@ -36,8 +36,12 @@ export const INTERVALO_MINIMO_ACOMPANHAMENTO_S = 60;
 // 15 min — evita encher o banco e o mapa com pontos repetidos (caminhão parado com a página aberta).
 export const RAIO_REPETIDA_M = 200;
 export const GRAVAR_PARADO_A_CADA_MIN = 15;
-// Acompanhamento "ativo" na ficha: posição gravada há menos que isto (cobre o intervalo de parado).
-export const ACOMPANHAMENTO_ATIVO_MIN = 20;
+// Situação do acompanhamento na ficha. A página avisa quando inicia (ATIVO), quando é minimizada
+// ou fechada (PAUSADO) e quando o motorista toca em Parar (ENCERRADO); cada envio renova o "sinal".
+// Se o aviso não chegar (celular sem internet, bateria), sem sinal há mais de 7 min (os envios são
+// a cada 5) a ficha mostra que parou.
+export const ESTADOS_ACOMPANHAMENTO = ["ATIVO", "PAUSADO", "ENCERRADO"];
+export const ACOMPANHAMENTO_SEM_SINAL_MIN = 7;
 const POSICOES_PARA_MOTIVOS = 200;
 // Falha no envio: tenta de novo depois disto (em vez de esperar o intervalo inteiro).
 const NOVA_TENTATIVA_MIN = 5;
@@ -148,7 +152,10 @@ export async function assumirRastreio({ containerId, usuarioId = null, motorista
     const [dest, anterior] = await Promise.all([buscarDestinatario({ usuarioId, motoristaId }), buscarDestinatario(destinoDoContainer(c) ?? {})]);
     await prisma.container.update({
       where: { id: c.id },
-      data: { rastreioResponsavelId: usuarioId, rastreioMotoristaId: motoristaId, rastreioDesde: agora, rastreioUltimoEnvioEm: agora },
+      data: {
+        rastreioResponsavelId: usuarioId, rastreioMotoristaId: motoristaId, rastreioDesde: agora, rastreioUltimoEnvioEm: agora,
+        acompanhamentoEstado: null, acompanhamentoEstadoEm: null, acompanhamentoSinalEm: null,
+      },
     });
     await registrarLog({
       usuarioEmail: dest.identidade, acao: "RASTREIO", entidade: "Container", entidadeId: c.id,
@@ -425,7 +432,7 @@ async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   const p = await prisma.solicitacaoPosicao.findUnique({
     where: { tokenHash: hashDoCodigo(codigo) },
     include: {
-      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true } },
+      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, acompanhamentoEstado: true } },
       usuario: { select: { id: true, ativo: true } },
       motorista: { select: { id: true, bloqueado: true, transportadora: { select: { ativo: true } } } },
     },
@@ -500,6 +507,14 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
   if (ultima && agora - ultima.registradaEm < INTERVALO_MINIMO_ACOMPANHAMENTO_S * 1000) {
     return { ok: false, cedo: true, mensagem: "Posição recebida há menos de 1 minuto." };
   }
+  // Sinal de vida da página (mesmo quando a posição parada não é gravada de novo).
+  await prisma.container.update({
+    where: { id: pedido.containerId },
+    data: {
+      acompanhamentoSinalEm: agora,
+      ...(pedido.container.acompanhamentoEstado !== "ATIVO" ? { acompanhamentoEstado: "ATIVO", acompanhamentoEstadoEm: agora } : {}),
+    },
+  });
   const mesmoLugar = ultima && distanciaM({ latitude: Number(ultima.latitude), longitude: Number(ultima.longitude) }, { latitude, longitude }) <= RAIO_REPETIDA_M;
   if (mesmoLugar && agora - ultima.registradaEm < GRAVAR_PARADO_A_CADA_MIN * MIN) {
     return { ok: true, gravada: false, numero: pedido.container.numero }; // parado: recebida, não grava de novo
@@ -513,6 +528,32 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
   return { ok: true, gravada: true, numero: pedido.container.numero };
 }
 
+/** Aviso da página: iniciou (ATIVO), minimizada/fechada (PAUSADO) ou o motorista tocou em Parar (ENCERRADO). */
+export async function registrarEstadoAcompanhamento({ codigo, estado, agora = new Date() }) {
+  const { pedido, erro } = await pedidoDoCodigo(codigo, agora, { acompanhamento: true });
+  if (!pedido) return { ok: false, mensagem: erro };
+  await prisma.container.update({
+    where: { id: pedido.containerId },
+    data: { acompanhamentoEstado: estado, acompanhamentoEstadoEm: agora, ...(estado === "ATIVO" ? { acompanhamentoSinalEm: agora } : {}) },
+  });
+  return { ok: true };
+}
+
+/**
+ * Situação do acompanhamento para a ficha: ATIVO | PAUSADO | ENCERRADO | SEM_SINAL (página parou
+ * de mandar sem avisar). null = nunca foi iniciado.
+ */
+export function situacaoAcompanhamento(c, posicoes, agora = new Date()) {
+  const ultimaPosicaoEm = posicoes.find((p) => p.origem === "ACOMPANHAMENTO")?.registradaEm ?? null;
+  if (!c.acompanhamentoEstado) return ultimaPosicaoEm ? { estado: "SEM_SINAL", desde: ultimaPosicaoEm, ultimaPosicaoEm } : null;
+  const sinal = c.acompanhamentoSinalEm ?? c.acompanhamentoEstadoEm;
+  if (STATUS_ENCERRADOS.includes(c.status)) return { estado: "ENCERRADO", desde: sinal, motivo: "container encerrado", ultimaPosicaoEm };
+  if (c.acompanhamentoEstado === "ATIVO" && agora - new Date(sinal) > ACOMPANHAMENTO_SEM_SINAL_MIN * MIN) {
+    return { estado: "SEM_SINAL", desde: sinal, ultimaPosicaoEm };
+  }
+  return { estado: c.acompanhamentoEstado, desde: c.acompanhamentoEstadoEm, ultimoSinalEm: sinal, ultimaPosicaoEm };
+}
+
 // ---------- Aba "Rastreamento" da ficha ----------
 
 export async function resumoRastreamento(containerId) {
@@ -521,6 +562,7 @@ export async function resumoRastreamento(containerId) {
       where: { id: containerId },
       select: {
         status: true, planejamento: true, rastreioDesde: true, rastreioUltimoEnvioEm: true,
+        acompanhamentoEstado: true, acompanhamentoEstadoEm: true, acompanhamentoSinalEm: true,
         rastreioResponsavel: { select: { nome: true, email: true, celular: true, ativo: true } },
         rastreioMotorista: { select: { nome: true, celular: true, placa: true, bloqueado: true, transportadora: { select: { nome: true, ativo: true } } } },
       },
@@ -564,12 +606,8 @@ export async function resumoRastreamento(containerId) {
       : EM_TRANSITO.includes(c.status) && (posicoes[0]?.registradaEm ?? c.rastreioDesde)
         ? new Date(new Date(posicoes[0]?.registradaEm ?? c.rastreioDesde).getTime() + config.rastreioSemPosicaoHoras * 60 * MIN)
         : null,
-    // Acompanhamento pela página (reforço): ativo se chegou posição há pouco; senão, quando parou.
-    acompanhamento: (() => {
-      const ult = posicoes.find((p) => p.origem === "ACOMPANHAMENTO");
-      if (!ult) return null;
-      return { ultimaEm: ult.registradaEm, ativo: Date.now() - new Date(ult.registradaEm).getTime() < ACOMPANHAMENTO_ATIVO_MIN * MIN };
-    })(),
+    // Acompanhamento pela página (reforço): ativo, pausado, encerrado ou sem sinal.
+    acompanhamento: situacaoAcompanhamento(c, posicoes),
     posicoes: posicoes.map((p) => ({ ...p, latitude: Number(p.latitude), longitude: Number(p.longitude), usuario: p.motorista?.nome ?? p.usuario?.nome ?? null, motorista: undefined })),
     mensagens: mensagens.map((m) => ({ ...m, telefone: mascararCelular(m.telefone), usuario: m.motorista?.nome ?? m.usuario?.nome ?? null, motorista: undefined })),
   };

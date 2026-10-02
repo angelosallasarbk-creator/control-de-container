@@ -421,16 +421,21 @@ model Container {
   mudancasTrajeto MudancaTrajeto[]
 
   // Rastreamento por SMS: quem registrou algo pelo QR por último recebe os pedidos de posição.
-  rastreioResponsavelId Int?
-  rastreioResponsavel   Usuario?             @relation("RastreioResponsavel", fields: [rastreioResponsavelId], references: [id])
+  rastreioResponsavelId  Int?
+  rastreioResponsavel    Usuario?             @relation("RastreioResponsavel", fields: [rastreioResponsavelId], references: [id])
   // …ou um motorista (acesso pelo celular, sem usuário). Só um dos dois fica preenchido.
-  rastreioMotoristaId   Int?
-  rastreioMotorista     Motorista?           @relation("RastreioMotorista", fields: [rastreioMotoristaId], references: [id])
-  rastreioDesde         DateTime?
-  rastreioUltimoEnvioEm DateTime? // último SMS (vínculo ou pedido de posição) — base do próximo
-  posicoes              PosicaoContainer[]
-  solicitacoesPosicao   SolicitacaoPosicao[]
-  mensagensSms          MensagemSms[]
+  rastreioMotoristaId    Int?
+  rastreioMotorista      Motorista?           @relation("RastreioMotorista", fields: [rastreioMotoristaId], references: [id])
+  rastreioDesde          DateTime?
+  rastreioUltimoEnvioEm  DateTime? // último SMS (vínculo ou pedido de posição) — base do próximo
+  // Acompanhamento pela página do link (v3.1.2): ATIVO | PAUSADO (página minimizada/fechada) |
+  // ENCERRADO (motorista tocou em Parar); quando mudou; último sinal recebido da página.
+  acompanhamentoEstado   String?
+  acompanhamentoEstadoEm DateTime?
+  acompanhamentoSinalEm  DateTime?
+  posicoes               PosicaoContainer[]
+  solicitacoesPosicao    SolicitacaoPosicao[]
+  mensagensSms           MensagemSms[]
 
   @@index([numero])
   @@index([status])

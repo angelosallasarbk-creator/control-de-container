@@ -109,6 +109,7 @@ export const api = {
   conferirPedidoPosicao: (codigo) => request(`/posicao/${encodeURIComponent(codigo)}`),
   enviarPosicao: (codigo, dados) => request(`/posicao/${encodeURIComponent(codigo)}`, { method: "POST", body: dados }),
   acompanharPosicao: (codigo, dados) => request(`/posicao/${encodeURIComponent(codigo)}/acompanhar`, { method: "POST", body: dados }),
+  estadoAcompanhamento: (codigo, estado) => request(`/posicao/${encodeURIComponent(codigo)}/acompanhar/estado`, { method: "POST", body: { estado } }),
 
   custos: (params) => request(`/custos${qs(params)}`),
 

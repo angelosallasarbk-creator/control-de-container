@@ -4,6 +4,20 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.1.2 — não publicada
+
+- **Ficha → Rastreamento mostra quando o acompanhamento pela página parou.** Antes só virava
+  "pausado" 20 min depois da última posição gravada — a ficha seguia "ativo" com a página já parada.
+  Agora a página do link avisa o servidor quando inicia, quando é **minimizada ou fechada** (via
+  sendBeacon, que entrega mesmo com a página saindo) e quando o motorista toca em **Parar**; cada
+  envio renova o último sinal. A ficha mostra: *ativo · último sinal há X*, *parou — pausado desde*
+  (página minimizada/fechada), *parou — sem sinal desde* (deixou de mandar sem avisar: tela bloqueada,
+  sem internet ou bateria — mais de 7 min sem sinal, com envios a cada 5 min) ou *encerrado pelo motorista*.
+- Rota nova `POST /api/posicao/:codigo/acompanhar/estado` (ATIVO | PAUSADO | ENCERRADO; mesmas regras do
+  link: respondido, responsável atual, container ativo; limite próprio de 20 por 5 min por link).
+- Migração `20261005100000_acompanhamento_estado`: só acrescenta 3 colunas opcionais em Container
+  (situação, quando mudou e último sinal). Troca de responsável pelo QR limpa a situação.
+
 ## 3.1.1 — 02/10/2026 (tag `v3.1.1`)
 
 - **Home:** só aparecem os Pontos de Carregamento com demanda (pelo menos 1 container ativo —
