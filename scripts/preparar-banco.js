@@ -28,6 +28,10 @@ export async function prepararBanco({ url = process.env.DATABASE_URL, senha = pr
     await db.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO ${USUARIO_APP}`);
     await db.$executeRawUnsafe(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${USUARIO_APP}`);
     await db.$executeRawUnsafe(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${USUARIO_APP}`);
+    // Log de auditoria (v3.3, item 8): o sistema só grava e lê — não altera nem apaga. A purga de
+    // 365 dias usa a função purgar_log_auditoria (dono das tabelas; criada na migração 20261007100000).
+    await db.$executeRawUnsafe(`DO $$ BEGIN IF to_regclass('public."LogAuditoria"') IS NOT NULL THEN REVOKE UPDATE, DELETE, TRUNCATE ON "LogAuditoria" FROM ${USUARIO_APP}; END IF; END $$`);
+    await db.$executeRawUnsafe(`DO $$ BEGIN IF to_regprocedure('public.purgar_log_auditoria(integer)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION purgar_log_auditoria(integer) TO ${USUARIO_APP}; END IF; END $$`);
     // A tabela de controle das migrações fica fora do alcance do sistema.
     // (num banco novo ela só existe depois da 1ª migração)
     await db.$executeRawUnsafe(`DO $$ BEGIN IF to_regclass('public."_prisma_migrations"') IS NOT NULL THEN REVOKE ALL ON "_prisma_migrations" FROM ${USUARIO_APP}; END IF; END $$`);

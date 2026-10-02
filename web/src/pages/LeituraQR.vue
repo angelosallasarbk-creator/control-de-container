@@ -35,6 +35,41 @@ async function salvarPlaca() {
   }
 }
 
+// Trocar o próprio celular (v3.2): código SMS no número NOVO. O celular é a identidade do motorista
+// e vale para todos os clientes — por isso só ele troca, e os outros acessos dele caem.
+const etapaCel = ref(null); // null | "numero" | "codigo"
+const novoCel = ref("");
+const codigoCel = ref("");
+const erroCel = ref(null);
+const avisoCel = ref(null);
+function abrirCelular() {
+  etapaCel.value = "numero";
+  novoCel.value = "";
+  codigoCel.value = "";
+  erroCel.value = null;
+  avisoCel.value = null;
+}
+async function pedirCodigoCelular() {
+  erroCel.value = null;
+  try {
+    await api.motoristaTrocarCelular(novoCel.value);
+    etapaCel.value = "codigo";
+  } catch (e) {
+    erroCel.value = e.message;
+  }
+}
+async function confirmarCelular() {
+  erroCel.value = null;
+  try {
+    const r = await api.motoristaConfirmarCelular(novoCel.value, codigoCel.value);
+    emit("motorista-atualizado", r.motorista);
+    etapaCel.value = null;
+    avisoCel.value = "Celular trocado. Os próximos SMS e o seu acesso usam o número novo.";
+  } catch (e) {
+    erroCel.value = e.message;
+  }
+}
+
 // Sessão do motorista caiu (bloqueado/encerrada): volta para a tela de acesso.
 function tratarErroMotorista(e) {
   if (props.motorista && (e.status === 401 || e.status === 403) && e.codigo && /MOTORISTA/.test(e.codigo)) {
@@ -469,6 +504,36 @@ async function registrarPassagemQr() {
             <button type="button" @click="trocandoPlaca = false">Cancelar</button>
             <div v-if="erroPlaca" class="erro" style="width: 100%">{{ erroPlaca }}</div>
           </form>
+          <div class="celular-motorista">
+            <template v-if="!etapaCel">
+              <div class="linha-entre" style="gap: 10px">
+                <div>
+                  <div class="mudo pequeno">Celular do acesso</div>
+                  <div class="mono">final {{ String(motorista.celular ?? "").slice(-4) }}</div>
+                </div>
+                <button type="button" class="pequeno" @click="abrirCelular">Trocar celular</button>
+              </div>
+              <div v-if="avisoCel" class="sucesso pequeno" style="margin-top: 6px">{{ avisoCel }}</div>
+            </template>
+            <form v-else-if="etapaCel === 'numero'" class="linha" style="gap: 8px; align-items: flex-end; flex-wrap: wrap" @submit.prevent="pedirCodigoCelular">
+              <div class="campo" style="flex: 1; min-width: 160px; margin: 0">
+                <label for="cel-novo">Celular novo (com DDD)</label>
+                <input id="cel-novo" v-model="novoCel" class="grande-campo" inputmode="tel" autocomplete="tel" placeholder="(11) 98765-4321" required />
+              </div>
+              <button type="submit" class="primario">Enviar código</button>
+              <button type="button" @click="etapaCel = null">Cancelar</button>
+              <div v-if="erroCel" class="erro" style="width: 100%">{{ erroCel }}</div>
+            </form>
+            <form v-else class="linha" style="gap: 8px; align-items: flex-end; flex-wrap: wrap" @submit.prevent="confirmarCelular">
+              <div class="campo" style="flex: 1; min-width: 140px; margin: 0">
+                <label for="cel-codigo">Código recebido no celular novo</label>
+                <input id="cel-codigo" v-model="codigoCel" class="mono grande-campo" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required />
+              </div>
+              <button type="submit" class="primario">Confirmar</button>
+              <button type="button" @click="etapaCel = null">Cancelar</button>
+              <div v-if="erroCel" class="erro" style="width: 100%">{{ erroCel }}</div>
+            </form>
+          </div>
         </section>
 
         <!-- Container no trecho de um ponto de parada ainda não registrado -->
@@ -762,6 +827,7 @@ async function registrarPassagemQr() {
 </template>
 
 <style scoped>
+.celular-motorista { border-top: 1px solid var(--borda); margin-top: 10px; padding-top: 10px; }
 .movel { min-height: 100vh; background: var(--fundo); display: flex; flex-direction: column; }
 .movel-topo { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--lateral); color: #fff; font-weight: 700; position: sticky; top: 0; z-index: 10; }
 .movel-corpo { padding: 16px; display: flex; flex-direction: column; gap: 14px; max-width: 520px; width: 100%; margin: 0 auto; }

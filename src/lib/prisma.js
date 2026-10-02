@@ -31,8 +31,10 @@ export class SemOrganizacaoError extends Error {
 
 // Conexão com o usuário restrito ccs_app (RLS valendo) quando APP_DB_ROLE_PASSWORD existe.
 const base = new PrismaClient({ datasourceUrl: urlDaAplicacao() });
+// Produção sem o usuário restrito NÃO sobe (v3.4, item 7): com o usuário das migrações o RLS não
+// vale e a camada da aplicação sozinha não filtra relações carregadas junto (include/select).
 if (process.env.NODE_ENV === "production" && !process.env.APP_DB_ROLE_PASSWORD) {
-  console.warn("ATENÇÃO: APP_DB_ROLE_PASSWORD não definida — o sistema conecta com o usuário das migrações e o RLS não se aplica.");
+  throw new Error("APP_DB_ROLE_PASSWORD não definida: em produção o sistema só conecta pelo usuário restrito ccs_app (RLS). Defina a variável no Render.");
 }
 
 // Valores do contexto para o banco (RLS): organização e modo sistema.

@@ -22,7 +22,7 @@ export function organizacaoAtual() {
 // Atenção: consultas do Prisma só executam quando alguém faz await/then. Por isso o await fica
 // DENTRO do contexto — senão comoSistema(() => prisma.x.findMany()) executaria fora dele.
 const rodar = (store, fn) => armazem.run(store, async () => await fn());
-export const comOrganizacao = (organizacaoId, fn) => rodar({ organizacaoId }, fn);
+export const comOrganizacao = (organizacaoId, fn, extra = {}) => rodar({ ...extra, organizacaoId }, fn);
 export const comoPlataforma = (fn) => rodar({ organizacaoId: null }, fn);
 export const comoSistema = (fn) => rodar({ sistema: true }, fn);
 // Marca que as consultas já estão dentro de uma transação (o contexto do banco já foi definido).

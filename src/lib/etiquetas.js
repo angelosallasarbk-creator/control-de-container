@@ -3,10 +3,12 @@ import crypto from "node:crypto";
 import QRCode from "qrcode";
 
 // Código curto impresso na etiqueta (para ler/digitar se o QR estragar): sem 0/O, 1/I/L.
+// v3.2: 8 caracteres (31^8 ≈ 852 bilhões) sorteados com crypto.randomInt — sem o viés de "byte % 31".
+// As etiquetas antigas continuam com 6 e seguem valendo.
 const ALFABETO = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+export const TAMANHO_CODIGO = 8;
 export function gerarCodigo() {
-  const bytes = crypto.randomBytes(6);
-  return `CC-${[...bytes].map((b) => ALFABETO[b % ALFABETO.length]).join("")}`;
+  return `CC-${Array.from({ length: TAMANHO_CODIGO }, () => ALFABETO[crypto.randomInt(ALFABETO.length)]).join("")}`;
 }
 
 // Token da URL: 128 bits aleatórios — não dá para "chutar" etiquetas de outros containers.
@@ -56,6 +58,8 @@ function escolherQr(url, espacoPontos) {
  */
 export function zplDaEtiqueta({ codigo, url }, { larguraMm, alturaMm, dpi = 203, titulo = "Controle de Container" }) {
   const dpm = pontosPorMm(dpi);
+  // Fonte do código proporcional ao tamanho dele (antigos: 9 caracteres; novos: 11).
+  const fatorCodigo = Math.max(1, String(codigo).length / 9);
   const W = Math.round(larguraMm * dpm);
   const H = Math.round(alturaMm * dpm);
   const margem = Math.round(2 * dpm);
@@ -71,7 +75,7 @@ export function zplDaEtiqueta({ codigo, url }, { larguraMm, alturaMm, dpi = 203,
     linhas.push(`^FO${margem},${yQr}${campoQr}`);
     const xTexto = margem * 2 + ladoQr;
     const larguraTexto = Math.max(dpm * 10, W - xTexto - margem);
-    const alturaCodigo = Math.max(dpm * 2, Math.min(Math.round(H * 0.22), Math.round(larguraTexto / 5.5)));
+    const alturaCodigo = Math.max(dpm * 2, Math.min(Math.round(H * 0.22), Math.round(larguraTexto / (5.5 * fatorCodigo))));
     const alturaPequena = Math.max(dpm * 2, Math.round(alturaCodigo * 0.5));
     let y = Math.max(margem, Math.round((H - (alturaCodigo + alturaPequena * 3.4)) / 2));
     linhas.push(`^FO${xTexto},${y}^A0N,${alturaCodigo},${alturaCodigo}^FB${larguraTexto},1,0,L^FD${textoZpl(codigo)}^FS`);
@@ -82,7 +86,7 @@ export function zplDaEtiqueta({ codigo, url }, { larguraMm, alturaMm, dpi = 203,
   } else {
     const larguraTexto = W - 2 * margem;
     const livre = H - ladoQr - 2 * margem;
-    const alturaCodigo = Math.max(dpm * 2, Math.min(Math.round(livre * 0.4), Math.round(W / 8)));
+    const alturaCodigo = Math.max(dpm * 2, Math.min(Math.round(livre * 0.4), Math.round(W / (8 * fatorCodigo))));
     const alturaPequena = Math.max(dpm * 2, Math.round(alturaCodigo * 0.45));
     const vao = margem;
     const mostrarInstrucoes = livre >= alturaCodigo + alturaPequena * 2 + vao * 3;

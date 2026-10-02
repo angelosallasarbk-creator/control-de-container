@@ -25,6 +25,10 @@ const loginLimiter = rateLimit({
   message: { erro: "Muitas tentativas de login. Aguarde alguns minutos e tente novamente." },
 });
 
+// E-mail inexistente também passa por um bcrypt.compare (contra este hash fictício, mesmo custo 10):
+// o tempo de resposta não revela quais e-mails têm conta (v3.3, item 13).
+const HASH_FICTICIO = bcrypt.hashSync("senha-ficticia-para-igualar-o-tempo", 10);
+
 authRouter.post("/login", loginLimiter, asyncHandler(async (req, res) => {
   const { email, senha } = req.body ?? {};
   const lembrar = req.body?.lembrar === true;
@@ -33,7 +37,8 @@ authRouter.post("/login", loginLimiter, asyncHandler(async (req, res) => {
   }
   const usuario = await prisma.usuario.findUnique({ where: { email: String(email).toLowerCase().trim() }, include: { organizacao: { select: { nome: true, ativo: true } } } });
   // Mesma mensagem para e-mail inexistente e senha errada: não revela quais e-mails existem.
-  if (!usuario || !(await bcrypt.compare(String(senha), usuario.senhaHash))) {
+  const senhaCerta = await bcrypt.compare(String(senha), usuario?.senhaHash ?? HASH_FICTICIO);
+  if (!usuario || !senhaCerta) {
     return res.status(401).json({ erro: "E-mail ou senha inválidos." });
   }
   if (!usuario.ativo) {
@@ -64,6 +69,11 @@ const redefinirLimiter = rateLimit({
   message: { erro: "Muitas tentativas. Aguarde alguns minutos e tente novamente." },
 });
 
+// O envio do e-mail roda DEPOIS da resposta (v3.3, item 13): esperar o envio só quando a conta
+// existe deixava a resposta mais lenta e revelava as contas. Os testes aguardam os envios pendentes.
+const enviosPendentes = new Set();
+export const aguardarEnviosDeRedefinicao = () => Promise.allSettled([...enviosPendentes]);
+
 authRouter.post("/esqueci-senha", esqueciLimiter, asyncHandler(async (req, res) => {
   const email = String(req.body?.email ?? "").trim();
   if (!email || email.length > 160) return res.status(400).json({ erro: "Informe o e-mail da sua conta." });
@@ -74,13 +84,12 @@ authRouter.post("/esqueci-senha", esqueciLimiter, asyncHandler(async (req, res) 
     console.error("Esqueci minha senha: defina o endereço do sistema (Configurações → Etiquetas QR ou APP_URL) para montar o link.");
     return res.json(RESPOSTA_ESQUECI);
   }
-  try {
-    await solicitarRedefinicao({ email, baseUrl: base });
-  } catch (err) {
-    // Falha no envio não muda a resposta (não revela se a conta existe); fica no log do servidor.
-    console.error("Esqueci minha senha: falha ao enviar o e-mail:", err.message);
-  }
   res.json(RESPOSTA_ESQUECI);
+  // Falha no envio não muda a resposta (não revela se a conta existe); fica no log do servidor.
+  const envio = solicitarRedefinicao({ email, baseUrl: base })
+    .catch((err) => console.error("Esqueci minha senha: falha ao enviar o e-mail:", err.message))
+    .finally(() => enviosPendentes.delete(envio));
+  enviosPendentes.add(envio);
 }));
 
 authRouter.get("/redefinir-senha/:codigo", redefinirLimiter, asyncHandler(async (req, res) => {

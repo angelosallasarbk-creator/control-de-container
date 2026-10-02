@@ -45,20 +45,31 @@ export const CONFIG_PADRAO = {
   retencaoPosicoesDias: 90,
 };
 
+// Cache curto por organização (v3.4, item 12): a configuração é lida em quase toda requisição e
+// em cada rotina. Salvar pelo sistema invalida na hora; o prazo cobre o resto.
+const CACHE_MS = 5000;
+const cache = new Map(); // organizacaoId → { config, em }
+export const limparCacheConfiguracao = () => cache.clear();
+
 export async function lerConfiguracao() {
   // Configurações são por organização. Em modo sistema (sem organização escolhida) só os padrões —
   // nunca misturar as configurações de clientes diferentes.
   if (contextoAtual()?.sistema) return { ...CONFIG_PADRAO };
+  const org = organizacaoAtual() ?? "plataforma";
+  const guardado = cache.get(org);
+  if (guardado && Date.now() - guardado.em < CACHE_MS) return { ...guardado.config };
   const linhas = await prisma.configuracao.findMany();
   const config = { ...CONFIG_PADRAO };
   for (const { chave, valor } of linhas) {
     // Mantém o tipo do padrão: número vira número, texto continua texto.
     if (chave in CONFIG_PADRAO) config[chave] = typeof CONFIG_PADRAO[chave] === "number" ? Number(valor) : valor;
   }
-  return config;
+  cache.set(org, { config, em: Date.now() });
+  return { ...config };
 }
 
 export async function salvarConfiguracao(parcial) {
+  cache.delete(organizacaoAtual() ?? "plataforma");
   for (const [chave, valor] of Object.entries(parcial)) {
     if (!(chave in CONFIG_PADRAO)) continue;
     await prisma.configuracao.upsert({
@@ -68,5 +79,6 @@ export async function salvarConfiguracao(parcial) {
       update: { valor: String(valor) },
     });
   }
+  cache.delete(organizacaoAtual() ?? "plataforma");
   return lerConfiguracao();
 }

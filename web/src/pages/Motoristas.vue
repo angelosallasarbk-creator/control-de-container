@@ -35,6 +35,9 @@ onMounted(async () => {
 
 const situacao = (m) => (m.bloqueado ? "BLOQUEADO" : !m.consentimentoEm ? "AGUARDANDO" : "ATIVO");
 const ROTULO_SITUACAO = { ATIVO: ["Ativo", "verde"], BLOQUEADO: ["Bloqueado", "vermelho"], AGUARDANDO: ["Aguardando 1º acesso", "amarelo"] };
+// v3.2: o bloqueio do gestor é o da transportadora (todos os clientes); o da administração, só deste cliente.
+const rotuloBloqueio = (m) => (m.bloqueadoPelaTransportadora ? "Bloqueado pela transportadora" : "Bloqueado para este cliente");
+const meuBloqueio = (m) => (ehGestor.value ? m.bloqueadoPelaTransportadora : m.bloqueadoNoCliente);
 const visiveis = computed(() => {
   const b = filtro.busca.trim().toLowerCase();
   const digitos = b.replace(/\D/g, "");
@@ -60,7 +63,7 @@ async function abrirEdicao(m) {
   erroEdicao.value = null;
   try {
     const x = await api.motorista(m.id);
-    edicao.value = { id: x.id, nome: x.nome, placa: x.placa ?? "", celular: fmtCelular(x.celular), celularOriginal: fmtCelular(x.celular) };
+    edicao.value = { id: x.id, nome: x.nome, placa: x.placa ?? "", celular: fmtCelular(x.celular), celularOriginal: fmtCelular(x.celular), compartilhado: x.compartilhado };
   } catch (e) {
     mostrar(e.message);
   }
@@ -79,13 +82,30 @@ async function salvarEdicao() {
   }
 }
 
+// LGPD (v3.3): direito de exclusão — só administração e motorista exclusivo deste cliente.
+async function anonimizar() {
+  const e = edicao.value;
+  if (!confirm(`Anonimizar ${e.nome}? Nome, celular, CPF e placa saem do cadastro e dos containers, e o acesso dele é encerrado. Não dá para desfazer.`)) return;
+  try {
+    await api.anonimizarMotorista(e.id);
+    edicao.value = null;
+    mostrar("Motorista anonimizado.");
+    await carregar();
+  } catch (err) {
+    erroEdicao.value = err.message;
+  }
+}
+
 function mostrar(msg) {
   aviso.value = msg;
   setTimeout(() => (aviso.value = null), 5000);
 }
 async function alternarBloqueio(m) {
-  const bloquear = !m.bloqueado;
-  if (bloquear && !confirm(`Bloquear ${m.nome}? O acesso dele pelo celular cai na hora e ele não consegue entrar de novo até ser desbloqueado.`)) return;
+  const bloquear = !meuBloqueio(m);
+  const efeito = ehGestor.value
+    ? "O acesso dele pelo celular cai na hora, para todos os clientes, até ser desbloqueado."
+    : "Ele não consegue mais registrar cargas deste cliente pelo QR nem recebe os SMS de rastreamento dele. Com outros clientes continua normal.";
+  if (bloquear && !confirm(`Bloquear ${m.nome}? ${efeito}`)) return;
   try {
     await api.atualizarMotorista(m.id, { bloqueado: bloquear });
     mostrar(`${m.nome} ${bloquear ? "bloqueado" : "desbloqueado"}.`);
@@ -226,13 +246,13 @@ const pag = usePaginacao(() => visiveis.value, "motoristas");
           <td class="mono" style="white-space: nowrap" title="Por privacidade, só os 4 últimos dígitos (o número completo aparece ao editar)">{{ m.celular }}</td>
           <td v-if="!ehGestor">{{ m.transportadora.nome }}</td>
           <td class="mono">{{ m.placa ?? "—" }}</td>
-          <td><span class="chip" :class="ROTULO_SITUACAO[situacao(m)][1]">{{ ROTULO_SITUACAO[situacao(m)][0] }}</span></td>
+          <td><span class="chip" :class="ROTULO_SITUACAO[situacao(m)][1]">{{ m.bloqueado ? rotuloBloqueio(m) : ROTULO_SITUACAO[situacao(m)][0] }}</span></td>
           <td :title="m.ultimoAcessoEm ? fmtDataHora(m.ultimoAcessoEm) : ''">{{ m.ultimoAcessoEm ? `há ${tempoDesde(m.ultimoAcessoEm)}` : "—" }}</td>
           <td><button type="button" class="pequeno" :title="'Celulares com acesso ativo'" @click="verAcessos(m)">{{ m.sessoesAtivas }}</button></td>
           <td style="text-align: right; white-space: nowrap">
             <button type="button" class="pequeno" @click="abrirEdicao(m)">Editar</button>
             <button v-if="m.sessoesAtivas" type="button" class="pequeno" @click="encerrarAcessos(m)">Encerrar acessos</button>
-            <button type="button" class="pequeno" :class="{ perigo: !m.bloqueado }" @click="alternarBloqueio(m)">{{ m.bloqueado ? "Desbloquear" : "Bloquear" }}</button>
+            <button type="button" class="pequeno" :class="{ perigo: !meuBloqueio(m) }" @click="alternarBloqueio(m)">{{ meuBloqueio(m) ? "Desbloquear" : "Bloquear" }}</button>
           </td>
         </tr>
       </tbody>
@@ -269,16 +289,18 @@ const pag = usePaginacao(() => visiveis.value, "motoristas");
     <form class="modal estreito" @submit.prevent="salvarEdicao">
       <h2>Editar motorista</h2>
       <div v-if="erroEdicao" class="erro">{{ erroEdicao }}</div>
-      <div class="campo"><label for="ed-nome">Nome *</label><input id="ed-nome" v-model="edicao.nome" required maxlength="120" /></div>
+      <div v-if="edicao.compartilhado" class="aviso pequeno">Este motorista também atende outros clientes: nome, placa e celular valem para todos e só ele mesmo pode alterar, pelo celular, na tela do QR ("Trocar placa" e "Trocar celular"; o número novo é confirmado por SMS).</div>
+      <div class="campo"><label for="ed-nome">Nome *</label><input id="ed-nome" v-model="edicao.nome" required maxlength="120" :disabled="edicao.compartilhado" /></div>
       <div class="campo">
         <label for="ed-celular">Celular *</label>
-        <input id="ed-celular" v-model="edicao.celular" type="tel" required />
+        <input id="ed-celular" v-model="edicao.celular" type="tel" required :disabled="edicao.compartilhado" />
         <span class="dica">Número completo só aqui. Trocar o celular encerra os acessos atuais.</span>
       </div>
-      <div class="campo"><label for="ed-placa">Placa</label><input id="ed-placa" v-model="edicao.placa" maxlength="8" style="text-transform: uppercase" /></div>
+      <div class="campo"><label for="ed-placa">Placa</label><input id="ed-placa" v-model="edicao.placa" maxlength="8" style="text-transform: uppercase" :disabled="edicao.compartilhado" /></div>
       <div class="modal-acoes">
-        <button type="button" @click="edicao = null">Cancelar</button>
-        <button type="submit" class="primario">Salvar</button>
+        <button v-if="!ehGestor && !edicao.compartilhado" type="button" class="perigo" style="margin-right: auto" title="Direito de exclusão (LGPD)" @click="anonimizar">Anonimizar (LGPD)</button>
+        <button type="button" @click="edicao = null">{{ edicao.compartilhado ? "Fechar" : "Cancelar" }}</button>
+        <button v-if="!edicao.compartilhado" type="submit" class="primario">Salvar</button>
       </div>
     </form>
   </div>

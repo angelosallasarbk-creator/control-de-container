@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { comoSistema, organizacaoAtual } from "./tenant.js";
-import { paraCadaOrganizacao, vincularMotorista } from "./organizacoes.js";
+import { paraCadaOrganizacao, vincularMotorista, motoristaBloqueadoNaOrganizacao } from "./organizacoes.js";
 import { registrarLog } from "./auditoria.js";
 import { erroHttp } from "./asyncHandler.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -36,8 +36,12 @@ export const INTERVALO_MINIMO_ACOMPANHAMENTO_S = 60;
 // 15 min — evita encher o banco e o mapa com pontos repetidos (caminhão parado com a página aberta).
 export const RAIO_REPETIDA_M = 200;
 export const GRAVAR_PARADO_A_CADA_MIN = 15;
-// Acompanhamento "ativo" na ficha: posição gravada há menos que isto (cobre o intervalo de parado).
-export const ACOMPANHAMENTO_ATIVO_MIN = 20;
+// Situação do acompanhamento na ficha. A página avisa quando inicia (ATIVO), quando é minimizada
+// ou fechada (PAUSADO) e quando o motorista toca em Parar (ENCERRADO); cada envio renova o "sinal".
+// Se o aviso não chegar (celular sem internet, bateria), sem sinal há mais de 7 min (os envios são
+// a cada 5) a ficha mostra que parou.
+export const ESTADOS_ACOMPANHAMENTO = ["ATIVO", "PAUSADO", "ENCERRADO"];
+export const ACOMPANHAMENTO_SEM_SINAL_MIN = 7;
 const POSICOES_PARA_MOTIVOS = 200;
 // Falha no envio: tenta de novo depois disto (em vez de esperar o intervalo inteiro).
 const NOVA_TENTATIVA_MIN = 5;
@@ -63,9 +67,12 @@ async function registrarSms(dados) {
 export async function buscarDestinatario({ usuarioId = null, motoristaId = null }) {
   if (motoristaId) {
     const m = await prisma.motorista.findUnique({ where: { id: motoristaId }, include: { transportadora: true } });
-    return m && {
+    if (!m) return null;
+    const bloqueadoAqui = await motoristaBloqueadoNaOrganizacao(m.id, organizacaoAtual());
+    return {
       tipo: "MOTORISTA", id: m.id, nome: m.nome, identidade: identidadeMotorista(m), celular: m.celular,
-      ativo: !m.bloqueado && m.transportadora.ativo, motivoInativo: "Motorista bloqueado pela transportadora.", transportadora: m.transportadora.nome,
+      ativo: !m.bloqueado && !bloqueadoAqui && m.transportadora.ativo,
+      motivoInativo: bloqueadoAqui ? "Motorista bloqueado por este cliente." : "Motorista bloqueado pela transportadora.", transportadora: m.transportadora.nome,
     };
   }
   if (!usuarioId) return null;
@@ -148,7 +155,10 @@ export async function assumirRastreio({ containerId, usuarioId = null, motorista
     const [dest, anterior] = await Promise.all([buscarDestinatario({ usuarioId, motoristaId }), buscarDestinatario(destinoDoContainer(c) ?? {})]);
     await prisma.container.update({
       where: { id: c.id },
-      data: { rastreioResponsavelId: usuarioId, rastreioMotoristaId: motoristaId, rastreioDesde: agora, rastreioUltimoEnvioEm: agora },
+      data: {
+        rastreioResponsavelId: usuarioId, rastreioMotoristaId: motoristaId, rastreioDesde: agora, rastreioUltimoEnvioEm: agora,
+        acompanhamentoEstado: null, acompanhamentoEstadoEm: null, acompanhamentoSinalEm: null,
+      },
     });
     await registrarLog({
       usuarioEmail: dest.identidade, acao: "RASTREIO", entidade: "Container", entidadeId: c.id,
@@ -425,7 +435,7 @@ async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   const p = await prisma.solicitacaoPosicao.findUnique({
     where: { tokenHash: hashDoCodigo(codigo) },
     include: {
-      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true } },
+      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, acompanhamentoEstado: true } },
       usuario: { select: { id: true, ativo: true } },
       motorista: { select: { id: true, bloqueado: true, transportadora: { select: { ativo: true } } } },
     },
@@ -441,7 +451,8 @@ async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   if (STATUS_ENCERRADOS.includes(p.container.status)) return { erro: `O container ${p.container.numero} já foi encerrado; não é preciso enviar a posição.` };
   // O link só vale para quem ainda é o responsável (usuário ativo ou motorista não bloqueado).
   const aindaResponsavel = p.motoristaId
-    ? p.container.rastreioMotoristaId === p.motoristaId && !p.motorista.bloqueado && p.motorista.transportadora.ativo
+    ? p.container.rastreioMotoristaId === p.motoristaId && !p.motorista.bloqueado && p.motorista.transportadora.ativo &&
+      !(await motoristaBloqueadoNaOrganizacao(p.motoristaId, p.organizacaoId))
     : p.container.rastreioResponsavelId === p.usuarioId && !p.container.rastreioMotoristaId && p.usuario?.ativo;
   if (!aindaResponsavel) {
     return { erro: `O rastreamento do container ${p.container.numero} passou para outra pessoa; este link não vale mais.` };
@@ -500,6 +511,14 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
   if (ultima && agora - ultima.registradaEm < INTERVALO_MINIMO_ACOMPANHAMENTO_S * 1000) {
     return { ok: false, cedo: true, mensagem: "Posição recebida há menos de 1 minuto." };
   }
+  // Sinal de vida da página (mesmo quando a posição parada não é gravada de novo).
+  await prisma.container.update({
+    where: { id: pedido.containerId },
+    data: {
+      acompanhamentoSinalEm: agora,
+      ...(pedido.container.acompanhamentoEstado !== "ATIVO" ? { acompanhamentoEstado: "ATIVO", acompanhamentoEstadoEm: agora } : {}),
+    },
+  });
   const mesmoLugar = ultima && distanciaM({ latitude: Number(ultima.latitude), longitude: Number(ultima.longitude) }, { latitude, longitude }) <= RAIO_REPETIDA_M;
   if (mesmoLugar && agora - ultima.registradaEm < GRAVAR_PARADO_A_CADA_MIN * MIN) {
     return { ok: true, gravada: false, numero: pedido.container.numero }; // parado: recebida, não grava de novo
@@ -513,6 +532,32 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
   return { ok: true, gravada: true, numero: pedido.container.numero };
 }
 
+/** Aviso da página: iniciou (ATIVO), minimizada/fechada (PAUSADO) ou o motorista tocou em Parar (ENCERRADO). */
+export async function registrarEstadoAcompanhamento({ codigo, estado, agora = new Date() }) {
+  const { pedido, erro } = await pedidoDoCodigo(codigo, agora, { acompanhamento: true });
+  if (!pedido) return { ok: false, mensagem: erro };
+  await prisma.container.update({
+    where: { id: pedido.containerId },
+    data: { acompanhamentoEstado: estado, acompanhamentoEstadoEm: agora, ...(estado === "ATIVO" ? { acompanhamentoSinalEm: agora } : {}) },
+  });
+  return { ok: true };
+}
+
+/**
+ * Situação do acompanhamento para a ficha: ATIVO | PAUSADO | ENCERRADO | SEM_SINAL (página parou
+ * de mandar sem avisar). null = nunca foi iniciado.
+ */
+export function situacaoAcompanhamento(c, posicoes, agora = new Date()) {
+  const ultimaPosicaoEm = posicoes.find((p) => p.origem === "ACOMPANHAMENTO")?.registradaEm ?? null;
+  if (!c.acompanhamentoEstado) return ultimaPosicaoEm ? { estado: "SEM_SINAL", desde: ultimaPosicaoEm, ultimaPosicaoEm } : null;
+  const sinal = c.acompanhamentoSinalEm ?? c.acompanhamentoEstadoEm;
+  if (STATUS_ENCERRADOS.includes(c.status)) return { estado: "ENCERRADO", desde: sinal, motivo: "container encerrado", ultimaPosicaoEm };
+  if (c.acompanhamentoEstado === "ATIVO" && agora - new Date(sinal) > ACOMPANHAMENTO_SEM_SINAL_MIN * MIN) {
+    return { estado: "SEM_SINAL", desde: sinal, ultimaPosicaoEm };
+  }
+  return { estado: c.acompanhamentoEstado, desde: c.acompanhamentoEstadoEm, ultimoSinalEm: sinal, ultimaPosicaoEm };
+}
+
 // ---------- Aba "Rastreamento" da ficha ----------
 
 export async function resumoRastreamento(containerId) {
@@ -521,8 +566,9 @@ export async function resumoRastreamento(containerId) {
       where: { id: containerId },
       select: {
         status: true, planejamento: true, rastreioDesde: true, rastreioUltimoEnvioEm: true,
+        acompanhamentoEstado: true, acompanhamentoEstadoEm: true, acompanhamentoSinalEm: true,
         rastreioResponsavel: { select: { nome: true, email: true, celular: true, ativo: true } },
-        rastreioMotorista: { select: { nome: true, celular: true, placa: true, bloqueado: true, transportadora: { select: { nome: true, ativo: true } } } },
+        rastreioMotorista: { select: { id: true, nome: true, celular: true, placa: true, bloqueado: true, transportadora: { select: { nome: true, ativo: true } } } },
       },
     }),
     lerConfiguracao(),
@@ -547,6 +593,7 @@ export async function resumoRastreamento(containerId) {
   const intervaloMin = motivos.length ? Math.min(...motivos.map((m) => m.intervaloMin)) : null;
   const u = c.rastreioResponsavel;
   const m = c.rastreioMotorista;
+  const bloqueadoAqui = m ? await motoristaBloqueadoNaOrganizacao(m.id, organizacaoAtual()) : false;
   return {
     smsAtivo: Boolean(config.rastreioSmsAtivo),
     modo: config.rastreioPersonalizado ? "PERSONALIZADO" : "CRITICO",
@@ -554,7 +601,7 @@ export async function resumoRastreamento(containerId) {
     motivos: motivos.map((m) => m.texto),
     intervaloMin,
     responsavel: m
-      ? { tipo: "MOTORISTA", nome: m.nome, transportadora: m.transportadora.nome, placa: m.placa, celular: mascararCelular(m.celular), temCelular: true, ativo: !m.bloqueado && m.transportadora.ativo }
+      ? { tipo: "MOTORISTA", nome: m.nome, transportadora: m.transportadora.nome, placa: m.placa, celular: mascararCelular(m.celular), temCelular: true, ativo: !m.bloqueado && !bloqueadoAqui && m.transportadora.ativo }
       : u && { tipo: "USUARIO", nome: u.nome, email: u.email, celular: mascararCelular(u.celular), temCelular: Boolean(u.celular), ativo: u.ativo },
     desde: c.rastreioDesde,
     // Com motivo: último SMS + intervalo. Sem motivo, em trânsito: a checagem "sem posição" (última
@@ -564,12 +611,8 @@ export async function resumoRastreamento(containerId) {
       : EM_TRANSITO.includes(c.status) && (posicoes[0]?.registradaEm ?? c.rastreioDesde)
         ? new Date(new Date(posicoes[0]?.registradaEm ?? c.rastreioDesde).getTime() + config.rastreioSemPosicaoHoras * 60 * MIN)
         : null,
-    // Acompanhamento pela página (reforço): ativo se chegou posição há pouco; senão, quando parou.
-    acompanhamento: (() => {
-      const ult = posicoes.find((p) => p.origem === "ACOMPANHAMENTO");
-      if (!ult) return null;
-      return { ultimaEm: ult.registradaEm, ativo: Date.now() - new Date(ult.registradaEm).getTime() < ACOMPANHAMENTO_ATIVO_MIN * MIN };
-    })(),
+    // Acompanhamento pela página (reforço): ativo, pausado, encerrado ou sem sinal.
+    acompanhamento: situacaoAcompanhamento(c, posicoes),
     posicoes: posicoes.map((p) => ({ ...p, latitude: Number(p.latitude), longitude: Number(p.longitude), usuario: p.motorista?.nome ?? p.usuario?.nome ?? null, motorista: undefined })),
     mensagens: mensagens.map((m) => ({ ...m, telefone: mascararCelular(m.telefone), usuario: m.motorista?.nome ?? m.usuario?.nome ?? null, motorista: undefined })),
   };
@@ -578,26 +621,33 @@ export async function resumoRastreamento(containerId) {
 // ---------- Retenção (LGPD) ----------
 
 /**
- * Limpeza diária: posições GPS mais antigas que retencaoPosicoesDias (padrão 90), códigos de
- * acesso de motorista com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias.
- * Só apaga pelo critério de data, nada mais (posições recentes e sessões válidas ficam).
+ * Limpeza diária: posições GPS mais antigas que retencaoPosicoesDias (padrão 90), o celular dos
+ * SMS enviados há mais que o mesmo prazo (a mensagem fica, sem o número), códigos de acesso de
+ * motorista com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias. Vale também para
+ * organizações desativadas (v3.3, item 15). Só apaga pelo critério de data.
  */
 export async function purgarDadosAntigos(agora = new Date()) {
   const dias = (n) => new Date(agora.getTime() - n * 24 * 60 * MIN);
   // Posições: pela retenção configurada em cada organização.
   const porOrg = await paraCadaOrganizacao(async () => {
     const config = await lerConfiguracao();
-    return prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: dias(config.retencaoPosicoesDias) } } });
-  }, "Retenção");
+    const limite = dias(config.retencaoPosicoesDias);
+    const [pos, sms] = await Promise.all([
+      prisma.posicaoContainer.deleteMany({ where: { registradaEm: { lt: limite } } }),
+      prisma.mensagemSms.updateMany({ where: { criadaEm: { lt: limite }, telefone: { not: null } }, data: { telefone: null } }),
+    ]);
+    return { count: pos.count, telefones: sms.count };
+  }, "Retenção", { incluirInativas: true });
   const posicoes = { count: porOrg.reduce((s, x) => s + (x?.count ?? 0), 0) };
+  const telefones = porOrg.reduce((s, x) => s + (x?.telefones ?? 0), 0);
   const [codigos, sessoes] = await Promise.all([
     prisma.codigoAcessoMotorista.deleteMany({ where: { criadoEm: { lt: dias(1) } } }),
     prisma.sessaoMotorista.deleteMany({ where: { OR: [{ expiraEm: { lt: dias(30) } }, { revogadaEm: { lt: dias(30) } }] } }),
   ]);
-  if (posicoes.count || codigos.count || sessoes.count) {
-    console.log(`Retenção: ${posicoes.count} posição(ões) antiga(s), ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
+  if (posicoes.count || telefones || codigos.count || sessoes.count) {
+    console.log(`Retenção: ${posicoes.count} posição(ões) antiga(s), ${telefones} telefone(s) de SMS, ${codigos.count} código(s) e ${sessoes.count} sessão(ões) antigas removidos.`);
   }
-  return { posicoes: posicoes.count, codigos: codigos.count, sessoes: sessoes.count };
+  return { posicoes: posicoes.count, telefones, codigos: codigos.count, sessoes: sessoes.count };
 }
 
 // ---------- Agendador ----------

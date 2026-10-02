@@ -187,7 +187,12 @@ const pag = usePaginacao(() => logsFiltrados.value, "log");
   <form v-if="aba === 'etiquetas'" class="card" @submit.prevent="salvar">
     <h2>Etiquetas QR</h2>
     <div class="grade-form">
-      <div class="campo" style="grid-column: 1 / -1">
+      <div v-if="cfg.enderecoDaPlataforma" class="campo" style="grid-column: 1 / -1">
+        <label>Endereço do sistema para o celular (vai dentro do QR, nos SMS e nos e-mails)</label>
+        <input :value="cfg.enderecoDaPlataforma" disabled />
+        <span class="dica">Definido pela plataforma — o mesmo para todos os clientes, por segurança dos links enviados.</span>
+      </div>
+      <div v-else class="campo" style="grid-column: 1 / -1">
         <label>Endereço do sistema para o celular (vai dentro do QR)</label>
         <input v-model.trim="cfg.urlPublica" list="sugestoes-endereco" placeholder="https://meusistema.onrender.com" :disabled="!podeEditar" />
         <datalist id="sugestoes-endereco">

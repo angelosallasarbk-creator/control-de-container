@@ -4,13 +4,16 @@ import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao, salvarConfiguracao } from "../lib/configuracao.js";
-import { executarVerificacao } from "../lib/verificador.js";
+import { sincronizarTodos } from "../lib/alertas.js";
+import { emProducao, enderecoDaPlataforma } from "../lib/enderecoPublico.js";
 import { inteiro, decimal } from "../lib/validacao.js";
 
 export const configuracaoRouter = Router();
 
+// enderecoDaPlataforma: em produção o endereço dos links/QR é o da plataforma (v3.2, item 19) e o
+// campo "Endereço do sistema" fica só informativo.
 configuracaoRouter.get("/", asyncHandler(async (_req, res) => {
-  res.json(await lerConfiguracao());
+  res.json({ ...(await lerConfiguracao()), enderecoDaPlataforma: emProducao() ? enderecoDaPlataforma() : null });
 }));
 
 configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async (req, res) => {
@@ -57,7 +60,8 @@ configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async 
   const depois = await salvarConfiguracao({ intervaloLeituraMinutos, ...cotacoes, ...rota });
   await registrarLog({ usuarioEmail: req.usuario.email, acao: "ALTERAR", entidade: "Configuracao", descricao: "Configurações alteradas", dadosAntes: antes, dadosDepois: depois });
   // Aplica as regras novas ("sem leitura", previsão de rota) já, sem esperar o próximo ciclo.
-  await executarVerificacao();
+  // Só a organização de quem salvou (v3.2, item 6) — antes rodava a varredura da plataforma inteira.
+  await sincronizarTodos();
   res.json(depois);
 }));
 

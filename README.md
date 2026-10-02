@@ -48,11 +48,15 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
   cadastros, etiquetas, alertas, configurações, log, usuários). Os dados existentes antes da v3.0 são da **AS TECH LOG**.
 - **Isolamento em duas camadas:**
   1. *Aplicação* (`src/lib/tenant.js` + `src/lib/prisma.js`): a organização da requisição fica num contexto e o Prisma
-     acrescenta o filtro `organizacaoId` em toda consulta e o preenche em toda criação. Sem contexto, a consulta **falha**.
+     acrescenta o filtro `organizacaoId` em toda consulta de **primeiro nível** às tabelas de cliente e o preenche em toda
+     criação. Sem contexto, a consulta **falha**. ⚠ Relações carregadas junto (`include`/`select` aninhado) **não** recebem
+     esse filtro na aplicação — quem garante é o RLS (camada 2) e a validação das rotas, que só aceitam referências
+     (armador, local, ponto…) da própria organização (teste "referência cruzada" em `src/api.test.js`).
      Rotinas automáticas rodam organização por organização (`paraCadaOrganizacao`).
   2. *Banco* (Row-Level Security): cada consulta roda com `app.org_id` definido; as políticas só liberam linhas daquela
      organização. O sistema conecta pelo usuário `ccs_app` (criado no build por `scripts/preparar-banco.js`), que não
-     ignora o RLS e não é dono das tabelas. As migrações usam o usuário dono (não sujeito ao RLS).
+     ignora o RLS e não é dono das tabelas. As migrações usam o usuário dono (não sujeito ao RLS). **Em produção o sistema
+     não sobe sem `APP_DB_ROLE_PASSWORD`** (v3.4) — sem ela não haveria a camada 2.
 - **Administrador da plataforma** (menu **Organizações**): cria clientes com os cadastros padrão e o primeiro admin,
   renomeia e desativa. Não vê dados dos clientes.
 - **Motoristas e transportadoras**: cadastro único na plataforma; o cliente só vê os que registraram pelo QR uma carga dele
@@ -126,13 +130,16 @@ Menu **Cadastros → Tipo de Operação**. Cada tipo define o fluxo que o contai
 
 Motorista **não é usuário do sistema** — com milhares de motoristas, criar e manter um login para cada um não é viável.
 
-- **Identidade = celular verificado.** Ao ler o QR sem estar logado, o motorista informa o celular e recebe um **código de 6 dígitos por SMS** (vale **15 min**; pedir outro encerra o anterior; até 5 tentativas; 1 pedido/min e 5/h por celular, limite por aparelho e teto global de 500 códigos/hora — `MOTORISTA_MAX_CODIGOS_HORA`, ajustável no Render). No banco fica só o HMAC do código.
+- **Identidade = celular verificado.** Ao ler o QR sem estar logado, o motorista informa o celular e recebe um **código de 6 dígitos por SMS** (vale **15 min**; pedir outro encerra o anterior; até 5 tentativas; 1 pedido/min e 5/h por celular, limite por aparelho e **teto por cliente** de 100 códigos/hora — `MOTORISTA_MAX_CODIGOS_HORA_CLIENTE`, ajustável no Render; acima de 500/h na plataforma, `MOTORISTA_MAX_CODIGOS_HORA`, só alarme no log). O pedido exige a etiqueta lida (v3.3). No banco fica só o HMAC do código.
 - **Primeiro acesso:** nome, transportadora (lista), placa, CPF opcional (validado) e **aceite do termo de uso dos dados (LGPD)**. Cadastro livre — a transportadora bloqueia quem não for dela.
 - **Sessão no celular por 60 dias** (cookie httpOnly `cc_motorista`, só para `/api/motorista`; só o hash do token no banco). Nas próximas leituras o QR abre direto.
 - **O que ele faz:** as mesmas telas do QR do perfil Transportador (coleta com local de retirada, cadastro do container se não existir, vínculo, temperatura) — rotas `/api/motorista/qr/*`, as mesmas do QR da equipe. Nos registros aparece como "Nome (motorista · Transportadora)". Portaria e o resto do sistema ficam fechados.
 - **Rastreamento:** a cadeia vira QR → Container → **Motorista** → celular verificado (ou usuário da equipe, se for ele quem registrou). A regra de troca continua: quem registrar pelo QR por último recebe os SMS.
-- **Transportadoras:** Cadastros → Transportadoras (nome, CNPJ opcional).
-- **Gestor da transportadora** (perfil novo, ligado a uma transportadora): vê só a tela **Motoristas** com os motoristas dela — pré-cadastrar (tela ou planilha "Baixar modelo"/"Upload"), **bloquear/desbloquear** (derruba o acesso na hora e para os SMS), **encerrar acessos** (celular perdido) e ver os aparelhos com acesso. Quem tem "Editar cadastros" vê todos, com filtro por transportadora.
+- **Transportadoras:** Cadastros → Transportadoras (nome, CNPJ opcional). Desde a v3.4 o **nome é único só dentro de cada cliente** (clientes diferentes podem ter homônimas) e o **CNPJ é único na plataforma**: cadastrar um CNPJ que outro cliente já cadastrou reaproveita o cadastro (só cria o vínculo). Na lista do primeiro acesso do motorista, homônimas aparecem com o final do CNPJ.
+- **Gestor da transportadora** (perfil novo, ligado a uma transportadora **vinculada ao cliente**): vê só a tela **Motoristas** com os motoristas dela vinculados ao seu cliente — pré-cadastrar (tela ou planilha "Baixar modelo"/"Upload"), **bloquear/desbloquear pela transportadora** (vale para todos os clientes, derruba o acesso na hora e para os SMS), **encerrar acessos** (celular perdido) e ver os aparelhos com acesso. Quem tem "Editar cadastros" vê os motoristas do cliente, com filtro por transportadora.
+- **Bloqueio por cliente (v3.2):** o bloqueio feito pela administração vale **só para aquele cliente** (o motorista não registra pelo QR dele nem recebe os SMS dele; com outros clientes segue normal). A lista mostra "Bloqueado pela transportadora" ou "Bloqueado para este cliente".
+- **Motorista compartilhado (atende mais de um cliente):** nome, placa e celular valem para todos, então só ele altera — na tela do QR, "Trocar placa" e **"Trocar celular"** (código SMS no número novo; os outros acessos caem e o número antigo recebe aviso). O cliente edita só motoristas exclusivos dele.
+- **Privacidade:** CPF sempre mascarado nas telas e na API (`***.982.247-**`); a lista não mostra o e-mail de quem cadastrou ou bloqueou.
 - **Pré-cadastrado** (pelo gestor): no 1º acesso confirma o celular pelo código, confere os dados e aceita o termo.
 - **Retenção (LGPD):** posições GPS mais antigas que **90 dias** (Configurações → Rastreamento) são apagadas automaticamente 1x por dia; códigos de acesso com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias também.
 - O login da equipe continua no mesmo QR ("Sou da equipe"); os usuários do perfil Transportador continuam funcionando.
@@ -143,7 +150,7 @@ Motorista **não é usuário do sistema** — com milhares de motoristas, criar 
 
 Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container** e vale para **uma viagem**.
 
-1. **Gerar** (menu *Etiquetas QR*; supervisor/admin): informe a quantidade. Cada etiqueta recebe um **token aleatório de 128 bits**, que vai na URL do QR e não pode ser "adivinhado", e um **código curto** impresso (ex.: `CC-7K3F9P`, sem 0/O/1/I/L).
+1. **Gerar** (menu *Etiquetas QR*; supervisor/admin): informe a quantidade. Cada etiqueta recebe um **token aleatório de 128 bits**, que vai na URL do QR e não pode ser "adivinhado", e um **código curto** impresso (ex.: `CC-7K3F9P2M`, 8 caracteres desde a v3.2, sem 0/O/1/I/L; as etiquetas antigas de 6 continuam valendo).
 2. **Imprimir** (impressora de etiquetas tipo Zebra, **tamanho ajustável**: modelos 50×25 até 100×150 mm ou medida livre):
    - **Pelo navegador:** cada etiqueta vira uma página no tamanho exato (`@page`). Na impressão, escolha a Zebra, o mesmo tamanho de papel, margens "Nenhuma" e escala 100%.
    - **Arquivo ZPL** (linguagem nativa da Zebra, 203/300/600 dpi): envie direto à impressora. O QR usa correção de erro M e sobe para Q/H quando a etiqueta tem espaço, aguentando até ~30% de sujeira ou risco.
@@ -156,11 +163,11 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
 
 **Controle de impressão:** cada etiqueta registra quantas vezes foi enviada à impressora, quando e por quem: no ZPL, ao baixar; no navegador, quando a janela de impressão fecha. O navegador não informa se a pessoa cancelou, então isso conta como enviada. Há o filtro "Ainda não impressas", e **reimprimir pede confirmação**, porque a cópia tem o mesmo QR.
 
-**Registrar pelo código** (menu, ou `/leitura` no celular): se o QR não abrir (etiqueta riscada, ou IP do teste que mudou), digite o código curto impresso (`CC-7K3F9P`, com ou sem "CC-") e siga para a mesma tela.
+**Registrar pelo código** (menu, ou `/leitura` no celular): se o QR não abrir (etiqueta riscada, ou IP do teste que mudou), digite o código curto impresso (`CC-7K3F9P2M`, com ou sem "CC-") e siga para a mesma tela. Até **10 códigos errados a cada 15 min** por aparelho e por pessoa (depois, aguarde). Pelo acesso do motorista, o código só abre etiqueta já ligada a um container e junto com o número dele.
 
 **Confiança nos dados:** cada leitura grava quem registrou, a etiqueta usada, o horário informado e o horário real do registro. Leitura com horário digitado **mais de 2h antes** de chegar ao sistema aparece como **"lançada com atraso"** na ficha. Com o sistema em **https**, o celular pode enviar a **localização** da leitura (📍 na ficha). A mesma leitura nunca entra duas vezes.
 
-**Endereço dentro do QR** (só em *Configurações → Etiquetas QR*, definido pelo administrador): toda impressão (navegador e ZPL) usa sempre esse endereço, lido no servidor. A tela de Etiquetas não pede endereço e bloqueia a impressão enquanto ele não estiver configurado. Sistema publicado: use o endereço https dele (ex.: `https://control-de-container.onrender.com`). Para **testar na rede local**, use o IP deste computador e a porta 5174 (ex.: `http://192.168.0.132:5174`), com o celular no mesmo Wi-Fi. O campo sugere os IPs da rede, e `localhost` não funciona no celular. **Ao publicar online, troque para o endereço https antes de imprimir**, porque etiquetas já impressas continuam apontando para o endereço antigo. ⚠ No teste local, o IP costuma ser dado pelo roteador (DHCP) e **muda** (ex.: trocar do cabo para o Wi-Fi mudou de `.132` para `.249`), e aí as etiquetas impressas param de abrir. Para testes longos, reserve um IP fixo para o computador no roteador; senão, use "Registrar pelo código".
+**Endereço dentro do QR** (em produção, desde a v3.2, é **sempre o endereço da plataforma** — `APP_URL` ou `RENDER_EXTERNAL_URL` — também nos links de SMS e e-mail, e o campo fica só informativo; fora de produção vale o de *Configurações → Etiquetas QR*, definido pelo administrador): toda impressão (navegador e ZPL) usa sempre esse endereço, lido no servidor. A tela de Etiquetas não pede endereço e bloqueia a impressão enquanto ele não estiver configurado. Sistema publicado: use o endereço https dele (ex.: `https://control-de-container.onrender.com`). Para **testar na rede local**, use o IP deste computador e a porta 5174 (ex.: `http://192.168.0.132:5174`), com o celular no mesmo Wi-Fi. O campo sugere os IPs da rede, e `localhost` não funciona no celular. **Ao publicar online, troque para o endereço https antes de imprimir**, porque etiquetas já impressas continuam apontando para o endereço antigo. ⚠ No teste local, o IP costuma ser dado pelo roteador (DHCP) e **muda** (ex.: trocar do cabo para o Wi-Fi mudou de `.132` para `.249`), e aí as etiquetas impressas param de abrir. Para testes longos, reserve um IP fixo para o computador no roteador; senão, use "Registrar pelo código".
 
 ## Telas
 
@@ -194,7 +201,7 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
   - **Intervalo personalizado** (opcional, Configurações → Rastreamento): a cada **30 min**; no ponto de carregamento, a cada **4 h** (configuráveis). Uma posição enviada pela leitura do QR também conta, e o próximo pedido passa a contar dali. Com o container entregue ou cancelado, os pedidos param.
   - **"Solicitar posição"** (aba Rastreamento da ficha, quem opera containers): manda o pedido na hora ao responsável — no máximo 1 pedido de posição a cada 5 min por container (contando os automáticos); fica no log.
   - **Link do SMS** (`/p/código`): abre sem login, mostra o container e tem o botão **"Enviar minha posição"**, que usa o GPS do celular em alta precisão (acompanha as leituras por até 15 s e envia a melhor). O link é de uso único, vale 12 h e só é aceito do responsável atual. No banco fica só o hash do código, e há limite de tentativas por IP.
-  - **Acompanhamento pela página (v3.1, opcional — reforço do SMS):** depois de enviar, o link oferece "Acompanhar com a página aberta". Com a página aberta e na tela, o celular envia a posição a cada 5 min, **até a leitura de entrega no destino** (ou cancelamento/troca de responsável), no máximo 1 por minuto; parado no mesmo lugar (até 200 m) grava no máximo 1 posição a cada 15 min. Limites próprios (600 por 15 min por IP e 15 por 5 min por link), separados do limite do link do SMS (60 por 15 min por IP) — pensados para vários celulares atrás do mesmo IP da operadora. **Para se a página for minimizada/fechada ou a tela bloquear** (limite dos navegadores; não existe rastreamento em segundo plano pelo navegador) e retoma ao voltar. Não mexe no agendador: os SMS continuam saindo pelas mesmas regras. Na ficha, as posições aparecem com a origem "Acompanhamento (página aberta)" e a aba mostra se está ativo ou pausado.
+  - **Acompanhamento pela página (v3.1, opcional — reforço do SMS):** depois de enviar, o link oferece "Acompanhar com a página aberta". Com a página aberta e na tela, o celular envia a posição a cada 5 min, **até a leitura de entrega no destino** (ou cancelamento/troca de responsável), no máximo 1 por minuto; parado no mesmo lugar (até 200 m) grava no máximo 1 posição a cada 15 min. Limites próprios (600 por 15 min por IP e 15 por 5 min por link), separados do limite do link do SMS (60 por 15 min por IP) — pensados para vários celulares atrás do mesmo IP da operadora. **Para se a página for minimizada/fechada ou a tela bloquear** (limite dos navegadores; não existe rastreamento em segundo plano pelo navegador) e retoma ao voltar. Não mexe no agendador: os SMS continuam saindo pelas mesmas regras. Na ficha, as posições aparecem com a origem "Acompanhamento (página aberta)" e a aba mostra a situação: **ativo** (último sinal), **parou — pausado** (página minimizada ou fechada; a página avisa na hora), **parou — sem sinal** (mais de 7 min sem nada da página: tela bloqueada, sem internet ou bateria) ou **encerrado pelo motorista** (tocou em Parar).
   - **Aba "Rastreamento" da ficha:** mostra o responsável (celular mascarado), o próximo pedido, as posições com link para o mapa e cada SMS com a situação (enviado, simulado, falhou, sem celular).
   - **Envio:** feito pelo Brevo (mesma `BREVO_API_KEY`; remetente `SMS_REMETENTE`, até 11 letras). Precisa de **créditos de SMS** na conta Brevo. Os textos vão sem acento para caber em 1 SMS (160 caracteres). Sem a chave, o SMS não sai: é só simulado e aparece no console. Em caso de falha, tenta de novo em 5 min.
   - **Agendador:** roda a cada 1 minuto no próprio servidor. Por isso o serviço no Render precisa ficar sempre ligado (plano pago; o gratuito "dorme" sem acesso). A reserva de cada envio é idempotente, então duas rodadas simultâneas não duplicam SMS.
@@ -283,7 +290,7 @@ Mesma base do *Programação McCain*: **Node/Express + Prisma + PostgreSQL**, fr
 
 ```
 prisma/schema.prisma        modelo de dados
-src/server.js               sobe o app + verificador de alertas + purga de log (365 dias)
+src/server.js               sobe o app + verificador de alertas + purga de log (365 dias, pela função do banco purgar_log_auditoria — o sistema não apaga log diretamente, v3.3)
 src/app.js                  rotas e middlewares
 src/lib/prazos.js           regras puras de estadia/demurrage/deadline/temperatura/alertas
 src/lib/alertas.js          sincroniza alertas desejados × abertos (idempotente)
@@ -309,11 +316,13 @@ Se o sistema já estiver rodando, o script só abre o navegador, sem duplicar ja
 docker compose up -d            # Postgres local na porta 5433
 cp .env.example .env            # gere um JWT_SECRET próprio
 npm install && npm --prefix web install
-npx prisma migrate dev
+npx prisma migrate dev            # ⚠ veja "Índice parcial" abaixo
 npm run seed                    # opcional: dados de EXEMPLO (só em banco vazio)
 npm run dev:server              # API em http://localhost:3000
 npm run dev:web                 # tela em http://localhost:5174
 ```
+
+**Índice parcial (v3.2):** a migração `20261006100000_seguranca_3_2` cria `Container_numero_ativo_unico` (um container ativo por número em cada organização) direto em SQL, porque o Prisma 5 não representa índice com `WHERE`. Ao criar migrações novas com `prisma migrate dev`, confira o SQL gerado: se aparecer `DROP INDEX "Container_numero_ativo_unico"`, **apague essa linha** antes de aplicar.
 
 Logins do seed (senha `demo12345`): `admin@demo.local`, `supervisor@demo.local`, `operador@demo.local`, `visualizacao@demo.local`.
 

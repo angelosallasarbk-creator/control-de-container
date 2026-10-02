@@ -5,9 +5,12 @@ import { comOrganizacao, comoSistema } from "./tenant.js";
 import { erroHttp } from "./asyncHandler.js";
 import { registrarLog } from "./auditoria.js";
 
-/** Roda fn dentro de cada organização ativa, uma por vez. Falha de uma não impede as outras. */
-export async function paraCadaOrganizacao(fn, rotulo = "rotina") {
-  const orgs = await prisma.organizacao.findMany({ where: { ativo: true }, select: { id: true, nome: true }, orderBy: { id: "asc" } });
+/**
+ * Roda fn dentro de cada organização ativa, uma por vez. Falha de uma não impede as outras.
+ * incluirInativas: também as desativadas (retenção LGPD — o prazo vale para elas também; v3.3).
+ */
+export async function paraCadaOrganizacao(fn, rotulo = "rotina", { incluirInativas = false } = {}) {
+  const orgs = await prisma.organizacao.findMany({ where: incluirInativas ? {} : { ativo: true }, select: { id: true, nome: true }, orderBy: { id: "asc" } });
   const resultados = [];
   for (const org of orgs) {
     try {
@@ -17,6 +20,24 @@ export async function paraCadaOrganizacao(fn, rotulo = "rotina") {
     }
   }
   return resultados;
+}
+
+/**
+ * Portas de entrada SEM usuário (motorista pelo QR, token de integração, link do SMS) recebem a
+ * organização de um código. Organização desativada não recebe mais dados: 403 (v3.2, item 4).
+ */
+export async function exigirOrganizacaoAtiva(organizacaoId) {
+  const org = await comoSistema(() => prisma.organizacao.findUnique({ where: { id: organizacaoId }, select: { ativo: true } }));
+  if (!org?.ativo) throw erroHttp(403, "Este cliente está desativado na plataforma. Fale com o responsável.");
+}
+
+/** Motorista bloqueado POR ESTE cliente (v3.2, item 2) — o da transportadora fica em Motorista.bloqueado. */
+export async function motoristaBloqueadoNaOrganizacao(motoristaId, organizacaoId) {
+  if (!motoristaId || !organizacaoId) return false;
+  const v = await prisma.motoristaOrganizacao.findUnique({
+    where: { motoristaId_organizacaoId: { motoristaId, organizacaoId } }, select: { bloqueado: true },
+  });
+  return Boolean(v?.bloqueado);
 }
 
 // Cadastros com que toda organização nova começa (os mesmos que a AS TECH LOG recebeu nas migrações).

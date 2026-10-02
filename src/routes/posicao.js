@@ -4,8 +4,9 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { decimal, inteiro } from "../lib/validacao.js";
-import { conferirPedido, registrarPosicaoDoLink, registrarAcompanhamento, organizacaoDoCodigo } from "../lib/rastreamento.js";
+import { conferirPedido, registrarPosicaoDoLink, registrarAcompanhamento, registrarEstadoAcompanhamento, ESTADOS_ACOMPANHAMENTO, organizacaoDoCodigo } from "../lib/rastreamento.js";
 import { comOrganizacao, comoPlataforma } from "../lib/tenant.js";
+import { exigirOrganizacaoAtiva } from "../lib/organizacoes.js";
 
 export const posicaoRouter = Router();
 
@@ -14,7 +15,7 @@ export const posicaoRouter = Router();
 // consome o do link do SMS (o recurso principal). O código do link é aleatório (não adivinhável);
 // os limites seguram abuso/volume, não força bruta.
 const MSG_LIMITE = { erro: "Muitas tentativas. Aguarde alguns minutos e tente novamente." };
-const ehAcompanhamento = (req) => req.path.endsWith("/acompanhar");
+const ehAcompanhamento = (req) => /\/acompanhar(\/estado)?$/.test(req.path);
 posicaoRouter.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 60,
@@ -33,9 +34,14 @@ const limiteAcompanhamentoLink = rateLimit({
 });
 
 // A organização vem do próprio link (código). Código desconhecido: sem organização → "Link inválido".
+// Cliente desativado: o link não aceita mais posição (403).
 posicaoRouter.param("codigo", (req, _res, next, codigo) => {
   organizacaoDoCodigo(codigo)
-    .then((org) => (org ? comOrganizacao(org, next) : comoPlataforma(next)))
+    .then(async (org) => {
+      if (!org) return comoPlataforma(next);
+      await exigirOrganizacaoAtiva(org);
+      comOrganizacao(org, next);
+    })
     .catch(next);
 });
 
@@ -56,6 +62,19 @@ posicaoRouter.post("/:codigo/acompanhar", limiteAcompanhamentoIp, limiteAcompanh
   const r = await registrarAcompanhamento({ codigo: req.params.codigo, ...lerPosicao(req.body ?? {}) });
   if (!r.ok) throw erroHttp(r.cedo ? 429 : 409, r.mensagem);
   res.status(201).json({ ok: true, gravada: r.gravada });
+}));
+
+// Avisos da página (iniciou / minimizada ou fechada / Parar). Também chega por sendBeacon ao fechar.
+const limiteEstadoLink = rateLimit({
+  windowMs: 5 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false, message: MSG_LIMITE,
+  keyGenerator: (req) => `acomp-estado:${String(req.params.codigo).slice(0, 64)}`,
+});
+posicaoRouter.post("/:codigo/acompanhar/estado", limiteAcompanhamentoIp, limiteEstadoLink, asyncHandler(async (req, res) => {
+  const estado = String(req.body?.estado ?? "");
+  if (!ESTADOS_ACOMPANHAMENTO.includes(estado)) throw erroHttp(400, "Situação inválida.");
+  const r = await registrarEstadoAcompanhamento({ codigo: req.params.codigo, estado });
+  if (!r.ok) throw erroHttp(409, r.mensagem);
+  res.json({ ok: true });
 }));
 
 posicaoRouter.post("/:codigo", asyncHandler(async (req, res) => {

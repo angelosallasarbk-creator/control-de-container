@@ -6,12 +6,13 @@ import rateLimit from "express-rate-limit";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import {
   pedirCodigo, verificarCodigo, concluirCadastro, abrirSessao, carregarMotorista, encerrarSessao,
-  dadosPublicosMotorista, validarDadosMotorista, identidadeMotorista,
+  dadosPublicosMotorista, validarDadosMotorista, identidadeMotorista, pedirCodigoTrocaCelular, confirmarTrocaCelular,
 } from "../lib/acessoMotorista.js";
 import { prisma } from "../lib/prisma.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { qrRouter } from "./qr.js";
 import { comOrganizacao, comoPlataforma, comoSistema } from "../lib/tenant.js";
+import { exigirOrganizacaoAtiva, motoristaBloqueadoNaOrganizacao } from "../lib/organizacoes.js";
 
 export const motoristaRouter = Router();
 // O motorista é da plataforma (sem organização). No QR, a organização vem da etiqueta lida.
@@ -28,16 +29,39 @@ async function organizacaoDaEtiqueta(req) {
   if (!token || !TOKEN_ETIQUETA.test(String(token))) return null;
   return (await comoSistema(() => prisma.etiquetaQR.findUnique({ where: { token: String(token) }, select: { organizacaoId: true } })))?.organizacaoId ?? null;
 }
-function naOrganizacaoDaEtiqueta(req, _res, next) {
-  organizacaoDaEtiqueta(req).then((org) => (org ? comOrganizacao(org, next) : next())).catch(next);
+// Cliente da etiqueta: precisa estar ativo, e o motorista não pode estar bloqueado por ELE (o
+// bloqueio de um cliente não afeta os outros; o da transportadora já cai em carregarMotorista).
+async function naOrganizacaoDaEtiqueta(req, res, next) {
+  try {
+    const org = await organizacaoDaEtiqueta(req);
+    if (!org) return next();
+    await exigirOrganizacaoAtiva(org);
+    if (await motoristaBloqueadoNaOrganizacao(req.motorista.id, org)) {
+      return res.status(403).json({ erro: "Seu acesso às cargas deste cliente foi bloqueado. Fale com o responsável.", codigo: "BLOQUEADO_NO_CLIENTE" });
+    }
+    comOrganizacao(org, next, { motoristaId: req.motorista.id });
+  } catch (err) {
+    next(err);
+  }
 }
 
 const limitador = (limit, mensagem) => rateLimit({ windowMs: 15 * 60 * 1000, limit, standardHeaders: true, legacyHeaders: false, message: { erro: mensagem } });
 const limiteCodigo = limitador(10, "Muitos pedidos de código deste aparelho. Aguarde alguns minutos.");
 const limiteVerificar = limitador(30, "Muitas tentativas. Aguarde alguns minutos.");
 
+// O motorista sempre chega pelo QR: o pedido de código exige o token de uma etiqueta válida (não
+// cancelada, de cliente ativo) — é ela que define o cliente do teto de SMS (v3.3, item 10).
+async function clienteDaEtiquetaDoPedido(token) {
+  if (!TOKEN_ETIQUETA.test(String(token ?? ""))) throw erroHttp(400, "Abra pelo QR da etiqueta para entrar.");
+  const e = await comoSistema(() => prisma.etiquetaQR.findUnique({ where: { token: String(token) }, select: { organizacaoId: true, status: true } }));
+  if (!e || e.status === "CANCELADA") throw erroHttp(400, "Esta etiqueta não vale mais. Leia o QR de outra etiqueta ou fale com o responsável.");
+  await exigirOrganizacaoAtiva(e.organizacaoId);
+  return e.organizacaoId;
+}
+
 motoristaRouter.post("/codigo", limiteCodigo, asyncHandler(async (req, res) => {
-  const r = await pedirCodigo({ celular: req.body?.celular, ip: req.ip });
+  const organizacaoId = await clienteDaEtiquetaDoPedido(req.body?.etiqueta);
+  const r = await pedirCodigo({ celular: req.body?.celular, ip: req.ip, organizacaoId });
   res.json({ mensagem: "Enviamos um código por SMS para o seu celular.", expiraEm: r.expiraEm, simulado: r.simulado });
 }));
 
@@ -68,7 +92,17 @@ comSessao.patch("/eu", asyncHandler(async (req, res) => {
   const b = req.body ?? {};
   const { nome, placa } = validarDadosMotorista({ nome: b.nome ?? req.motorista.nome, placa: b.placa }, { exigirTransportadora: false });
   const m = await prisma.motorista.update({ where: { id: req.motorista.id }, data: { nome, placa }, include: { transportadora: true } });
-  await registrarLog({ usuarioEmail: identidadeMotorista(m), acao: "ALTERAR", entidade: "Motorista", entidadeId: m.id, descricao: `Motorista ${m.nome} atualizou os próprios dados (placa ${placa ?? "—"})` });
+  await registrarLog({ usuarioEmail: identidadeMotorista(m), motoristaId: m.id, acao: "ALTERAR", entidade: "Motorista", entidadeId: m.id, descricao: `Motorista ${m.nome} atualizou os próprios dados (placa ${placa ?? "—"})` });
+  res.json({ motorista: dadosPublicosMotorista(m) });
+}));
+
+// Trocar o próprio celular: código SMS no número NOVO; confirmado, os outros acessos caem.
+comSessao.post("/eu/celular", limiteCodigo, asyncHandler(async (req, res) => {
+  const r = await pedirCodigoTrocaCelular({ motorista: req.motorista, celular: req.body?.celular, ip: req.ip });
+  res.json({ mensagem: "Enviamos um código por SMS para o celular novo.", expiraEm: r.expiraEm, simulado: r.simulado });
+}));
+comSessao.post("/eu/celular/confirmar", limiteVerificar, asyncHandler(async (req, res) => {
+  const m = await confirmarTrocaCelular({ motorista: req.motorista, celular: req.body?.celular, codigo: req.body?.codigo, sessaoId: req.sessaoMotoristaId });
   res.json({ motorista: dadosPublicosMotorista(m) });
 }));
 

@@ -19,12 +19,14 @@ usuariosRouter.use(requirePermissao("administrar"));
 const PERFIS = ["ADMIN", "SUPERVISOR", "OPERADOR", "VISUALIZACAO", "TRANSPORTADOR", "PORTARIA", "GESTOR_TRANSPORTADORA"];
 const SELECT = { id: true, email: true, nome: true, perfil: true, celular: true, ativo: true, criadoEm: true, transportadoraId: true, transportadora: { select: { id: true, nome: true } } };
 
-// Gestor da transportadora precisa estar ligado a uma transportadora ativa; os outros perfis, não.
-async function transportadoraDoPerfil(perfil, valor) {
+// Gestor da transportadora precisa estar ligado a uma transportadora ativa E vinculada a esta
+// organização (v3.2, item 1) — senão um cliente criaria gestor da transportadora de outro e veria
+// os motoristas dele. Os outros perfis não têm transportadora.
+async function transportadoraDoPerfil(perfil, valor, organizacaoId) {
   if (perfil !== "GESTOR_TRANSPORTADORA") return null;
   const id = Number(valor);
   if (!Number.isInteger(id) || id <= 0) throw erroHttp(400, "Escolha a transportadora do gestor.");
-  const t = await prisma.transportadora.findUnique({ where: { id } });
+  const t = await prisma.transportadora.findFirst({ where: { id, organizacoes: { some: { organizacaoId } } } });
   if (!t?.ativo) throw erroHttp(400, "Transportadora não encontrada ou inativa.");
   return id;
 }
@@ -109,10 +111,12 @@ usuariosRouter.post("/", asyncHandler(async (req, res) => {
     transportadoraId: null,
     senhaHash: await bcrypt.hash(validarSenha(b.senha), 10),
   };
-  dados.transportadoraId = await transportadoraDoPerfil(dados.perfil, b.transportadoraId);
-  const criado = await prisma.usuario.create({ data: dados, select: { ...SELECT, permissoes: true } }).catch((err) => {
-    if (err.code === "P2002") throw erroHttp(409, "Já existe um usuário com esse e-mail.");
-    throw err;
+  dados.transportadoraId = await transportadoraDoPerfil(dados.perfil, b.transportadoraId, req.usuario.organizacaoId);
+  const criado = await prisma.usuario.create({ data: dados, select: { ...SELECT, permissoes: true } }).catch(async (err) => {
+    if (err.code !== "P2002") throw err;
+    // E-mail de usuário de OUTRO cliente: mensagem genérica — não confirma que a conta existe (v3.3, item 20).
+    const aqui = await prisma.usuario.findFirst({ where: { email: dados.email }, select: { id: true } });
+    throw erroHttp(409, aqui ? "Já existe um usuário com esse e-mail." : "Este e-mail não pode ser usado. Use outro e-mail ou fale com o suporte.");
   });
   await registrarLog({ usuarioEmail: req.usuario.email, acao: "CRIAR", entidade: "Usuario", entidadeId: criado.id, descricao: `Usuário criado: ${email} (${dados.perfil})` });
   res.status(201).json(comPermissoes(criado));
@@ -132,7 +136,7 @@ usuariosRouter.patch("/:id", asyncHandler(async (req, res) => {
   if ("ativo" in b) dados.ativo = Boolean(b.ativo);
   if ("celular" in b) dados.celular = celular(b.celular);
   if ("perfil" in b || "transportadoraId" in b) {
-    dados.transportadoraId = await transportadoraDoPerfil(dados.perfil ?? antes.perfil, "transportadoraId" in b ? b.transportadoraId : antes.transportadoraId);
+    dados.transportadoraId = await transportadoraDoPerfil(dados.perfil ?? antes.perfil, "transportadoraId" in b ? b.transportadoraId : antes.transportadoraId, req.usuario.organizacaoId);
   }
   if (b.senha) {
     dados.senhaHash = await bcrypt.hash(validarSenha(b.senha), 10);

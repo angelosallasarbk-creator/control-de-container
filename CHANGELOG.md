@@ -4,6 +4,104 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.4.0 — 02/10/2026 (tag `v3.4.0`)
+
+**Estrutura e desempenho** (análise de segurança da v3.0.2: itens 7, 9 e 12). Publicada junto com
+a 3.1.2, a 3.2.0 e a 3.3.0.
+
+- **Isolamento entre clientes (item 7):** em produção o sistema **não sobe** sem `APP_DB_ROLE_PASSWORD`
+  (antes era só um aviso) — sem ela não haveria o RLS. README corrigido: o filtro automático da
+  aplicação vale para a consulta de primeiro nível; relações carregadas junto ficam a cargo do RLS e
+  da validação das rotas. Teste novo de "referência cruzada": o cliente B tenta usar ponto de
+  carregamento, armador, produto, local, região e tipo de local da A em containers e cadastros — tudo
+  recusado, e nenhum container no banco aponta para cadastro de outro cliente. (Chaves estrangeiras
+  compostas ficaram para depois, como recomendado na análise: custo alto, e o teste cobre o risco hoje.)
+- **Transportadora (item 9):** nome único só dentro do cliente; CNPJ único na plataforma; mesmo CNPJ
+  reaproveita o cadastro (só o vínculo é criado, e fica no log). Migração
+  `20261008100000_transportadora_cnpj` (troca o índice único do nome pelo do CNPJ; não apaga nada).
+- **Desempenho (item 12):** a varredura de alertas (a cada minuto, por cliente) carrega containers,
+  leituras, contexto de rota e alertas abertos **em lote** (4 consultas) em vez de ~4 consultas por
+  container — no banco local, 8 containers: de 35–39 para ~9–15 transações e de 211–490 ms para
+  59–85 ms. Configurações com cache de 5 s por cliente (invalidado ao salvar).
+
+## 3.3.0 — 02/10/2026 (tag `v3.3.0`, publicada junto com a 3.4.0)
+
+**Endurecimento, custo e LGPD** (análise de segurança da v3.0.2: itens 8, 10, 11, 13, 14, 15, 16, 17
+e 20). Publicada junto com a 3.1.2 e a 3.2.0.
+
+- **Log de auditoria imutável para o sistema (item 8):** o usuário da aplicação (`ccs_app`) não
+  altera nem apaga o log (REVOKE em `scripts/preparar-banco.js`). A purga de 365 dias passa pela
+  função `purgar_log_auditoria` (roda com o dono das tabelas e recusa retenção menor que 365 dias).
+- **SMS do motorista por cliente (item 10):** pedir o código exige a etiqueta lida (válida, de cliente
+  ativo) e o teto passa a ser **por cliente** (`MOTORISTA_MAX_CODIGOS_HORA_CLIENTE`, padrão 100/h); o
+  total da plataforma (`MOTORISTA_MAX_CODIGOS_HORA`, 500/h) vira só alarme de custo no log.
+- **Cota do OpenRouteService (item 11):** limite por cliente — busca de endereço 100/h, simulação de
+  rota 600/h — e a simulação exige "operar containers" (é usada só no Novo container).
+- **Login e "Esqueci minha senha" (item 13):** e-mail inexistente também passa pelo bcrypt (hash
+  fictício) e o e-mail de redefinição sai depois da resposta — o tempo não revela quais contas existem.
+- **Custo de estadia (item 14):** a tela Custos soma os valores exatos e arredonda só no total — não
+  difere mais 1 centavo da ficha (0 diferenças em 200 mil casos, teste de regressão).
+- **LGPD (item 15):** a limpeza diária vale também para clientes desativados e apaga o celular dos SMS
+  mais antigos que a retenção (a mensagem fica). **Anonimizar motorista** (Motoristas → Editar →
+  "Anonimizar (LGPD)"): nome, celular, CPF e placa saem do cadastro e dos containers do cliente, o
+  acesso é encerrado; só a administração e só motorista exclusivo do cliente.
+- **Planilhas (item 16):** upload limitado a 1 MB (1.000 containers ou 5.000 motoristas cabem).
+- **IPs internos (item 17):** as sugestões de endereço com os IPs do servidor só aparecem fora de
+  produção e para quem administra.
+- **Outros (item 20):** e-mail de usuário/nome de transportadora já usados em **outro** cliente
+  recebem mensagem genérica; o comprovante de celular do motorista tem segredo próprio (derivado) e
+  audience — não se confunde com a sessão; **Content-Security-Policy ligado** (só scripts do próprio
+  site; imagens também do OpenStreetMap); o log das ações do motorista guarda o id dele (`motoristaId`).
+- Migração `20261007100000_seguranca_3_3` (só acrescenta): `CodigoAcessoMotorista.organizacaoId`,
+  `LogAuditoria.motoristaId` e a função `purgar_log_auditoria`.
+
+## 3.2.0 — 02/10/2026 (tag `v3.2.0`, publicada junto com a 3.4.0)
+
+**Segurança antes do primeiro cliente real** (itens da análise de segurança da v3.0.2: 1, 2, 3, 4, 5,
+6, 18, 19 e CPF mascarado). Publicada junto com a 3.1.2.
+
+- **Gestor de transportadora só do próprio cliente (item 1):** o gestor só pode ser ligado a uma
+  transportadora vinculada à organização de quem o cria, e só enxerga os motoristas dela vinculados ao
+  seu cliente. A tela/API de Motoristas não devolve mais o e-mail de quem cadastrou ou bloqueou, e o
+  **CPF sai sempre mascarado** (`***.982.247-**`).
+- **Motorista compartilhado entre clientes (item 2):** bloqueio **por cliente** (novas colunas em
+  MotoristaOrganizacao): o bloqueio da administração vale só para aquele cliente (QR e SMS dele); o do
+  gestor continua sendo o da transportadora (todos os clientes, derruba o acesso). Nome, placa e celular
+  só são editáveis pelo cliente quando o motorista atende só ele; compartilhado → 409. O **próprio
+  motorista troca o celular** na tela do QR ("Trocar celular"), confirmando o número novo por SMS; os
+  outros acessos dele caem e o número antigo recebe aviso.
+- **Código curto do QR (itens 3 e 18):** no máximo 10 códigos errados a cada 15 min por aparelho e por
+  pessoa (só falhas contam; a 11ª → 429). O motorista só abre pelo código etiqueta já ligada a um
+  container e informando o número dele. Etiquetas novas com **8 caracteres** (`CC-XXXXXXXX`), sorteados
+  com `crypto.randomInt` (sem o viés de `byte % 31`); as antigas de 6 seguem valendo. Fonte do código
+  na etiqueta (tela e ZPL) proporcional ao tamanho.
+- **Cliente desativado (item 4):** motorista pelo QR, token de integração e link do SMS de um cliente
+  desativado recebem 403.
+- **Concorrência (item 5):** índice único parcial — um container ativo por número em cada organização;
+  avançar, desfazer e cancelar só gravam se a etapa não mudou (`updateMany` condicionado; o segundo
+  recebe 409); vínculo de etiqueta condicionado a "LIVRE" (QR, coleta e portaria).
+- **Salvar Configurações (item 6):** recalcula só a organização de quem salvou (antes, a plataforma toda).
+- **Endereço dos links (item 19):** em produção, links de SMS/e-mail e a URL dos QR usam sempre o
+  endereço da plataforma (`APP_URL`, ou `RENDER_EXTERNAL_URL` no Render); o campo das Configurações
+  vira informativo. Fora de produção continua valendo (teste em rede local).
+- Migração `20261006100000_seguranca_3_2` (só acrescenta): colunas de bloqueio por cliente e o índice
+  `Container_numero_ativo_unico`. ⚠ O Prisma 5 não representa índice parcial: um `prisma migrate dev`
+  futuro vai propor removê-lo — não aceite (README, "Banco de dados").
+
+## 3.1.2 — 02/10/2026 (tag `v3.1.2`, publicada junto com a 3.4.0)
+
+- **Ficha → Rastreamento mostra quando o acompanhamento pela página parou.** Antes só virava
+  "pausado" 20 min depois da última posição gravada — a ficha seguia "ativo" com a página já parada.
+  Agora a página do link avisa o servidor quando inicia, quando é **minimizada ou fechada** (via
+  sendBeacon, que entrega mesmo com a página saindo) e quando o motorista toca em **Parar**; cada
+  envio renova o último sinal. A ficha mostra: *ativo · último sinal há X*, *parou — pausado desde*
+  (página minimizada/fechada), *parou — sem sinal desde* (deixou de mandar sem avisar: tela bloqueada,
+  sem internet ou bateria — mais de 7 min sem sinal, com envios a cada 5 min) ou *encerrado pelo motorista*.
+- Rota nova `POST /api/posicao/:codigo/acompanhar/estado` (ATIVO | PAUSADO | ENCERRADO; mesmas regras do
+  link: respondido, responsável atual, container ativo; limite próprio de 20 por 5 min por link).
+- Migração `20261005100000_acompanhamento_estado`: só acrescenta 3 colunas opcionais em Container
+  (situação, quando mudou e último sinal). Troca de responsável pelo QR limpa a situação.
+
 ## 3.1.1 — 02/10/2026 (tag `v3.1.1`)
 
 - **Home:** só aparecem os Pontos de Carregamento com demanda (pelo menos 1 container ativo —

@@ -54,7 +54,7 @@ function sessaoEncerrada(msg) {
     <Login />
     <p class="voltar-motorista"><button type="button" class="link" @click="modoEquipe = false">← Sou motorista (entrar pelo celular)</button></p>
   </div>
-  <AcessoMotorista v-else :aviso="aviso" @entrou="entrou" @equipe="modoEquipe = true" />
+  <AcessoMotorista v-else :aviso="aviso" :etiqueta="token" @entrou="entrou" @equipe="modoEquipe = true" />
 </template>
 
 <style scoped>

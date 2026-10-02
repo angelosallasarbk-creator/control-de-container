@@ -947,8 +947,11 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
             </div>
             <div v-if="rastreio.acompanhamento" class="motivos-agora">
               <span class="mudo pequeno">Acompanhamento pela página (reforço do SMS):</span>
-              <span v-if="rastreio.acompanhamento.ativo" class="chip verde" :title="'Última posição ' + fmtDataHora(rastreio.acompanhamento.ultimaEm)">ativo · última há {{ tempoDesde(rastreio.acompanhamento.ultimaEm) }}</span>
-              <span v-else class="chip" title="A página foi fechada, minimizada ou a tela bloqueou. O SMS continua valendo.">pausado desde {{ fmtDataHora(rastreio.acompanhamento.ultimaEm) }}</span>
+              <span v-if="rastreio.acompanhamento.estado === 'ATIVO'" class="chip verde" :title="'Último sinal da página: ' + fmtDataHora(rastreio.acompanhamento.ultimoSinalEm)">ativo · último sinal há {{ tempoDesde(rastreio.acompanhamento.ultimoSinalEm) }}</span>
+              <span v-else-if="rastreio.acompanhamento.estado === 'PAUSADO'" class="chip amarelo" title="O motorista minimizou ou fechou a página (ou a tela bloqueou). Volta sozinho quando ele abrir a página de novo. O SMS continua valendo.">parou — pausado desde {{ fmtDataHora(rastreio.acompanhamento.desde) }} (página minimizada ou fechada)</span>
+              <span v-else-if="rastreio.acompanhamento.estado === 'SEM_SINAL'" class="chip vermelho" title="A página deixou de mandar a posição sem avisar: fechada, tela bloqueada, celular sem internet ou sem bateria. O SMS continua valendo.">parou — sem sinal desde {{ fmtDataHora(rastreio.acompanhamento.desde) }}</span>
+              <span v-else class="chip" :title="rastreio.acompanhamento.motivo ? 'Container encerrado' : 'O motorista tocou em Parar acompanhamento.'">encerrado {{ rastreio.acompanhamento.motivo ? "(container encerrado)" : "pelo motorista" }} em {{ fmtDataHora(rastreio.acompanhamento.desde) }}</span>
+              <span v-if="rastreio.acompanhamento.ultimaPosicaoEm" class="mudo pequeno">· última posição {{ fmtDataHora(rastreio.acompanhamento.ultimaPosicaoEm) }}</span>
             </div>
             <div v-if="rastreio.ativo && rastreio.modo === 'CRITICO'" class="motivos-agora">
               <span class="mudo pequeno">Trecho crítico agora:</span>
