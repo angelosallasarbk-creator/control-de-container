@@ -2,12 +2,11 @@
 // Página do link do SMS de rastreamento: pega a posição GPS do celular e envia. Sem login —
 // o código do link autentica, só vale para o responsável atual e só uma vez.
 // Reforço opcional (o SMS continua sendo o principal): depois de enviar, a pessoa pode deixar a
-// página aberta "acompanhando" — o celular manda a posição a cada 5 min (ou ao andar 1 km). Para
+// página aberta "acompanhando" até a entrega no destino — o celular manda a posição a cada 5 min. Para
 // sozinho se a página for minimizada/fechada ou a tela bloquear (limite dos navegadores).
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { api } from "../api.js";
-import { melhorPosicao, distanciaM } from "../geolocalizacao.js";
-import { fmtDataHora } from "../formato.js";
+import { melhorPosicao } from "../geolocalizacao.js";
 
 const props = defineProps({ codigo: { type: String, required: true } });
 
@@ -18,13 +17,12 @@ const erro = ref(null);
 const precisao = ref(null);
 const podeLocalizar = typeof window !== "undefined" && window.isSecureContext && "geolocation" in navigator;
 
-// Acompanhamento
+// Acompanhamento: 1 posição a cada 5 min (em rodovia ≈ 7 km entre pontos — suficiente como reforço,
+// com pouco tráfego e bateria). Ao voltar para a página manda na hora, respeitando 1 por minuto.
 const ENVIO_A_CADA_MS = 5 * 60 * 1000;
-const DISTANCIA_ENVIO_M = 1000;
 const INTERVALO_MINIMO_MS = 60 * 1000; // o servidor recusa mais de 1 por minuto
 const PRECISAO_MAXIMA_M = 1000; // leituras piores que isso não são enviadas
 const podeAcompanhar = ref(false);
-const acompanhamentoAte = ref(null);
 const acompanhando = ref(false);
 const statusAcomp = ref("");
 const erroAcomp = ref(null);
@@ -50,7 +48,6 @@ onMounted(async () => {
       if (r.podeAcompanhar) {
         podeAcompanhar.value = true;
         numero.value = r.numero;
-        acompanhamentoAte.value = r.acompanhamentoAte;
       }
     }
   } catch (e) {
@@ -74,7 +71,6 @@ async function enviar() {
     mensagem.value = r.mensagem;
     estado.value = "concluido";
     podeAcompanhar.value = true;
-    acompanhamentoAte.value = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
     ultimaEnviada = { ...pos, em: Date.now() };
   } catch (e) {
     erro.value = e.message;
@@ -104,7 +100,7 @@ function deveEnviar(agora, forcar) {
   if (!ultimaEnviada) return true;
   const desde = agora - ultimaEnviada.em;
   if (desde < INTERVALO_MINIMO_MS) return false;
-  return forcar || desde >= ENVIO_A_CADA_MS || distanciaM(ultimaEnviada, ultimaLeitura) >= DISTANCIA_ENVIO_M;
+  return forcar || desde >= ENVIO_A_CADA_MS;
 }
 
 async function talvezEnviar(forcar = false) {
@@ -197,9 +193,8 @@ onBeforeUnmount(parar);
           <template v-if="!acompanhando">
             <div class="negrito">Quer acompanhar a viagem pela página? <span class="mudo">(opcional)</span></div>
             <p class="pequeno" style="margin: 0">
-              Com esta página <strong>aberta</strong>, o celular envia a posição do container <strong>{{ numero }}</strong> a cada 5 minutos
-              (ou ao andar 1 km). Se a página for <strong>minimizada, fechada ou a tela bloquear</strong>, o envio para — os SMS continuam chegando normalmente.
-              <template v-if="acompanhamentoAte"> Vale até {{ fmtDataHora(acompanhamentoAte) }}.</template>
+              Com esta página <strong>aberta</strong>, o celular envia a posição do container <strong>{{ numero }}</strong> a cada 5 minutos. Se a página for <strong>minimizada, fechada ou a tela bloquear</strong>, o envio para — os SMS continuam chegando normalmente.
+              Vale até a entrega do container no destino.
             </p>
             <button type="button" class="primario grande" @click="iniciar">Acompanhar com a página aberta</button>
           </template>

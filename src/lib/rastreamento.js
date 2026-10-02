@@ -28,12 +28,16 @@ import { identidadeMotorista } from "./acessoMotorista.js";
 export const ETAPAS_CARREGAMENTO = ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"];
 export const VALIDADE_LINK_HORAS = 12;
 // Acompanhamento pela página do link (reforço opcional; o SMS continua sendo o principal): depois de
-// enviar a posição do link, a página aberta pode seguir mandando posições por até 24 h, no máximo 1
-// por minuto. Só vale enquanto a pessoa for a responsável pelo container.
-export const JANELA_ACOMPANHAMENTO_HORAS = 24;
+// enviar a posição do link, a página aberta pode seguir mandando posições até a ENTREGA no destino
+// (todo fluxo termina nela; container entregue/cancelado encerra), no máximo 1 por minuto. Só vale
+// enquanto a pessoa for a responsável pelo container.
 export const INTERVALO_MINIMO_ACOMPANHAMENTO_S = 60;
-// Acompanhamento "ativo" na ficha: posição recebida há menos que isto.
-export const ACOMPANHAMENTO_ATIVO_MIN = 12;
+// Parado no mesmo lugar (até 200 m da última posição do acompanhamento): grava no máximo 1 a cada
+// 15 min — evita encher o banco e o mapa com pontos repetidos (caminhão parado com a página aberta).
+export const RAIO_REPETIDA_M = 200;
+export const GRAVAR_PARADO_A_CADA_MIN = 15;
+// Acompanhamento "ativo" na ficha: posição gravada há menos que isto (cobre o intervalo de parado).
+export const ACOMPANHAMENTO_ATIVO_MIN = 20;
 const POSICOES_PARA_MOTIVOS = 200;
 // Falha no envio: tenta de novo depois disto (em vez de esperar o intervalo inteiro).
 const NOVA_TENTATIVA_MIN = 5;
@@ -292,10 +296,13 @@ async function contextoDosPedidos(ids) {
   if (!ids.length) return { posicoes, alertas };
   const [linhas, abertos] = await Promise.all([
     prisma.$queryRaw`
-      SELECT "containerId", latitude, longitude, "registradaEm" FROM (
-        SELECT p.*, row_number() OVER (PARTITION BY "containerId" ORDER BY "registradaEm" DESC, id DESC) AS n
-        FROM "PosicaoContainer" p WHERE "containerId" IN (${Prisma.join(ids)})
-      ) x WHERE n <= ${POSICOES_PARA_MOTIVOS} ORDER BY "containerId", "registradaEm" DESC, id DESC`,
+      SELECT c.id AS "containerId", p.latitude, p.longitude, p."registradaEm"
+      FROM unnest(ARRAY[${Prisma.join(ids)}]::int[]) AS c(id)
+      CROSS JOIN LATERAL (
+        SELECT latitude, longitude, "registradaEm", id FROM "PosicaoContainer"
+        WHERE "containerId" = c.id ORDER BY "registradaEm" DESC, id DESC LIMIT ${POSICOES_PARA_MOTIVOS}
+      ) p
+      ORDER BY c.id, p."registradaEm" DESC, p.id DESC`,
     prisma.alerta.findMany({ where: { containerId: { in: ids }, chaveAberta: { not: null } }, select: { containerId: true, tipo: true } }),
   ]);
   for (const p of linhas) posicoes.get(p.containerId).push({ latitude: Number(p.latitude), longitude: Number(p.longitude), registradaEm: p.registradaEm });
@@ -425,9 +432,8 @@ async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   });
   if (!p) return { erro: "Link inválido." };
   if (acompanhamento) {
-    // Acompanhamento: só depois da posição do link e dentro da janela.
+    // Acompanhamento: só depois da posição do link; vale até a entrega (checagem de encerrado abaixo).
     if (!p.respondidaEm) return { erro: "Envie primeiro a posição pelo botão do link." };
-    if (agora - p.respondidaEm > JANELA_ACOMPANHAMENTO_HORAS * 60 * MIN) return { erro: "O acompanhamento deste link terminou. Use o link do próximo SMS." };
   } else {
     if (p.respondidaEm) return { erro: "A posição deste link já foi enviada. Obrigado!", respondida: true };
     if (p.expiraEm < agora) return { erro: "Este link expirou. Aguarde o próximo SMS." };
@@ -458,7 +464,6 @@ export async function conferirPedido(codigo, agora = new Date()) {
     return {
       valido: false, mensagem: erro, respondida: Boolean(respondida),
       podeAcompanhar: Boolean(acomp?.pedido), numero: acomp?.pedido?.container.numero ?? null,
-      acompanhamentoAte: acomp?.pedido ? new Date(acomp.pedido.respondidaEm.getTime() + JANELA_ACOMPANHAMENTO_HORAS * 60 * MIN) : null,
     };
   }
   return { valido: true, numero: pedido.container.numero, expiraEm: pedido.expiraEm };
@@ -489,10 +494,15 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
   const { pedido, erro } = await pedidoDoCodigo(codigo, agora, { acompanhamento: true });
   if (!pedido) return { ok: false, mensagem: erro };
   const ultima = await prisma.posicaoContainer.findFirst({
-    where: { containerId: pedido.containerId, origem: "ACOMPANHAMENTO" }, orderBy: { registradaEm: "desc" }, select: { registradaEm: true },
+    where: { containerId: pedido.containerId, origem: "ACOMPANHAMENTO" }, orderBy: [{ registradaEm: "desc" }, { id: "desc" }],
+    select: { registradaEm: true, latitude: true, longitude: true },
   });
   if (ultima && agora - ultima.registradaEm < INTERVALO_MINIMO_ACOMPANHAMENTO_S * 1000) {
     return { ok: false, cedo: true, mensagem: "Posição recebida há menos de 1 minuto." };
+  }
+  const mesmoLugar = ultima && distanciaM({ latitude: Number(ultima.latitude), longitude: Number(ultima.longitude) }, { latitude, longitude }) <= RAIO_REPETIDA_M;
+  if (mesmoLugar && agora - ultima.registradaEm < GRAVAR_PARADO_A_CADA_MIN * MIN) {
+    return { ok: true, gravada: false, numero: pedido.container.numero }; // parado: recebida, não grava de novo
   }
   await prisma.posicaoContainer.create({
     data: {
@@ -500,7 +510,7 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
       origem: "ACOMPANHAMENTO", etapa: pedido.container.status, registradaEm: agora,
     },
   });
-  return { ok: true, numero: pedido.container.numero };
+  return { ok: true, gravada: true, numero: pedido.container.numero };
 }
 
 // ---------- Aba "Rastreamento" da ficha ----------

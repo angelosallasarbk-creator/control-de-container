@@ -1500,7 +1500,7 @@ test("rastreamento em trechos críticos: previsão estourada, risco de prazo, pa
   for (const id of [A, B, C, D, E, F, semResp.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de trechos críticos" });
 });
 
-test("v3.1 acompanhamento pela página do link (reforço do SMS): regras, janela, 1/min e SMS intocado", async () => {
+test("v3.1 acompanhamento pela página do link (reforço do SMS): regras, até a entrega, 1/min, parado, limites e SMS intocado", async () => {
   const { caixaDeSaidaSms } = await import("./lib/sms.js");
   const MIN = 60e3, H = 60 * MIN;
   const codigoDoSms = (s) => /\/p\/([A-Za-z0-9_-]+)$/.exec(s.texto)?.[1];
@@ -1531,7 +1531,6 @@ test("v3.1 acompanhamento pela página do link (reforço do SMS): regras, janela
   assert.equal(conf.respondida, true);
   assert.equal(conf.podeAcompanhar, true);
   assert.equal(conf.numero, "ACPU9000000");
-  assert.ok(new Date(conf.acompanhamentoAte) > new Date(Date.now() + 23 * H));
 
   // Posições: validadas, no máximo 1 por minuto.
   assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ latitude: 91, longitude: 0 })).status, 400);
@@ -1561,17 +1560,39 @@ test("v3.1 acompanhamento pela página do link (reforço do SMS): regras, janela
   await prisma.container.update({ where: { id: c.body.id }, data: { rastreioResponsavelId: u.body.id } });
   assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos)).status, 201);
 
-  // Janela de 24 h depois da resposta do link.
-  await prisma.solicitacaoPosicao.updateMany({ where: { containerId: c.body.id }, data: { respondidaEm: new Date(Date.now() - 25 * H) } });
-  await prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - 20 * MIN) } });
-  const fora = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
-  assert.equal(fora.status, 409);
-  assert.match(fora.body.erro, /terminou/);
-  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).body.podeAcompanhar, false);
+  // Sem prazo fixo: link respondido há 2 dias continua valendo (vai até a entrega).
+  await prisma.solicitacaoPosicao.updateMany({ where: { containerId: c.body.id }, data: { respondidaEm: new Date(Date.now() - 48 * H) } });
+  const contar = () => prisma.posicaoContainer.count({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" } });
+  const recuar = (min) => prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - min * MIN) } });
+  await recuar(5);
+  const antesParado = await contar();
+  const parado = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.5005 }); // ~55 m da última
+  assert.equal(parado.status, 201);
+  assert.equal(parado.body.gravada, false, "parado no mesmo lugar: recebida, não grava de novo antes de 15 min");
+  assert.equal(await contar(), antesParado);
+  await recuar(16);
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.5005 })).body.gravada, true, "parado: grava 1 a cada 15 min");
+  assert.equal(await contar(), antesParado + 1);
+
+  // Leitura de entrega no destino: o acompanhamento termina.
+  await recuar(5);
+  await prisma.container.update({ where: { id: c.body.id }, data: { status: "ENTREGUE_PORTO", entreguePortoEm: new Date() } });
+  const fim = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
+  assert.equal(fim.status, 409);
+  assert.match(fim.body.erro, /encerrado/);
+  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).body.podeAcompanhar, false, "container entregue");
+
+  // Limite por link (laço/defeito): passa de 15 em 5 min → "Muitas tentativas".
+  let limitado = null;
+  for (let i = 0; i < 20 && !limitado; i++) {
+    const x = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
+    if (x.status === 429) limitado = x.body.erro;
+  }
+  assert.match(limitado ?? "", /Muitas tentativas/);
+  // ... e o limite do acompanhamento não consome o do link do SMS (o principal).
+  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).status, 200);
 
   await agentes.ADMIN.put("/api/configuracao").send(cfg);
-  await agentes.ADMIN.post(`/api/containers/${c.body.id}/cancelar`).send({ motivo: "fim do teste de acompanhamento" });
-  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).body.podeAcompanhar, false, "container encerrado");
 });
 
 test("v3.1 parado com posições densas (acompanhamento a cada 5 min): bloco contínuo no mesmo lugar", async () => {
