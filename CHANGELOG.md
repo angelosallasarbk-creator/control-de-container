@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.1.1 — não publicada
+## 3.1.1 — 02/10/2026 (tag `v3.1.1`)
 
 - **Home:** só aparecem os Pontos de Carregamento com demanda (pelo menos 1 container ativo —
   programado, em trânsito ou no local). Os sem container saem dos cards e da lista do filtro
