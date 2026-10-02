@@ -87,6 +87,10 @@ const gruposDaAba = computed(() =>
   (dados.value?.grupos ?? []).filter((g) => abaAtual.value === "todas" || chaveRegiao(g) === abaAtual.value)
 );
 
+// Só os pontos de carregamento com demanda (container ativo: programado, em trânsito ou no local)
+// aparecem nos cards e na lista de filtro — os sem container não ocupam a Home.
+const gruposComDemanda = computed(() => gruposDaAba.value.filter((g) => g.containers.length));
+
 // ---------- Indicadores da aba ----------
 const somarMoedas = (lista) => {
   const total = {};
@@ -110,7 +114,7 @@ const indicadores = computed(() => {
 
 // ---------- Grupos exibidos ----------
 const grupos = computed(() =>
-  gruposDaAba.value
+  gruposComDemanda.value
     .filter((g) => !filtroGrupo.value || String(g.id) === filtroGrupo.value)
     .map((g) => {
       const visiveis = g.containers.filter((c) => !soProblemas.value || c.semaforo !== "VERDE");
@@ -164,7 +168,7 @@ const grupos = computed(() =>
           <label>Ponto de Carregamento</label>
           <select v-model="filtroGrupo">
             <option value="">Todos</option>
-            <option v-for="g in gruposDaAba" :key="g.id" :value="String(g.id)">{{ g.cliente }} / {{ g.fabrica }}</option>
+            <option v-for="g in gruposComDemanda" :key="g.id" :value="String(g.id)">{{ g.cliente }} / {{ g.fabrica }}</option>
           </select>
         </div>
         <label class="linha pequeno" style="gap: 6px; padding-bottom: 8px"><input v-model="soProblemas" type="checkbox" /> Só atenção/crítico</label>
