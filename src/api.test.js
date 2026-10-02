@@ -1500,6 +1500,145 @@ test("rastreamento em trechos críticos: previsão estourada, risco de prazo, pa
   for (const id of [A, B, C, D, E, F, semResp.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de trechos críticos" });
 });
 
+test("v3.1 acompanhamento pela página do link (reforço do SMS): regras, até a entrega, 1/min, parado, limites e SMS intocado", async () => {
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const MIN = 60e3, H = 60 * MIN;
+  const codigoDoSms = (s) => /\/p\/([A-Za-z0-9_-]+)$/.exec(s.texto)?.[1];
+  const u = await agentes.ADMIN.post("/api/usuarios").send({ email: "acomp@teste.local", nome: "Motorista Acomp", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11 96666-0000" });
+  assert.equal(u.status, 201);
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1 });
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const c = await agentes.ADMIN.post("/api/containers").send({ numero: "ACPU9000000", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const envioAntes = new Date(Date.now() - 2 * H);
+  await prisma.container.update({ where: { id: c.body.id }, data: { status: "COLETADO", coletadoEm: new Date(Date.now() - 3 * H), rastreioResponsavelId: u.body.id, rastreioDesde: new Date(Date.now() - 3 * H) } });
+  assert.equal((await agentes.OPERADOR.post(`/api/containers/${c.body.id}/solicitar-posicao`)).status, 201);
+  const codigo = codigoDoSms(caixaDeSaidaSms.filter((s) => s.para === "+5511966660000").at(-1));
+  assert.ok(codigo);
+  const pos = { latitude: -23.5, longitude: -46.6, precisaoM: 12 };
+
+  // Antes de responder o link: acompanhamento recusado; o link segue normal.
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos)).status, 409);
+  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).body.podeAcompanhar, undefined, "link ainda não respondido: resposta de sempre");
+  assert.equal((await request(app).post(`/api/posicao/${codigo}`).send(pos)).status, 201);
+  await prisma.container.update({ where: { id: c.body.id }, data: { rastreioUltimoEnvioEm: envioAntes } });
+
+  // Depois de responder: a página oferece o acompanhamento.
+  const conf = (await request(app).get(`/api/posicao/${codigo}`)).body;
+  assert.equal(conf.valido, false);
+  assert.equal(conf.respondida, true);
+  assert.equal(conf.podeAcompanhar, true);
+  assert.equal(conf.numero, "ACPU9000000");
+
+  // Posições: validadas, no máximo 1 por minuto.
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ latitude: 91, longitude: 0 })).status, 400);
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.51 })).status, 201);
+  const cedo = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
+  assert.equal(cedo.status, 429);
+  await prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - 2 * MIN) } });
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.52 })).status, 201);
+  const gravadas = await prisma.posicaoContainer.findMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" } });
+  assert.equal(gravadas.length, 2);
+  assert.ok(gravadas.every((p) => p.usuarioId === u.body.id && p.etapa === "COLETADO"));
+
+  // O SMS continua o principal: acompanhamento não mexe no controle de envios do agendador.
+  const db = await prisma.container.findUnique({ where: { id: c.body.id } });
+  assert.equal(db.rastreioUltimoEnvioEm.getTime(), envioAntes.getTime());
+
+  // Ficha: acompanhamento ativo e posições com a origem.
+  const r = (await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body;
+  assert.equal(r.acompanhamento.ativo, true);
+  assert.equal(r.posicoes.filter((p) => p.origem === "ACOMPANHAMENTO").length, 2);
+  await prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - 20 * MIN) } });
+  assert.equal((await agentes.OPERADOR.get(`/api/containers/${c.body.id}/rastreamento`)).body.acompanhamento.ativo, false, "sem posição há 20 min = pausado");
+
+  // Responsável mudou: link não vale mais para acompanhar.
+  await prisma.container.update({ where: { id: c.body.id }, data: { rastreioResponsavelId: null } });
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos)).status, 409);
+  await prisma.container.update({ where: { id: c.body.id }, data: { rastreioResponsavelId: u.body.id } });
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos)).status, 201);
+
+  // Sem prazo fixo: link respondido há 2 dias continua valendo (vai até a entrega).
+  await prisma.solicitacaoPosicao.updateMany({ where: { containerId: c.body.id }, data: { respondidaEm: new Date(Date.now() - 48 * H) } });
+  const contar = () => prisma.posicaoContainer.count({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" } });
+  const recuar = (min) => prisma.posicaoContainer.updateMany({ where: { containerId: c.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - min * MIN) } });
+  await recuar(5);
+  const antesParado = await contar();
+  const parado = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.5005 }); // ~55 m da última
+  assert.equal(parado.status, 201);
+  assert.equal(parado.body.gravada, false, "parado no mesmo lugar: recebida, não grava de novo antes de 15 min");
+  assert.equal(await contar(), antesParado);
+  await recuar(16);
+  assert.equal((await request(app).post(`/api/posicao/${codigo}/acompanhar`).send({ ...pos, latitude: -23.5005 })).body.gravada, true, "parado: grava 1 a cada 15 min");
+  assert.equal(await contar(), antesParado + 1);
+
+  // Leitura de entrega no destino: o acompanhamento termina.
+  await recuar(5);
+  await prisma.container.update({ where: { id: c.body.id }, data: { status: "ENTREGUE_PORTO", entreguePortoEm: new Date() } });
+  const fim = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
+  assert.equal(fim.status, 409);
+  assert.match(fim.body.erro, /encerrado/);
+  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).body.podeAcompanhar, false, "container entregue");
+
+  // Limite por link (laço/defeito): passa de 15 em 5 min → "Muitas tentativas".
+  let limitado = null;
+  for (let i = 0; i < 20 && !limitado; i++) {
+    const x = await request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
+    if (x.status === 429) limitado = x.body.erro;
+  }
+  assert.match(limitado ?? "", /Muitas tentativas/);
+  // ... e o limite do acompanhamento não consome o do link do SMS (o principal).
+  assert.equal((await request(app).get(`/api/posicao/${codigo}`)).status, 200);
+
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+});
+
+test("v3.1 parado com posições densas (acompanhamento a cada 5 min): bloco contínuo no mesmo lugar", async () => {
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
+  const MIN = 60e3, H = 60 * MIN;
+  const T = new Date();
+  const at = (ms) => new Date(T.getTime() + ms);
+  const u = await agentes.ADMIN.post("/api/usuarios").send({ email: "denso@teste.local", nome: "Motorista Denso", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11 95555-0000" });
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  await agentes.ADMIN.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1, rastreioPersonalizado: 0 });
+  const ativo = async (r) => (await agentes.ADMIN.get(`/api/${r}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  async function container(numero) {
+    const r = await agentes.ADMIN.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    await prisma.container.update({ where: { id: r.body.id }, data: { status: "COLETADO", coletadoEm: at(-6 * H), rastreioResponsavelId: u.body.id, rastreioDesde: at(-6 * H), rastreioUltimoEnvioEm: at(-2 * H) } });
+    return r.body.id;
+  }
+  const serie = (id, pontos) => prisma.posicaoContainer.createMany({ data: pontos.map(([lat, lon, quando]) => ({ containerId: id, usuarioId: u.body.id, latitude: lat, longitude: lon, origem: "ACOMPANHAMENTO", etapa: "COLETADO", registradaEm: quando })) });
+  const pedidos = (id) => prisma.mensagemSms.findMany({ where: { containerId: id, tipo: "POSICAO" } });
+
+  // P) Andou até 5 h atrás e ficou 4 h parado, com posição a cada 5 min (pequenas variações do GPS).
+  const P = await container("DNSU1000000");
+  const pontosP = [[-23.3, -46.6, at(-5 * H)]];
+  for (let m = 240; m >= 5; m -= 5) pontosP.push([-23.5 + (m % 3) * 0.0002, -46.6, at(-m * MIN)]);
+  await serie(P, pontosP);
+  // M) Andando: posição a cada 5 min, ~1 km entre elas.
+  const M = await container("DNSU2000000");
+  const pontosM = [];
+  for (let m = 240; m >= 5; m -= 5) pontosM.push([-23.5 + m * 0.002, -46.6, at(-m * MIN)]);
+  await serie(M, pontosM);
+
+  const rP = (await agentes.OPERADOR.get(`/api/containers/${P}/rastreamento`)).body;
+  assert.ok(rP.motivos.some((m) => /^Parado há 4h/.test(m)), JSON.stringify(rP.motivos));
+  assert.deepEqual((await agentes.OPERADOR.get(`/api/containers/${M}/rastreamento`)).body.motivos, []);
+
+  await executarRastreamento(at(1 * MIN));
+  const pP = await pedidos(P);
+  assert.equal(pP.length, 1);
+  assert.match(pP[0].motivo, /^Parado há 4h/);
+  assert.equal((await pedidos(M)).length, 0, "em movimento: nada");
+
+  await agentes.ADMIN.put("/api/configuracao").send(cfg);
+  for (const id of [P, M]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste parado denso" });
+});
+
 test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor da transportadora e retenção", async () => {
   const { caixaDeSaidaSms } = await import("./lib/sms.js");
   const { purgarDadosAntigos } = await import("./lib/rastreamento.js");
@@ -2480,7 +2619,7 @@ test("v3.0: invasão — organização B ataca TODAS as rotas com identificador 
     assert.ok([400, 403, 404].includes(r.status), `${nome} → ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
   }
   // Rotas cujo código identifica a própria organização (o atacante não escolhe a organização).
-  const FORA = new Set(["GET /api/auth/redefinir-senha/:codigo", "GET /api/posicao/:codigo", "POST /api/posicao/:codigo", "GET /api/qr/opcoes/container/:numero"]);
+  const FORA = new Set(["GET /api/auth/redefinir-senha/:codigo", "GET /api/posicao/:codigo", "POST /api/posicao/:codigo", "POST /api/posicao/:codigo/acompanhar", "GET /api/qr/opcoes/container/:numero"]);
 
   // Ids da A no CORPO / na busca.
   assert.equal((await b.post("/api/containers").send({ numero: "INVU1234567", confirmarDigito: true, tipo: "DRY_40", grupoId: grupo.id, armadorId: armador.id })).status, 400, "container com cadastros da A");

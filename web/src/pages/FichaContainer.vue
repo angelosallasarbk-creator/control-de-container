@@ -192,7 +192,7 @@ const rastreio = ref(null);
 const erroRastreio = ref(null);
 const STATUS_SMS = { ENVIADA: { texto: "Enviado", cor: "verde" }, SIMULADA: { texto: "Simulado", cor: "" }, FALHA: { texto: "Falhou", cor: "vermelho" }, SEM_CELULAR: { texto: "Sem celular", cor: "amarelo" } };
 const TIPO_SMS = { VINCULO: "Aviso de vínculo", POSICAO: "Pedido de posição" };
-const ORIGEM_POSICAO = { LINK_SMS: "Link do SMS", QR: "Leitura do QR" };
+const ORIGEM_POSICAO = { LINK_SMS: "Link do SMS", QR: "Leitura do QR", ACOMPANHAMENTO: "Acompanhamento (página aberta)" };
 const linkMapa = (p) => `https://www.openstreetmap.org/?mlat=${p.latitude}&mlon=${p.longitude}#map=17/${p.latitude}/${p.longitude}`;
 const solicitando = ref(false);
 const avisoRastreio = ref(null);
@@ -944,6 +944,11 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
                 </div>
                 <div v-else class="mudo">Nenhum — sem trecho crítico agora</div>
               </div>
+            </div>
+            <div v-if="rastreio.acompanhamento" class="motivos-agora">
+              <span class="mudo pequeno">Acompanhamento pela página (reforço do SMS):</span>
+              <span v-if="rastreio.acompanhamento.ativo" class="chip verde" :title="'Última posição ' + fmtDataHora(rastreio.acompanhamento.ultimaEm)">ativo · última há {{ tempoDesde(rastreio.acompanhamento.ultimaEm) }}</span>
+              <span v-else class="chip" title="A página foi fechada, minimizada ou a tela bloqueou. O SMS continua valendo.">pausado desde {{ fmtDataHora(rastreio.acompanhamento.ultimaEm) }}</span>
             </div>
             <div v-if="rastreio.ativo && rastreio.modo === 'CRITICO'" class="motivos-agora">
               <span class="mudo pequeno">Trecho crítico agora:</span>

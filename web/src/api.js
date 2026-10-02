@@ -108,6 +108,7 @@ export const api = {
   // Link do SMS de rastreamento (público, sem login).
   conferirPedidoPosicao: (codigo) => request(`/posicao/${encodeURIComponent(codigo)}`),
   enviarPosicao: (codigo, dados) => request(`/posicao/${encodeURIComponent(codigo)}`, { method: "POST", body: dados }),
+  acompanharPosicao: (codigo, dados) => request(`/posicao/${encodeURIComponent(codigo)}/acompanhar`, { method: "POST", body: dados }),
 
   custos: (params) => request(`/custos${qs(params)}`),
 
