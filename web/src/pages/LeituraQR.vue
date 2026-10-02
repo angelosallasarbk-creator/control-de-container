@@ -4,6 +4,7 @@ import { api, qrMotorista } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal, atendeRegraLocal } from "../formato.js";
 import { conferirNumero } from "../iso6346.js";
+import { melhorPosicao } from "../geolocalizacao.js";
 
 // Página aberta pela câmera do celular ao ler a etiqueta. Exige login (o App mostra o login
 // antes e volta para cá). 1ª leitura: número + temperatura + data/hora; depois, só temperatura.
@@ -199,13 +200,9 @@ const horarioDaLeitura = () => (horarioEditado.value ? deInputLocal(f.lidaEm) : 
 
 function obterLocalizacao() {
   if (!enviarLocalizacao.value) return Promise.resolve({});
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ latitude: p.coords.latitude, longitude: p.coords.longitude, precisaoM: Math.round(p.coords.accuracy) }),
-      () => resolve({}), // sem permissão/sinal: salva sem localização
-      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
-    );
-  });
+  // Até 8 s acompanhando as leituras e fica com a mais precisa (para antes se chegar a ±50 m).
+  // Sem permissão/sinal: salva sem localização.
+  return melhorPosicao({ alvoM: 50, tempoMaxMs: 8000, maximumAge: 60000 }).catch(() => ({}));
 }
 
 async function salvar(substituir = false) {

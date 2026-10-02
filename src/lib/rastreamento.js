@@ -27,6 +27,14 @@ import { identidadeMotorista } from "./acessoMotorista.js";
 // Etapas "no ponto de carregamento" (container parado lá): intervalo próprio no modo personalizado.
 export const ETAPAS_CARREGAMENTO = ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"];
 export const VALIDADE_LINK_HORAS = 12;
+// Acompanhamento pela página do link (reforço opcional; o SMS continua sendo o principal): depois de
+// enviar a posição do link, a página aberta pode seguir mandando posições por até 24 h, no máximo 1
+// por minuto. Só vale enquanto a pessoa for a responsável pelo container.
+export const JANELA_ACOMPANHAMENTO_HORAS = 24;
+export const INTERVALO_MINIMO_ACOMPANHAMENTO_S = 60;
+// Acompanhamento "ativo" na ficha: posição recebida há menos que isto.
+export const ACOMPANHAMENTO_ATIVO_MIN = 12;
+const POSICOES_PARA_MOTIVOS = 200;
 // Falha no envio: tenta de novo depois disto (em vez de esperar o intervalo inteiro).
 const NOVA_TENTATIVA_MIN = 5;
 const MIN = 60 * 1000;
@@ -251,10 +259,18 @@ export function motivosDoPedido(c, { posicoes = [], alertas = [], config, agora 
     if (alertas.includes(tipo)) motivos.push({ texto: ALERTAS_DE_PRAZO[tipo], intervaloMin: critico });
   }
   if (emTransito) {
-    const [ultima, anterior] = posicoes;
-    if (ultima && anterior && distanciaM(ultima, anterior) <= RAIO_PARADO_M &&
-        new Date(ultima.registradaEm) - new Date(anterior.registradaEm) >= config.rastreioParadoHoras * 60 * MIN) {
-      motivos.push({ texto: `Parado há ${fmtHoras(agora - new Date(anterior.registradaEm))}`, intervaloMin: critico });
+    // Parado = bloco contínuo de posições (da mais recente para trás) a até 500 m da última, cobrindo
+    // X h. Com o acompanhamento pela página chegam posições a cada poucos minutos no mesmo lugar —
+    // comparar só as 2 últimas nunca acusaria "parado".
+    const [ultima] = posicoes;
+    let inicioParado = null;
+    for (const p of posicoes.slice(1)) {
+      if (distanciaM(ultima, p) > RAIO_PARADO_M) break;
+      inicioParado = p;
+    }
+    if (ultima && inicioParado &&
+        new Date(ultima.registradaEm) - new Date(inicioParado.registradaEm) >= config.rastreioParadoHoras * 60 * MIN) {
+      motivos.push({ texto: `Parado há ${fmtHoras(agora - new Date(inicioParado.registradaEm))}`, intervaloMin: critico });
     }
     const desde = ultima?.registradaEm ?? c.rastreioDesde;
     if (desde && agora - new Date(desde) >= config.rastreioSemPosicaoHoras * 60 * MIN) {
@@ -268,7 +284,8 @@ export function motivosDoPedido(c, { posicoes = [], alertas = [], config, agora 
 const vencidos = (motivos, ultimoEnvioEm, agora) =>
   motivos.filter((m) => !ultimoEnvioEm || agora - new Date(ultimoEnvioEm) >= m.intervaloMin * MIN);
 
-// Últimas 2 posições e tipos de alertas abertos de vários containers (2 consultas no total).
+// Últimas posições (até 200, para achar o bloco "parado") e tipos de alertas abertos de vários
+// containers (2 consultas no total).
 async function contextoDosPedidos(ids) {
   const posicoes = new Map(ids.map((id) => [id, []]));
   const alertas = new Map(ids.map((id) => [id, []]));
@@ -278,7 +295,7 @@ async function contextoDosPedidos(ids) {
       SELECT "containerId", latitude, longitude, "registradaEm" FROM (
         SELECT p.*, row_number() OVER (PARTITION BY "containerId" ORDER BY "registradaEm" DESC, id DESC) AS n
         FROM "PosicaoContainer" p WHERE "containerId" IN (${Prisma.join(ids)})
-      ) x WHERE n <= 2 ORDER BY "containerId", "registradaEm" DESC, id DESC`,
+      ) x WHERE n <= ${POSICOES_PARA_MOTIVOS} ORDER BY "containerId", "registradaEm" DESC, id DESC`,
     prisma.alerta.findMany({ where: { containerId: { in: ids }, chaveAberta: { not: null } }, select: { containerId: true, tipo: true } }),
   ]);
   for (const p of linhas) posicoes.get(p.containerId).push({ latitude: Number(p.latitude), longitude: Number(p.longitude), registradaEm: p.registradaEm });
@@ -396,7 +413,7 @@ export async function solicitarPosicaoManual({ containerId, solicitante, agora =
 
 // ---------- Link do SMS (página pública /p/:codigo) ----------
 
-async function pedidoDoCodigo(codigo, agora) {
+async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   if (!codigo || !/^[A-Za-z0-9_-]{16,64}$/.test(String(codigo))) return { erro: "Link inválido." };
   const p = await prisma.solicitacaoPosicao.findUnique({
     where: { tokenHash: hashDoCodigo(codigo) },
@@ -407,8 +424,14 @@ async function pedidoDoCodigo(codigo, agora) {
     },
   });
   if (!p) return { erro: "Link inválido." };
-  if (p.respondidaEm) return { erro: "A posição deste link já foi enviada. Obrigado!", respondida: true };
-  if (p.expiraEm < agora) return { erro: "Este link expirou. Aguarde o próximo SMS." };
+  if (acompanhamento) {
+    // Acompanhamento: só depois da posição do link e dentro da janela.
+    if (!p.respondidaEm) return { erro: "Envie primeiro a posição pelo botão do link." };
+    if (agora - p.respondidaEm > JANELA_ACOMPANHAMENTO_HORAS * 60 * MIN) return { erro: "O acompanhamento deste link terminou. Use o link do próximo SMS." };
+  } else {
+    if (p.respondidaEm) return { erro: "A posição deste link já foi enviada. Obrigado!", respondida: true };
+    if (p.expiraEm < agora) return { erro: "Este link expirou. Aguarde o próximo SMS." };
+  }
   if (STATUS_ENCERRADOS.includes(p.container.status)) return { erro: `O container ${p.container.numero} já foi encerrado; não é preciso enviar a posição.` };
   // O link só vale para quem ainda é o responsável (usuário ativo ou motorista não bloqueado).
   const aindaResponsavel = p.motoristaId
@@ -429,7 +452,15 @@ export async function organizacaoDoCodigo(codigo) {
 
 export async function conferirPedido(codigo, agora = new Date()) {
   const { pedido, erro, respondida } = await pedidoDoCodigo(codigo, agora);
-  if (!pedido) return { valido: false, mensagem: erro, respondida: Boolean(respondida) };
+  if (!pedido) {
+    // Já respondido: a página pode oferecer (ou retomar) o acompanhamento, se ainda valer.
+    const acomp = respondida ? await pedidoDoCodigo(codigo, agora, { acompanhamento: true }) : null;
+    return {
+      valido: false, mensagem: erro, respondida: Boolean(respondida),
+      podeAcompanhar: Boolean(acomp?.pedido), numero: acomp?.pedido?.container.numero ?? null,
+      acompanhamentoAte: acomp?.pedido ? new Date(acomp.pedido.respondidaEm.getTime() + JANELA_ACOMPANHAMENTO_HORAS * 60 * MIN) : null,
+    };
+  }
   return { valido: true, numero: pedido.container.numero, expiraEm: pedido.expiraEm };
 }
 
@@ -448,6 +479,28 @@ export async function registrarPosicaoDoLink({ codigo, latitude, longitude, prec
     });
     return { ok: true, numero: pedido.container.numero };
   });
+}
+
+/**
+ * Posição do acompanhamento pela página (reforço do SMS). Não mexe no agendador de SMS: as regras
+ * dos trechos críticos continuam iguais — as posições só entram como dados a mais (como as do QR).
+ */
+export async function registrarAcompanhamento({ codigo, latitude, longitude, precisaoM, agora = new Date() }) {
+  const { pedido, erro } = await pedidoDoCodigo(codigo, agora, { acompanhamento: true });
+  if (!pedido) return { ok: false, mensagem: erro };
+  const ultima = await prisma.posicaoContainer.findFirst({
+    where: { containerId: pedido.containerId, origem: "ACOMPANHAMENTO" }, orderBy: { registradaEm: "desc" }, select: { registradaEm: true },
+  });
+  if (ultima && agora - ultima.registradaEm < INTERVALO_MINIMO_ACOMPANHAMENTO_S * 1000) {
+    return { ok: false, cedo: true, mensagem: "Posição recebida há menos de 1 minuto." };
+  }
+  await prisma.posicaoContainer.create({
+    data: {
+      containerId: pedido.containerId, usuarioId: pedido.usuarioId, motoristaId: pedido.motoristaId, latitude, longitude, precisaoM: precisaoM ?? null,
+      origem: "ACOMPANHAMENTO", etapa: pedido.container.status, registradaEm: agora,
+    },
+  });
+  return { ok: true, numero: pedido.container.numero };
 }
 
 // ---------- Aba "Rastreamento" da ficha ----------
@@ -479,7 +532,7 @@ export async function resumoRastreamento(containerId) {
   const ativo = Boolean(config.rastreioSmsAtivo) && Boolean(c.rastreioResponsavel || c.rastreioMotorista) && !STATUS_ENCERRADOS.includes(c.status);
   // Motivos para pedir a posição agora (trechos críticos) ou o intervalo fixo (personalizado).
   const motivos = ativo
-    ? motivosDoPedido(c, { posicoes: posicoes.slice(0, 2).map((p) => ({ latitude: Number(p.latitude), longitude: Number(p.longitude), registradaEm: p.registradaEm })), alertas: alertas.map((a) => a.tipo), config })
+    ? motivosDoPedido(c, { posicoes: posicoes.slice(0, POSICOES_PARA_MOTIVOS).map((p) => ({ latitude: Number(p.latitude), longitude: Number(p.longitude), registradaEm: p.registradaEm })), alertas: alertas.map((a) => a.tipo), config })
     : [];
   const intervaloMin = motivos.length ? Math.min(...motivos.map((m) => m.intervaloMin)) : null;
   const u = c.rastreioResponsavel;
@@ -501,6 +554,12 @@ export async function resumoRastreamento(containerId) {
       : EM_TRANSITO.includes(c.status) && (posicoes[0]?.registradaEm ?? c.rastreioDesde)
         ? new Date(new Date(posicoes[0]?.registradaEm ?? c.rastreioDesde).getTime() + config.rastreioSemPosicaoHoras * 60 * MIN)
         : null,
+    // Acompanhamento pela página (reforço): ativo se chegou posição há pouco; senão, quando parou.
+    acompanhamento: (() => {
+      const ult = posicoes.find((p) => p.origem === "ACOMPANHAMENTO");
+      if (!ult) return null;
+      return { ultimaEm: ult.registradaEm, ativo: Date.now() - new Date(ult.registradaEm).getTime() < ACOMPANHAMENTO_ATIVO_MIN * MIN };
+    })(),
     posicoes: posicoes.map((p) => ({ ...p, latitude: Number(p.latitude), longitude: Number(p.longitude), usuario: p.motorista?.nome ?? p.usuario?.nome ?? null, motorista: undefined })),
     mensagens: mensagens.map((m) => ({ ...m, telefone: mascararCelular(m.telefone), usuario: m.motorista?.nome ?? m.usuario?.nome ?? null, motorista: undefined })),
   };

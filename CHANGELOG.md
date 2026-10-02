@@ -4,6 +4,29 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.1.0 — não publicada
+
+**Geolocalização do navegador (`watchPosition`) como reforço do rastreamento — o SMS continua sendo o principal.**
+
+- **Posição mais precisa:** o link do SMS e a leitura do QR não aceitam mais a 1ª leitura do GPS
+  (que costuma vir da rede, com centenas de metros de erro): acompanham as leituras por alguns
+  segundos e ficam com a melhor (link: até 15 s ou ±30 m; QR: até 8 s ou ±50 m). Arquivo novo
+  `web/src/geolocalizacao.js`.
+- **Acompanhamento pela página (opcional):** depois de enviar a posição do link, a pessoa pode tocar em
+  "Acompanhar com a página aberta". Enquanto a página estiver **aberta e na tela**, o celular envia a
+  posição a cada 5 min (ou ao andar 1 km), mantendo a tela ligada quando o celular permite. Se a página
+  for minimizada/fechada ou a tela bloquear, o envio para (limite dos navegadores) e retoma ao voltar.
+  Rota nova `POST /api/posicao/:codigo/acompanhar`: só depois da posição do link, por até 24 h, só do
+  responsável atual, com o container ativo e no máximo 1 posição por minuto (429). Posições com a origem
+  **"Acompanhamento (página aberta)"**.
+- **O agendador de SMS não muda:** as posições do acompanhamento não adiam nem substituem os pedidos por
+  SMS — entram como dados a mais no mapa e nos motivos.
+- **"Parado" corrigido para posições frequentes:** antes comparava só as 2 últimas posições; com uma
+  posição a cada 5 min no mesmo lugar ele nunca disparava. Agora usa o bloco contínuo de posições a até
+  500 m da última (até 200 posições) cobrindo as X h configuradas.
+- **Ficha → Rastreamento:** mostra se o acompanhamento está ativo (posição há menos de 12 min) ou
+  pausado desde quando.
+
 ## 3.0.2 — 29/09/2026 (tag `v3.0.2`)
 
 - **Mapa do Rastreamento em produção mostrava "Access blocked" (403) do OpenStreetMap:** o sistema
