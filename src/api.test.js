@@ -352,7 +352,7 @@ test("etiquetas QR: gerar, ligar ao container, ler, substituir, encerrar e ZPL",
   assert.equal(lote.status, 201);
   assert.equal(lote.body.etiquetas.length, 3);
   const [e1, e2, e3] = lote.body.etiquetas;
-  assert.match(e1.codigo, /^CC-[2-9A-HJKMNP-Z]{6}$/);
+  assert.match(e1.codigo, /^CC-[2-9A-HJKMNP-Z]{8}$/);
   assert.equal(e1.estado, "LIVRE");
 
   assert.equal((await agentes.OPERADOR.get("/api/qr/token-invalido")).status, 404);
@@ -2676,4 +2676,163 @@ test("v3.0: invasão — organização B ataca TODAS as rotas com identificador 
     }
   }
   assert.deepEqual(faltando, [], "rota com identificador sem teste de invasão");
+});
+
+test("v3.2 segurança: gestor, motorista compartilhado, código curto, cliente desativado, concorrência e endereço", async () => {
+  const { comoSistema } = await import("./lib/tenant.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const { buscarDestinatario } = await import("./lib/rastreamento.js");
+  const a = agentes.ADMIN;
+  const orgA = ORG_TESTE;
+  const orgB = await comoSistema(() => bruto.organizacao.create({ data: { nome: "Cliente Seg 3.2" } }));
+  const senhaHash = await bcrypt.hash("senha-teste-123", 4);
+  await comOrganizacao(orgB.id, () => bruto.usuario.create({ data: { email: "admin@seg32.local", nome: "Admin Seg", perfil: "ADMIN", senhaHash } }));
+  const b = await logar("admin@seg32.local");
+  const vincularEm = (motoristaId, organizacaoId) => comoSistema(() => bruto.motoristaOrganizacao.upsert({
+    where: { motoristaId_organizacaoId: { motoristaId, organizacaoId } }, create: { motoristaId, organizacaoId }, update: {},
+  }));
+
+  // ---- Item 1: gestor só com transportadora do próprio cliente; só vê motoristas do cliente ----
+  const tB = await b.post("/api/transportadoras").send({ nome: "Transp Só da B" });
+  assert.equal(tB.status, 201, JSON.stringify(tB.body));
+  const gestorInvasor = await a.post("/api/usuarios").send({ email: "gestor-invasor@teste.local", nome: "Gestor X", perfil: "GESTOR_TRANSPORTADORA", senha: "senha-teste-123", transportadoraId: tB.body.id });
+  assert.equal(gestorInvasor.status, 400, "transportadora de outro cliente");
+  const tComum = await a.post("/api/transportadoras").send({ nome: "Transp Comum 3.2" });
+  await comoSistema(() => bruto.transportadoraOrganizacao.create({ data: { transportadoraId: tComum.body.id, organizacaoId: orgB.id } }));
+  const gA = await a.post("/api/usuarios").send({ email: "gestor-comum@teste.local", nome: "Gestor Comum", perfil: "GESTOR_TRANSPORTADORA", senha: "senha-teste-123", transportadoraId: tComum.body.id });
+  assert.equal(gA.status, 201, JSON.stringify(gA.body));
+  const gestorA = await logar("gestor-comum@teste.local");
+  const daA = await a.post("/api/motoristas").send({ nome: "Motorista da A", celular: "11955557101", transportadoraId: tComum.body.id, cpf: "529.982.247-25" });
+  assert.equal(daA.status, 201, JSON.stringify(daA.body));
+  const daB = await b.post("/api/motoristas").send({ nome: "Motorista da B", celular: "11955557102", transportadoraId: tComum.body.id });
+  assert.equal(daB.status, 201, JSON.stringify(daB.body));
+  const listaGestor = (await gestorA.get("/api/motoristas")).body;
+  assert.deepEqual(listaGestor.map((m) => m.nome), ["Motorista da A"], "gestor da A não vê o motorista que só a B cadastrou");
+  assert.equal((await gestorA.get(`/api/motoristas/${daB.body.id}`)).status, 404);
+  // CPF mascarado e sem e-mail de quem cadastrou/bloqueou (LGPD).
+  assert.equal(daA.body.cpf, "***.982.247-**");
+  assert.equal(listaGestor[0].cpf, "***.982.247-**");
+  assert.equal((await a.get(`/api/motoristas/${daA.body.id}`)).body.cpf, "***.982.247-**");
+  for (const m of [daA.body, listaGestor[0]]) assert.ok(!("criadoPor" in m) && !("bloqueadoPor" in m));
+
+  // ---- Item 2: motorista compartilhado — bloqueio por cliente e dados só por ele ----
+  const XFF = { "X-Forwarded-For": "198.51.100.32" };
+  const TEL = "+5511955557103";
+  const mot = request.agent(app);
+  const codigoDe = (tel, re = /codigo de acesso e (\d{6})/) => re.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
+  await mot.post("/api/motorista/codigo").set(XFF).send({ celular: TEL });
+  const v = await mot.post("/api/motorista/verificar").set(XFF).send({ celular: TEL, codigo: codigoDe(TEL) });
+  const cad = await mot.post("/api/motorista/cadastro").set(XFF).send({ comprovante: v.body.comprovante, nome: "Carlos Compartilhado", transportadoraId: tComum.body.id, aceite: true });
+  assert.equal(cad.status, 201, JSON.stringify(cad.body));
+  const motId = cad.body.motorista.id;
+  await vincularEm(motId, orgA);
+  await vincularEm(motId, orgB.id);
+  const bloqB = await b.patch(`/api/motoristas/${motId}`).send({ bloqueado: true });
+  assert.equal(bloqB.status, 200, JSON.stringify(bloqB.body));
+  assert.deepEqual([bloqB.body.bloqueado, bloqB.body.bloqueadoNoCliente, bloqB.body.bloqueadoPelaTransportadora], [true, true, false]);
+  const naA = (await a.get("/api/motoristas")).body.find((m) => m.id === motId);
+  assert.equal(naA.bloqueado, false, "o bloqueio da B não aparece para a A");
+  assert.equal(naA.compartilhado, true);
+  assert.equal((await mot.get("/api/motorista/eu")).status, 200, "bloqueio de um cliente não derruba o acesso");
+  // QR da B recusado; QR da A segue.
+  const [etqA] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const [etqB] = (await b.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const qrB = await mot.get(`/api/motorista/qr/${etqB.token}`);
+  assert.deepEqual([qrB.status, qrB.body.codigo], [403, "BLOQUEADO_NO_CLIENTE"]);
+  assert.equal((await mot.get(`/api/motorista/qr/${etqA.token}`)).status, 200);
+  // SMS: na B o motorista está inativo; na A, ativo.
+  assert.equal((await comOrganizacao(orgB.id, () => buscarDestinatario({ motoristaId: motId }))).ativo, false);
+  assert.equal((await comOrganizacao(orgA, () => buscarDestinatario({ motoristaId: motId }))).ativo, true);
+  // Nome, placa e celular de compartilhado: 409 para os clientes.
+  assert.equal((await a.patch(`/api/motoristas/${motId}`).send({ celular: "11955557199" })).status, 409);
+  assert.equal((await b.patch(`/api/motoristas/${motId}`).send({ nome: "Outro Nome" })).status, 409);
+  assert.equal((await a.patch(`/api/motoristas/${daA.body.id}`).send({ placa: "ABC1D23" })).status, 200, "exclusivo da A: pode");
+  // Desbloqueio pela B.
+  assert.equal((await b.patch(`/api/motoristas/${motId}`).send({ bloqueado: false })).body.bloqueado, false);
+  // Troca de celular pelo próprio motorista, confirmando o número novo por SMS.
+  const NOVO = "+5511955557104";
+  assert.equal((await mot.post("/api/motorista/eu/celular").set(XFF).send({ celular: "11955557101" })).status, 409, "número de outro motorista");
+  assert.equal((await mot.post("/api/motorista/eu/celular").set(XFF).send({ celular: NOVO })).status, 200);
+  const codNovo = codigoDe(NOVO, /novo celular: (\d{6})/);
+  assert.ok(codNovo);
+  assert.equal((await mot.post("/api/motorista/eu/celular/confirmar").set(XFF).send({ celular: NOVO, codigo: "000000" === codNovo ? "111111" : "000000" })).status, 400);
+  const troca = await mot.post("/api/motorista/eu/celular/confirmar").set(XFF).send({ celular: NOVO, codigo: codNovo });
+  assert.equal(troca.status, 200, JSON.stringify(troca.body));
+  assert.equal(troca.body.motorista.celular, NOVO);
+  assert.ok(caixaDeSaidaSms.some((s) => s.para === TEL && s.texto.includes("foi trocado")), "aviso no número antigo");
+  assert.equal((await mot.get("/api/motorista/eu")).status, 200, "quem trocou continua conectado");
+
+  // ---- Item 3: código curto — limite de falhas e regra do motorista ----
+  const XFF3 = { "X-Forwarded-For": "198.51.100.33" };
+  assert.equal((await a.post("/api/usuarios").send({ email: "codigo32@teste.local", nome: "Op Código", perfil: "OPERADOR", senha: "senha-teste-123" })).status, 201);
+  const op = await logar("codigo32@teste.local");
+  for (let i = 0; i < 10; i++) assert.equal((await op.get("/api/qr/codigo/CC-ZZZZZZZZ").set(XFF3)).status, 404);
+  const bloqueado = await op.get("/api/qr/codigo/CC-ZZZZZZZZ").set(XFF3);
+  assert.equal(bloqueado.status, 429, "11ª falha seguida");
+  assert.equal((await op.get(`/api/qr/codigo/${etqA.codigo}`).set(XFF3)).status, 429, "pessoa limitada até a janela passar");
+  // Motorista: etiqueta livre não abre pelo código; ligada, só com o número do container.
+  const XFF4 = { "X-Forwarded-For": "198.51.100.34" };
+  assert.equal((await mot.get(`/api/motorista/qr/codigo/${etqA.codigo}`).set(XFF4)).status, 404, "livre");
+  const ativoId = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cadA = { grupoId: await ativoId("grupos"), armadorId: await ativoId("armadores") };
+  const cA = await a.post("/api/containers").send({ numero: "SEGU3200001", confirmarDigito: true, tipo: "DRY_40", ...cadA });
+  assert.equal(cA.status, 201, JSON.stringify(cA.body));
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${etqA.token}/vincular`).send({ numero: "SEGU3200001" })).status, 201);
+  assert.equal((await mot.get(`/api/motorista/qr/codigo/${etqA.codigo}`).set(XFF4)).status, 404, "sem número");
+  assert.equal((await mot.get(`/api/motorista/qr/codigo/${etqA.codigo}?numero=MSCU1234566`).set(XFF4)).status, 404, "número errado");
+  const certo = await mot.get(`/api/motorista/qr/codigo/${etqA.codigo}?numero=SEGU3200001`).set(XFF4);
+  assert.equal(certo.status, 200, JSON.stringify(certo.body));
+  assert.equal(certo.body.token, etqA.token);
+
+  // ---- Item 4: cliente desativado não recebe dados (motorista pelo QR e integração) ----
+  const tokB = await b.post("/api/tokens").send({ nome: "Sensor Seg" });
+  assert.equal(tokB.status, 201);
+  await comoSistema(() => bruto.organizacao.update({ where: { id: orgB.id }, data: { ativo: false } }));
+  assert.equal((await mot.get(`/api/motorista/qr/${etqB.token}`)).status, 403, "motorista no QR do cliente desativado");
+  const integ = await request(app).post("/api/integracao/temperaturas").set("Authorization", `Bearer ${tokB.body.token}`).send({ leituras: [{ container: "SEGU3200001", temperatura: -18, lidaEm: new Date().toISOString() }] });
+  assert.equal(integ.status, 403, "token de cliente desativado");
+  await comoSistema(() => bruto.organizacao.update({ where: { id: orgB.id }, data: { ativo: true } }));
+
+  // ---- Item 5: concorrência — um passa, os outros 409 ----
+  const corpo = { numero: "SEGU3200017", confirmarDigito: true, tipo: "DRY_40", ...cadA };
+  const simultaneos = await Promise.all(Array.from({ length: 6 }, () => a.post("/api/containers").send(corpo)));
+  assert.deepEqual(simultaneos.map((r) => r.status).sort(), [201, 409, 409, 409, 409, 409]);
+  assert.equal(await prisma.container.count({ where: { numero: "SEGU3200017", status: { notIn: ["ENTREGUE_PORTO", "CANCELADO"] } } }), 1);
+  const idNovo = simultaneos.find((r) => r.status === 201).body.id;
+  const avancos = await Promise.all([a.post(`/api/containers/${idNovo}/avancar`).send({}), a.post(`/api/containers/${idNovo}/avancar`).send({})]);
+  assert.deepEqual(avancos.map((r) => r.status).sort(), [200, 409]);
+  assert.equal(await prisma.eventoContainer.count({ where: { containerId: idNovo, statusPara: "COLETADO" } }), 1, "evento gravado uma vez");
+  const cancelamentos = await Promise.all([a.post(`/api/containers/${idNovo}/cancelar`).send({ motivo: "x" }), a.post(`/api/containers/${idNovo}/cancelar`).send({ motivo: "y" })]);
+  assert.deepEqual(cancelamentos.map((r) => r.status).sort(), [200, 409]);
+  // Mesma etiqueta em dois containers ao mesmo tempo: uma ligação só.
+  const c2 = await a.post("/api/containers").send({ numero: "SEGU3200022", confirmarDigito: true, tipo: "DRY_40", ...cadA });
+  const c3 = await a.post("/api/containers").send({ numero: "SEGU3200038", confirmarDigito: true, tipo: "DRY_40", ...cadA });
+  assert.deepEqual([c2.status, c3.status], [201, 201], JSON.stringify([c2.body, c3.body]));
+  const [etq2] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const vinculos = await Promise.all([
+    agentes.OPERADOR.post(`/api/qr/${etq2.token}/vincular`).send({ numero: "SEGU3200022" }),
+    agentes.OPERADOR.post(`/api/qr/${etq2.token}/vincular`).send({ numero: "SEGU3200038" }),
+  ]);
+  assert.deepEqual(vinculos.map((r) => r.status).sort(), [201, 409]);
+  assert.equal(await prisma.logAuditoria.count({ where: { acao: "VINCULAR", entidadeId: String(etq2.id) } }), 1, "um vínculo no log");
+
+  // ---- Item 19: em produção, o endereço dos links é sempre o da plataforma ----
+  const { enderecoPublicoFixo } = await import("./lib/enderecoPublico.js");
+  const ambiente = { NODE_ENV: process.env.NODE_ENV, APP_URL: process.env.APP_URL };
+  const cfg = (await a.get("/api/configuracao")).body;
+  await a.put("/api/configuracao").send({ ...cfg, urlPublica: "https://cliente-escolheu.example.com" });
+  try {
+    process.env.NODE_ENV = "production";
+    process.env.APP_URL = "https://plataforma.example.com/";
+    assert.equal(await naOrg(enderecoPublicoFixo)(), "https://plataforma.example.com");
+  } finally {
+    process.env.NODE_ENV = ambiente.NODE_ENV;
+    if (ambiente.APP_URL === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = ambiente.APP_URL;
+  }
+  assert.equal(await naOrg(enderecoPublicoFixo)(), "https://cliente-escolheu.example.com", "fora de produção vale a configuração (teste em rede local)");
+  await a.put("/api/configuracao").send(cfg);
+
+  for (const id of [cA.body.id, c2.body.id, c3.body.id]) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste 3.2" });
 });

@@ -4,6 +4,39 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.2.0 — não publicada
+
+**Segurança antes do primeiro cliente real** (itens da análise de segurança da v3.0.2: 1, 2, 3, 4, 5,
+6, 18, 19 e CPF mascarado). Publicada junto com a 3.1.2.
+
+- **Gestor de transportadora só do próprio cliente (item 1):** o gestor só pode ser ligado a uma
+  transportadora vinculada à organização de quem o cria, e só enxerga os motoristas dela vinculados ao
+  seu cliente. A tela/API de Motoristas não devolve mais o e-mail de quem cadastrou ou bloqueou, e o
+  **CPF sai sempre mascarado** (`***.982.247-**`).
+- **Motorista compartilhado entre clientes (item 2):** bloqueio **por cliente** (novas colunas em
+  MotoristaOrganizacao): o bloqueio da administração vale só para aquele cliente (QR e SMS dele); o do
+  gestor continua sendo o da transportadora (todos os clientes, derruba o acesso). Nome, placa e celular
+  só são editáveis pelo cliente quando o motorista atende só ele; compartilhado → 409. O **próprio
+  motorista troca o celular** na tela do QR ("Trocar celular"), confirmando o número novo por SMS; os
+  outros acessos dele caem e o número antigo recebe aviso.
+- **Código curto do QR (itens 3 e 18):** no máximo 10 códigos errados a cada 15 min por aparelho e por
+  pessoa (só falhas contam; a 11ª → 429). O motorista só abre pelo código etiqueta já ligada a um
+  container e informando o número dele. Etiquetas novas com **8 caracteres** (`CC-XXXXXXXX`), sorteados
+  com `crypto.randomInt` (sem o viés de `byte % 31`); as antigas de 6 seguem valendo. Fonte do código
+  na etiqueta (tela e ZPL) proporcional ao tamanho.
+- **Cliente desativado (item 4):** motorista pelo QR, token de integração e link do SMS de um cliente
+  desativado recebem 403.
+- **Concorrência (item 5):** índice único parcial — um container ativo por número em cada organização;
+  avançar, desfazer e cancelar só gravam se a etapa não mudou (`updateMany` condicionado; o segundo
+  recebe 409); vínculo de etiqueta condicionado a "LIVRE" (QR, coleta e portaria).
+- **Salvar Configurações (item 6):** recalcula só a organização de quem salvou (antes, a plataforma toda).
+- **Endereço dos links (item 19):** em produção, links de SMS/e-mail e a URL dos QR usam sempre o
+  endereço da plataforma (`APP_URL`, ou `RENDER_EXTERNAL_URL` no Render); o campo das Configurações
+  vira informativo. Fora de produção continua valendo (teste em rede local).
+- Migração `20261006100000_seguranca_3_2` (só acrescenta): colunas de bloqueio por cliente e o índice
+  `Container_numero_ativo_unico`. ⚠ O Prisma 5 não representa índice parcial: um `prisma migrate dev`
+  futuro vai propor removê-lo — não aceite (README, "Banco de dados").
+
 ## 3.1.2 — não publicada
 
 - **Ficha → Rastreamento mostra quando o acompanhamento pela página parou.** Antes só virava

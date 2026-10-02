@@ -6,6 +6,7 @@ import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { decimal, inteiro } from "../lib/validacao.js";
 import { conferirPedido, registrarPosicaoDoLink, registrarAcompanhamento, registrarEstadoAcompanhamento, ESTADOS_ACOMPANHAMENTO, organizacaoDoCodigo } from "../lib/rastreamento.js";
 import { comOrganizacao, comoPlataforma } from "../lib/tenant.js";
+import { exigirOrganizacaoAtiva } from "../lib/organizacoes.js";
 
 export const posicaoRouter = Router();
 
@@ -33,9 +34,14 @@ const limiteAcompanhamentoLink = rateLimit({
 });
 
 // A organização vem do próprio link (código). Código desconhecido: sem organização → "Link inválido".
+// Cliente desativado: o link não aceita mais posição (403).
 posicaoRouter.param("codigo", (req, _res, next, codigo) => {
   organizacaoDoCodigo(codigo)
-    .then((org) => (org ? comOrganizacao(org, next) : comoPlataforma(next)))
+    .then(async (org) => {
+      if (!org) return comoPlataforma(next);
+      await exigirOrganizacaoAtiva(org);
+      comOrganizacao(org, next);
+    })
     .catch(next);
 });
 

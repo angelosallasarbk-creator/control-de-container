@@ -2,8 +2,21 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gerarCodigo, gerarToken, urlDaEtiqueta, zplDaEtiqueta, zplDoLote } from "./etiquetas.js";
 
-test("código curto: formato CC-XXXXXX sem caracteres ambíguos", () => {
-  for (let i = 0; i < 200; i++) assert.match(gerarCodigo(), /^CC-[2-9A-HJKMNP-Z]{6}$/);
+test("código curto: formato CC-XXXXXXXX (8, v3.2) sem caracteres ambíguos", () => {
+  for (let i = 0; i < 200; i++) assert.match(gerarCodigo(), /^CC-[2-9A-HJKMNP-Z]{8}$/);
+});
+
+test("código curto: sorteio sem viés (v3.2, item 18) — cada caractere ~1/31", () => {
+  // Antes (byte % 31) os 8 primeiros do alfabeto saíam 9/256 e os outros 8/256 (12,5% a mais).
+  const contagem = new Map();
+  const N = 40000;
+  for (let i = 0; i < N; i++) for (const ch of gerarCodigo().slice(3)) contagem.set(ch, (contagem.get(ch) ?? 0) + 1);
+  const esperado = (N * 8) / 31;
+  assert.equal(contagem.size, 31);
+  const primeiros = [..."23456789"].reduce((s, c) => s + contagem.get(c), 0) / 8;
+  const outros = [..."ABCDEFGHJKMNPQRSTUVWXYZ"].reduce((s, c) => s + contagem.get(c), 0) / 23;
+  assert.ok(Math.abs(primeiros / outros - 1) < 0.03, `razão ${(primeiros / outros).toFixed(3)} (com viés seria ~1,125)`);
+  for (const n of contagem.values()) assert.ok(Math.abs(n / esperado - 1) < 0.06);
 });
 
 test("token: 22 caracteres url-safe e sem repetição", () => {

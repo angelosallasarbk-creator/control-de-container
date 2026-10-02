@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 
-// Reserva ao QR: digita o código curto impresso na etiqueta (CC-XXXXXX) e segue para a
+// Reserva ao QR: digita o código curto impresso na etiqueta (CC- + 6 ou 8 letras/números) e segue para a
 // mesma tela de leitura. Útil com etiqueta riscada/molhada ou QR que não abre.
 const router = useRouter();
 const auth = useAuthStore();
@@ -43,7 +43,7 @@ async function abrir() {
         <div class="campo">
           <label for="codigo">Código da etiqueta</label>
           <input
-            id="codigo" v-model="codigo" class="mono grande-campo" placeholder="CC-7K3F9P" required maxlength="12"
+            id="codigo" v-model="codigo" class="mono grande-campo" placeholder="CC-7K3F9P2M" required maxlength="14"
             autocapitalize="characters" autocomplete="off" spellcheck="false" autofocus
           />
         </div>

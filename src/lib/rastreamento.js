@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { comoSistema, organizacaoAtual } from "./tenant.js";
-import { paraCadaOrganizacao, vincularMotorista } from "./organizacoes.js";
+import { paraCadaOrganizacao, vincularMotorista, motoristaBloqueadoNaOrganizacao } from "./organizacoes.js";
 import { registrarLog } from "./auditoria.js";
 import { erroHttp } from "./asyncHandler.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -67,9 +67,12 @@ async function registrarSms(dados) {
 export async function buscarDestinatario({ usuarioId = null, motoristaId = null }) {
   if (motoristaId) {
     const m = await prisma.motorista.findUnique({ where: { id: motoristaId }, include: { transportadora: true } });
-    return m && {
+    if (!m) return null;
+    const bloqueadoAqui = await motoristaBloqueadoNaOrganizacao(m.id, organizacaoAtual());
+    return {
       tipo: "MOTORISTA", id: m.id, nome: m.nome, identidade: identidadeMotorista(m), celular: m.celular,
-      ativo: !m.bloqueado && m.transportadora.ativo, motivoInativo: "Motorista bloqueado pela transportadora.", transportadora: m.transportadora.nome,
+      ativo: !m.bloqueado && !bloqueadoAqui && m.transportadora.ativo,
+      motivoInativo: bloqueadoAqui ? "Motorista bloqueado por este cliente." : "Motorista bloqueado pela transportadora.", transportadora: m.transportadora.nome,
     };
   }
   if (!usuarioId) return null;
@@ -448,7 +451,8 @@ async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   if (STATUS_ENCERRADOS.includes(p.container.status)) return { erro: `O container ${p.container.numero} já foi encerrado; não é preciso enviar a posição.` };
   // O link só vale para quem ainda é o responsável (usuário ativo ou motorista não bloqueado).
   const aindaResponsavel = p.motoristaId
-    ? p.container.rastreioMotoristaId === p.motoristaId && !p.motorista.bloqueado && p.motorista.transportadora.ativo
+    ? p.container.rastreioMotoristaId === p.motoristaId && !p.motorista.bloqueado && p.motorista.transportadora.ativo &&
+      !(await motoristaBloqueadoNaOrganizacao(p.motoristaId, p.organizacaoId))
     : p.container.rastreioResponsavelId === p.usuarioId && !p.container.rastreioMotoristaId && p.usuario?.ativo;
   if (!aindaResponsavel) {
     return { erro: `O rastreamento do container ${p.container.numero} passou para outra pessoa; este link não vale mais.` };
@@ -564,7 +568,7 @@ export async function resumoRastreamento(containerId) {
         status: true, planejamento: true, rastreioDesde: true, rastreioUltimoEnvioEm: true,
         acompanhamentoEstado: true, acompanhamentoEstadoEm: true, acompanhamentoSinalEm: true,
         rastreioResponsavel: { select: { nome: true, email: true, celular: true, ativo: true } },
-        rastreioMotorista: { select: { nome: true, celular: true, placa: true, bloqueado: true, transportadora: { select: { nome: true, ativo: true } } } },
+        rastreioMotorista: { select: { id: true, nome: true, celular: true, placa: true, bloqueado: true, transportadora: { select: { nome: true, ativo: true } } } },
       },
     }),
     lerConfiguracao(),
@@ -589,6 +593,7 @@ export async function resumoRastreamento(containerId) {
   const intervaloMin = motivos.length ? Math.min(...motivos.map((m) => m.intervaloMin)) : null;
   const u = c.rastreioResponsavel;
   const m = c.rastreioMotorista;
+  const bloqueadoAqui = m ? await motoristaBloqueadoNaOrganizacao(m.id, organizacaoAtual()) : false;
   return {
     smsAtivo: Boolean(config.rastreioSmsAtivo),
     modo: config.rastreioPersonalizado ? "PERSONALIZADO" : "CRITICO",
@@ -596,7 +601,7 @@ export async function resumoRastreamento(containerId) {
     motivos: motivos.map((m) => m.texto),
     intervaloMin,
     responsavel: m
-      ? { tipo: "MOTORISTA", nome: m.nome, transportadora: m.transportadora.nome, placa: m.placa, celular: mascararCelular(m.celular), temCelular: true, ativo: !m.bloqueado && m.transportadora.ativo }
+      ? { tipo: "MOTORISTA", nome: m.nome, transportadora: m.transportadora.nome, placa: m.placa, celular: mascararCelular(m.celular), temCelular: true, ativo: !m.bloqueado && !bloqueadoAqui && m.transportadora.ativo }
       : u && { tipo: "USUARIO", nome: u.nome, email: u.email, celular: mascararCelular(u.celular), temCelular: Boolean(u.celular), ativo: u.ativo },
     desde: c.rastreioDesde,
     // Com motivo: último SMS + intervalo. Sem motivo, em trânsito: a checagem "sem posição" (última

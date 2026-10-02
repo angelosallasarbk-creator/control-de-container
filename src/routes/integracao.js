@@ -10,6 +10,7 @@ import { normalizarNumero } from "../lib/iso6346.js";
 import { controlaTemperatura, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, id as validarId } from "../lib/validacao.js";
 import { comOrganizacao, comoSistema } from "../lib/tenant.js";
+import { exigirOrganizacaoAtiva } from "../lib/organizacoes.js";
 
 const MAX_LEITURAS_POR_ENVIO = 500;
 const FOLGA_FUTURO_MS = 5 * 60 * 1000;
@@ -39,6 +40,7 @@ async function autenticarToken(req, _res, next) {
     // O token identifica a organização: a leitura toda roda nela.
     const registro = await comoSistema(() => prisma.tokenIntegracao.findUnique({ where: { tokenHash: hashToken(token) } }));
     if (!registro?.ativo) throw erroHttp(401, "Token de integração inválido ou revogado.");
+    await exigirOrganizacaoAtiva(registro.organizacaoId);
     req.tokenIntegracao = registro;
     comOrganizacao(registro.organizacaoId, next);
   } catch (err) {

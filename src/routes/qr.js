@@ -1,6 +1,7 @@
 // API da tela de celular aberta pelo QR da etiqueta (/q/:token). Exige login da equipe (/api/qr) ou
 // sessão de motorista (/api/motorista/qr — mesmas rotas, o motorista no papel de Transportador).
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao, tem, ehTransportador, ehPortaria } from "../lib/permissoes.js";
@@ -82,18 +83,54 @@ function avaliar(container, temperatura) {
 }
 
 // Reserva quando o QR não abre (etiqueta riscada, IP do teste mudou…): a pessoa digita o código
-// curto impresso (CC-XXXXXX, com ou sem "CC-") e segue para a mesma tela da etiqueta.
-qrRouter.get("/codigo/:codigo", asyncHandler(async (req, res) => {
+// curto impresso (CC-XXXXXX ou CC-XXXXXXXX, com ou sem "CC-") e segue para a mesma tela da etiqueta.
+// v3.2 (item 3): no máximo 10 códigos errados a cada 15 min por aparelho (IP) e por pessoa — só as
+// falhas contam. O motorista (sem usuário; o cliente vem da etiqueta) só abre etiqueta JÁ ligada a
+// um container e informando o número dele: o código sozinho não dá acesso aos dados de um cliente.
+const MSG_TENTATIVAS = { erro: "Muitos códigos não encontrados. Confira o código impresso e tente de novo em alguns minutos." };
+const opcoesFalhas = { windowMs: 15 * 60 * 1000, limit: 10, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: MSG_TENTATIVAS };
+const falhasCodigoPorIp = rateLimit(opcoesFalhas);
+const falhasCodigoPorPessoa = rateLimit({
+  ...opcoesFalhas,
+  keyGenerator: (req) => (req.usuario?.motoristaId ? `motorista:${req.usuario.motoristaId}` : `usuario:${req.usuario?.id}`),
+});
+qrRouter.get("/codigo/:codigo", falhasCodigoPorIp, falhasCodigoPorPessoa, asyncHandler(async (req, res) => {
   const bruto = String(req.params.codigo).toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^CC/, "");
-  if (!/^[A-Z0-9]{6}$/.test(bruto)) throw erroHttp(400, "Código inválido. Formato: CC- seguido de 6 letras/números (ex.: CC-7K3F9P).");
-  const e = await prisma.etiquetaQR.findUnique({ where: { codigo: `CC-${bruto}` }, select: { token: true, codigo: true } });
+  if (!/^[A-Z0-9]{6}([A-Z0-9]{2})?$/.test(bruto)) throw erroHttp(400, "Código inválido. Formato: CC- seguido de 6 ou 8 letras/números (ex.: CC-7K3F9P2M).");
+  const e = await prisma.etiquetaQR.findUnique({
+    where: { codigo: `CC-${bruto}` }, select: { token: true, codigo: true, status: true, container: { select: { numero: true } } },
+  });
+  if (req.usuario?.motoristaId) {
+    const { numero } = validarNumeroContainer(req.query.numero ?? "");
+    if (!e || e.status !== "VINCULADA" || e.container?.numero !== numero) {
+      throw erroHttp(404, "Etiqueta não encontrada para esse container. Confira o código impresso e o número do container.");
+    }
+  }
   if (!e) throw erroHttp(404, `Etiqueta CC-${bruto} não encontrada. Confira o código impresso.`);
-  res.json(e);
+  res.json({ token: e.token, codigo: e.codigo });
 }));
 
 qrRouter.get("/:token", asyncHandler(async (req, res) => {
   res.json(await resumo(await buscarEtiqueta(req.params.token), req));
 }));
+
+// Liga a etiqueta LIVRE ao container (e cancela a anterior dele, se houver), condicionando cada
+// UPDATE ao estado lido (v3.2, item 5): duas leituras ao mesmo tempo → a segunda recebe 409 e a
+// transação de quem chamou desfaz tudo.
+async function vincularEtiquetaLivre(tx, { e, anterior, containerId, numero, email }) {
+  const vinculo = await tx.etiquetaQR.updateMany({
+    where: { id: e.id, status: "LIVRE" },
+    data: { status: "VINCULADA", containerId, vinculadaEm: new Date(), vinculadaPor: email },
+  });
+  if (vinculo.count !== 1) throw erroHttp(409, `A etiqueta ${e.codigo} acabou de ser usada por outra pessoa. Leia o QR de novo.`);
+  if (anterior) {
+    const troca = await tx.etiquetaQR.updateMany({
+      where: { id: anterior.id, status: "VINCULADA" },
+      data: { status: "CANCELADA", canceladaEm: new Date(), canceladaPor: email, motivoCancelamento: `Substituída pela etiqueta ${e.codigo}` },
+    });
+    if (troca.count !== 1) throw erroHttp(409, `A etiqueta anterior do container ${numero} acabou de mudar. Leia o QR de novo.`);
+  }
+}
 
 // 1ª leitura: liga a etiqueta a um container ativo (e já registra a temperatura, se reefer).
 qrRouter.post("/:token/vincular", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
@@ -125,18 +162,7 @@ qrRouter.post("/:token/vincular", requirePermissao("qr.registrar"), asyncHandler
 
   await prisma.$transaction(async (tx) => {
     // Reconfere dentro da transação: duas pessoas lendo a mesma etiqueta ao mesmo tempo.
-    const atual = await tx.etiquetaQR.findUnique({ where: { id: e.id } });
-    if (atual.status !== "LIVRE") throw erroHttp(409, `A etiqueta ${e.codigo} acabou de ser usada por outra pessoa. Leia o QR de novo.`);
-    if (anterior) {
-      await tx.etiquetaQR.update({
-        where: { id: anterior.id },
-        data: { status: "CANCELADA", canceladaEm: new Date(), canceladaPor: req.usuario.email, motivoCancelamento: `Substituída pela etiqueta ${e.codigo}` },
-      });
-    }
-    await tx.etiquetaQR.update({
-      where: { id: e.id },
-      data: { status: "VINCULADA", containerId: container.id, vinculadaEm: new Date(), vinculadaPor: req.usuario.email },
-    });
+    await vincularEtiquetaLivre(tx, { e, anterior, containerId: container.id, numero, email: req.usuario.email });
     await registrarLog(
       {
         usuarioEmail: req.usuario.email, acao: "VINCULAR", entidade: "EtiquetaQR", entidadeId: e.id,
@@ -336,15 +362,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
       c = { ...c, status: "COLETADO", coletadoEm, portoRetiradaId: retirada.id, ...trajeto };
     }
     if (e.status === "LIVRE") {
-      const atual = await tx.etiquetaQR.findUnique({ where: { id: e.id } });
-      if (atual.status !== "LIVRE") throw erroHttp(409, `A etiqueta ${e.codigo} acabou de ser usada por outra pessoa. Leia o QR de novo.`);
-      if (anterior) {
-        await tx.etiquetaQR.update({
-          where: { id: anterior.id },
-          data: { status: "CANCELADA", canceladaEm: new Date(), canceladaPor: email, motivoCancelamento: `Substituída pela etiqueta ${e.codigo}` },
-        });
-      }
-      await tx.etiquetaQR.update({ where: { id: e.id }, data: { status: "VINCULADA", containerId: c.id, vinculadaEm: new Date(), vinculadaPor: email } });
+      await vincularEtiquetaLivre(tx, { e, anterior, containerId: c.id, numero, email });
       await registrarLog({
         usuarioEmail: email, acao: "VINCULAR", entidade: "EtiquetaQR", entidadeId: e.id,
         descricao: `Etiqueta ${e.codigo} ligada ao container ${numero} na coleta${anterior ? ` (substituiu ${anterior.codigo})` : ""}`,
@@ -453,15 +471,7 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
         (completadas.length ? `; etapas completadas: ${completadas.map(nome).join(", ")}` : ""),
     }, tx);
     if (e.status === "LIVRE") {
-      const atual = await tx.etiquetaQR.findUnique({ where: { id: e.id } });
-      if (atual.status !== "LIVRE") throw erroHttp(409, `A etiqueta ${e.codigo} acabou de ser usada por outra pessoa. Leia o QR de novo.`);
-      if (anterior) {
-        await tx.etiquetaQR.update({
-          where: { id: anterior.id },
-          data: { status: "CANCELADA", canceladaEm: new Date(), canceladaPor: email, motivoCancelamento: `Substituída pela etiqueta ${e.codigo}` },
-        });
-      }
-      await tx.etiquetaQR.update({ where: { id: e.id }, data: { status: "VINCULADA", containerId: container.id, vinculadaEm: new Date(), vinculadaPor: email } });
+      await vincularEtiquetaLivre(tx, { e, anterior, containerId: container.id, numero, email });
       await registrarLog({
         usuarioEmail: email, acao: "VINCULAR", entidade: "EtiquetaQR", entidadeId: e.id,
         descricao: `Etiqueta ${e.codigo} ligada ao container ${numero} na portaria${anterior ? ` (substituiu ${anterior.codigo})` : ""}`,

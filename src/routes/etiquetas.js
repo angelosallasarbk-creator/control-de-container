@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
-import { lerConfiguracao } from "../lib/configuracao.js";
+import { enderecoConfiguradoDoSistema } from "../lib/enderecoPublico.js";
 import { gerarCodigo, gerarToken, urlDaEtiqueta, zplDoLote, MODELOS_ETIQUETA, DPI_SUPORTADOS } from "../lib/etiquetas.js";
 import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { texto, inteiro, decimal, id as validarId, umDe } from "../lib/validacao.js";
@@ -73,9 +73,9 @@ function enderecosDaRede() {
 
 const SEM_ENDERECO = "O endereço do sistema para o QR não está configurado. Um administrador deve preenchê-lo em Configurações → Etiquetas QR.";
 async function enderecoConfigurado() {
-  const { urlPublica } = await lerConfiguracao();
-  if (!urlPublica) throw erroHttp(400, SEM_ENDERECO);
-  return urlPublica;
+  const endereco = await enderecoConfiguradoDoSistema();
+  if (!endereco) throw erroHttp(400, SEM_ENDERECO);
+  return endereco;
 }
 
 // Registra que as etiquetas foram enviadas à impressora (vezes, quando, quem) + log.
@@ -133,12 +133,12 @@ etiquetasRouter.get("/lotes", asyncHandler(async (req, res) => {
 // Dados para a tela de impressão: modelos de etiqueta, DPIs e endereço configurado.
 // "sugestoes" (IPs da rede) aparecem só em Configurações, para quem define o endereço.
 etiquetasRouter.get("/impressao", asyncHandler(async (_req, res) => {
-  const config = await lerConfiguracao();
   const porta = process.env.PORT || 3000;
   res.json({
     modelos: MODELOS_ETIQUETA,
     dpis: DPI_SUPORTADOS,
-    urlPublica: config.urlPublica,
+    // Endereço que vai dentro do QR (em produção, sempre o da plataforma — v3.2, item 19).
+    urlPublica: (await enderecoConfiguradoDoSistema()) ?? "",
     // Em desenvolvimento a tela roda no Vite (5174); no build, o próprio servidor serve tudo.
     sugestoes: enderecosDaRede().flatMap(({ interface: nome, ip, virtual }) => {
       const obs = virtual ? " — adaptador virtual, o celular não alcança" : "";

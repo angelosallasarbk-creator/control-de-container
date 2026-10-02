@@ -41,7 +41,7 @@ export function celularValido(valor) {
 // Identificação do motorista nos registros (log, leituras, etapas, etiqueta).
 export const identidadeMotorista = (m) => `${m.nome} (motorista · ${m.transportadora?.nome ?? "transportadora"})`;
 
-export async function pedirCodigo({ celular: bruto, ip, agora = new Date() }) {
+export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), texto = null, conferirBloqueio = true }) {
   const celular = celularValido(bruto);
   const recentes = await prisma.codigoAcessoMotorista.findMany({
     where: { celular, criadoEm: { gte: new Date(agora.getTime() - 60 * MIN) } }, orderBy: { criadoEm: "desc" }, select: { criadoEm: true },
@@ -54,8 +54,10 @@ export async function pedirCodigo({ celular: bruto, ip, agora = new Date() }) {
     console.error(`Acesso do motorista: teto de ${MAX_CODIGOS_POR_HORA} códigos/hora atingido — possível abuso.`);
     throw erroHttp(429, "Muitos pedidos de código no momento. Tente de novo em alguns minutos.");
   }
-  const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
-  if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
+  if (conferirBloqueio) {
+    const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
+    if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
+  }
 
   const codigo = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
   await prisma.$transaction([
@@ -65,12 +67,12 @@ export async function pedirCodigo({ celular: bruto, ip, agora = new Date() }) {
       data: { celular, codigoHash: hashCodigo(celular, codigo), criadoEm: agora, expiraEm: new Date(agora.getTime() + VALIDADE_CODIGO_MIN * MIN), ip: ip ?? null },
     }),
   ]);
-  const r = await enviarSms({ para: celular, texto: `CCS: seu codigo de acesso e ${codigo}. Vale por ${VALIDADE_CODIGO_MIN} min. Nao compartilhe.` });
+  const r = await enviarSms({ para: celular, texto: texto ? texto(codigo) : `CCS: seu codigo de acesso e ${codigo}. Vale por ${VALIDADE_CODIGO_MIN} min. Nao compartilhe.` });
   return { celular, simulado: Boolean(r.simulado), expiraEm: new Date(agora.getTime() + VALIDADE_CODIGO_MIN * MIN) };
 }
 
-export async function verificarCodigo({ celular: bruto, codigo, agora = new Date() }) {
-  const celular = celularValido(bruto);
+// Confere e CONSOME o código SMS do celular (uso único, até 5 tentativas). Lança 400 se não vale.
+async function consumirCodigo(celular, codigo, agora) {
   const digitado = String(codigo ?? "").replace(/\D/g, "");
   if (digitado.length !== 6) throw erroHttp(400, "O código tem 6 números.");
   const pendente = await prisma.codigoAcessoMotorista.findFirst({ where: { celular, encerradoEm: null }, orderBy: { criadoEm: "desc" } });
@@ -85,6 +87,11 @@ export async function verificarCodigo({ celular: bruto, codigo, agora = new Date
   // Uso único: a condição no WHERE impede usar o mesmo código duas vezes ao mesmo tempo.
   const r = await prisma.codigoAcessoMotorista.updateMany({ where: { id: pendente.id, encerradoEm: null }, data: { encerradoEm: agora } });
   if (r.count !== 1) throw erroHttp(400, "Este código já foi usado. Peça um novo código.");
+}
+
+export async function verificarCodigo({ celular: bruto, codigo, agora = new Date() }) {
+  const celular = celularValido(bruto);
+  await consumirCodigo(celular, codigo, agora);
 
   const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
   if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
@@ -153,6 +160,48 @@ export async function concluirCadastro({ comprovante, dados: b, agora = new Date
     descricao: existente ? `Motorista ${motorista.nome} aceitou o termo no primeiro acesso` : `Motorista ${motorista.nome} (${transp.nome}) cadastrou-se pelo QR`,
   });
   return motorista;
+}
+
+// ---------- Troca de celular pelo próprio motorista (v3.2) ----------
+// O celular é a identidade do motorista e vale para todos os clientes: só ele troca, confirmando o
+// número NOVO por SMS. Os outros acessos caem, e o número antigo recebe um aviso.
+
+export async function pedirCodigoTrocaCelular({ motorista, celular: bruto, ip, agora = new Date() }) {
+  const celular = celularValido(bruto);
+  if (celular === motorista.celular) throw erroHttp(400, "Esse já é o seu celular.");
+  const outro = await prisma.motorista.findUnique({ where: { celular }, select: { id: true } });
+  if (outro) throw erroHttp(409, "Esse celular já está em uso na plataforma.");
+  return pedirCodigo({
+    celular, ip, agora, conferirBloqueio: false,
+    texto: (codigo) => `CCS: codigo para confirmar seu novo celular: ${codigo}. Vale por ${VALIDADE_CODIGO_MIN} min. Nao compartilhe.`,
+  });
+}
+
+export async function confirmarTrocaCelular({ motorista, celular: bruto, codigo, sessaoId, agora = new Date() }) {
+  const celular = celularValido(bruto);
+  await consumirCodigo(celular, codigo, agora);
+  const antigo = motorista.celular;
+  const m = await prisma.$transaction(async (tx) => {
+    const m = await tx.motorista.update({ where: { id: motorista.id }, data: { celular }, include: { transportadora: true } }).catch((err) => {
+      if (err.code === "P2002") throw erroHttp(409, "Esse celular já está em uso na plataforma.");
+      throw err;
+    });
+    // Mantém só este acesso (o de quem confirmou o número novo).
+    await tx.sessaoMotorista.updateMany({
+      where: { motoristaId: m.id, revogadaEm: null, id: { not: sessaoId } }, data: { revogadaEm: agora, revogadaPor: "troca de celular pelo próprio motorista" },
+    });
+    return m;
+  });
+  try {
+    await enviarSms({ para: antigo, texto: `CCS: o celular do seu acesso de motorista foi trocado para o final ${celular.slice(-4)}. Se nao foi voce, fale com a transportadora.` });
+  } catch (err) {
+    console.error("Troca de celular do motorista: aviso ao número antigo falhou:", err.message);
+  }
+  await registrarLog({
+    usuarioEmail: identidadeMotorista(m), acao: "ALTERAR", entidade: "Motorista", entidadeId: m.id,
+    descricao: `Motorista ${m.nome} trocou o próprio celular (final ${antigo.slice(-4)} → ${celular.slice(-4)}), confirmado por SMS`,
+  });
+  return m;
 }
 
 // ---------- Sessão ----------

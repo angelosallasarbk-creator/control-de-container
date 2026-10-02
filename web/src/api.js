@@ -140,6 +140,8 @@ export const api = {
   motoristaEu: () => request("/motorista/eu"),
   motoristaAtualizar: (dados) => request("/motorista/eu", { method: "PATCH", body: dados }),
   motoristaSair: () => request("/motorista/sair", { method: "POST" }),
+  motoristaTrocarCelular: (celular) => request("/motorista/eu/celular", { method: "POST", body: { celular } }),
+  motoristaConfirmarCelular: (celular, codigo) => request("/motorista/eu/celular/confirmar", { method: "POST", body: { celular, codigo } }),
   // Organizações (só o administrador da plataforma).
   organizacoes: () => request("/organizacoes"),
   criarOrganizacao: (dados) => request("/organizacoes", { method: "POST", body: dados }),

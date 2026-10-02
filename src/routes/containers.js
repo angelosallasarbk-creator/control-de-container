@@ -409,7 +409,11 @@ export async function gravarNovoContainer(tx, dados, usuarioEmail, descricao = n
   // Só pode existir uma passagem ativa por número (evita cadastro duplicado).
   const ativo = await tx.container.findFirst({ where: { numero, status: { notIn: STATUS_ENCERRADOS } } });
   if (ativo) throw erroHttp(409, `O container ${numero} já está ativo no sistema (status: ${ROTULO_STATUS[ativo.status]}).`);
-  const c = await tx.container.create({ data: dados });
+  // Dois cadastros do mesmo número ao mesmo tempo: o índice único parcial (v3.2) barra o segundo.
+  const c = await tx.container.create({ data: dados }).catch((err) => {
+    if (err.code === "P2002") throw erroHttp(409, `O container ${numero} acabou de ser cadastrado por outra pessoa.`);
+    throw err;
+  });
   const paradas = paradasDoFluxo(c);
   if (paradas.length) await tx.paradaContainer.createMany({ data: paradas });
   await tx.eventoContainer.create({
@@ -438,7 +442,10 @@ export async function gravarContainersEmLote(tx, lista, usuarioEmail, descricao)
   })).map((c) => c.numero));
   const livres = lista.filter((d) => !ativos.has(d.numero));
   if (!livres.length) return { criados: [], recusados: [...ativos] };
-  const criados = await tx.container.createManyAndReturn({ data: livres });
+  const criados = await tx.container.createManyAndReturn({ data: livres }).catch((err) => {
+    if (err.code === "P2002") throw erroHttp(409, "Algum desses containers acabou de ser cadastrado por outra pessoa. Confira a planilha de novo.");
+    throw err;
+  });
   const paradas = criados.flatMap(paradasDoFluxo);
   if (paradas.length) await tx.paradaContainer.createMany({ data: paradas });
   await tx.eventoContainer.createMany({
@@ -568,6 +575,12 @@ containersRouter.delete("/:id/paradas/:paradaId/passagem", requirePermissao("con
   res.json(await detalhe(c.id));
 }));
 
+// Troca de etapa condicionada à etapa lida: se outra requisição mudou antes, nada é gravado (409).
+async function mudarStatus(tx, c, data) {
+  const r = await tx.container.updateMany({ where: { id: c.id, status: c.status }, data });
+  if (r.count !== 1) throw erroHttp(409, `O container ${c.numero} acabou de mudar de etapa por outra pessoa. Atualize a tela.`);
+}
+
 containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asyncHandler(async (req, res) => {
   const containerId = validarId(req.params.id);
   const b = req.body ?? {};
@@ -586,7 +599,8 @@ containersRouter.post("/:id/avancar", requirePermissao("containers.operar"), asy
       throw erroHttp(409, `O container já mudou de etapa (agora: ${nomeEtapa(c, c.status)}). Atualize a tela.`);
     }
     validarMomento(ocorridoEm, c);
-    await tx.container.update({ where: { id: containerId }, data: { status: proximo, [CAMPO_DATA[proximo]]: ocorridoEm } });
+    // Só grava se continua na etapa lida (duplo clique / duas pessoas: o segundo recebe 409).
+    await mudarStatus(tx, c, { status: proximo, [CAMPO_DATA[proximo]]: ocorridoEm });
     await tx.eventoContainer.create({
       data: { containerId, statusDe: c.status, statusPara: proximo, ocorridoEm, observacao, usuarioEmail: req.usuario.email },
     });
@@ -615,7 +629,7 @@ containersRouter.post("/:id/desfazer", requirePermissao("containers.corrigir"), 
     if (!c) throw erroHttp(404, "Container não encontrado.");
     const ultimo = await tx.eventoContainer.findFirst({ where: { containerId }, orderBy: [{ registradoEm: "desc" }, { id: "desc" }] });
     if (!ultimo || !ultimo.statusDe || ultimo.statusPara !== c.status) throw erroHttp(409, "Não há etapa para desfazer.");
-    await tx.container.update({ where: { id: containerId }, data: { status: ultimo.statusDe, [CAMPO_DATA[c.status]]: null } });
+    await mudarStatus(tx, c, { status: ultimo.statusDe, [CAMPO_DATA[c.status]]: null });
     await tx.eventoContainer.delete({ where: { id: ultimo.id } });
     await registrarLog(
       {
@@ -641,7 +655,7 @@ containersRouter.post("/:id/cancelar", requirePermissao("containers.corrigir"), 
     if (!c) throw erroHttp(404, "Container não encontrado.");
     if (STATUS_ENCERRADOS.includes(c.status)) throw erroHttp(409, "Este container já está encerrado.");
     const agora = new Date();
-    await tx.container.update({ where: { id: containerId }, data: { status: "CANCELADO", canceladoEm: agora } });
+    await mudarStatus(tx, c, { status: "CANCELADO", canceladoEm: agora });
     await tx.eventoContainer.create({
       data: { containerId, statusDe: c.status, statusPara: "CANCELADO", ocorridoEm: agora, observacao: motivo, usuarioEmail: req.usuario.email },
     });

@@ -21,10 +21,12 @@ const ladoQrMm = computed(() =>
 );
 // Etiqueta grande: correção de erro alta (aguenta ~30% sujo/riscado); pequena: M, módulos maiores.
 const nivel = computed(() => (ladoQrMm.value >= 30 ? "H" : "M"));
+// Fonte do código proporcional ao tamanho dele: os antigos têm 9 caracteres (CC-XXXXXX), os novos 11 (v3.2).
+const fatorCodigo = computed(() => Math.max(1, props.codigo.length / 9));
 const tamanhoCodigoMm = computed(() =>
   horizontal.value
-    ? Math.min(props.alturaMm * 0.2, (props.larguraMm - ladoQrMm.value - 3 * margem) / 6.8)
-    : Math.min((props.alturaMm - ladoQrMm.value - 2 * margem) * 0.4, props.larguraMm / 8)
+    ? Math.min(props.alturaMm * 0.2, (props.larguraMm - ladoQrMm.value - 3 * margem) / (6.8 * fatorCodigo.value))
+    : Math.min((props.alturaMm - ladoQrMm.value - 2 * margem) * 0.4, props.larguraMm / (8 * fatorCodigo.value))
 );
 
 const svg = ref("");
