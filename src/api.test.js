@@ -3185,3 +3185,26 @@ test("v3.5 revisão: bloqueio do gestor por cliente, anonimização sem homônim
   await prisma.codigoAcessoMotorista.deleteMany({ where: { codigoHash: "y" } });
   for (const id of [c1.body.id, c2.body.id, c5.body.id]) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste 3.5" });
 });
+
+test("v3.6 chaves compostas: o banco recusa apontar para cadastro de outro cliente (mesmo como ccs_app)", async () => {
+  const { comoSistema, comOrganizacao } = await import("./lib/tenant.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const orgB = (await comoSistema(() => bruto.usuario.findFirst({ where: { email: "admin@ref34.local" } }))).organizacaoId;
+  const armadorB = await comOrganizacao(orgB, () => bruto.armador.findFirst({ select: { id: true } }));
+  const localB = await comOrganizacao(orgB, () => bruto.local.findFirst({ select: { id: true } }));
+  assert.ok(armadorB && localB, "cadastros da B existem");
+  const conexao = await prisma.$queryRaw`SELECT current_user AS u`;
+  assert.equal(conexao[0].u, "ccs_app", "teste roda com o usuário do sistema (RLS)");
+  // Exatamente o caso da revisão: UPDATE num container da A com o id de um armador da B.
+  const antes = await prisma.container.findUnique({ where: { id: ids.reefer }, select: { armadorId: true, portoEntregaId: true } });
+  await assert.rejects(prisma.container.update({ where: { id: ids.reefer }, data: { armadorId: armadorB.id } }), (e) => e.code === "P2003", "armador da B");
+  await assert.rejects(prisma.container.update({ where: { id: ids.reefer }, data: { portoEntregaId: localB.id } }), (e) => e.code === "P2003", "local da B");
+  await assert.rejects(prisma.paradaContainer.create({ data: { containerId: ids.reefer, localId: localB.id, fase: "ANTES_CARREGAMENTO", ordem: 99 } }), (e) => e.code === "P2003", "parada em local da B");
+  const depois = await prisma.container.findUnique({ where: { id: ids.reefer }, select: { armadorId: true, portoEntregaId: true } });
+  assert.deepEqual(depois, antes, "nada gravado");
+  // Guarda contra remoção acidental (ex.: migração futura): as 31 chaves e os 11 índices existem.
+  const [{ fks, idx }] = await comoSistema(() => bruto.$queryRaw`
+    SELECT (SELECT count(*)::int FROM pg_constraint WHERE contype = 'f' AND conname LIKE '%\_org\_fkey') AS fks,
+           (SELECT count(*)::int FROM pg_indexes WHERE indexname LIKE '%\_id\_organizacaoId\_key') AS idx`);
+  assert.deepEqual([fks, idx], [31, 11]);
+});

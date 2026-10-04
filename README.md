@@ -51,9 +51,10 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
      acrescenta o filtro `organizacaoId` em toda consulta de **primeiro nível** às tabelas de cliente e o preenche em toda
      criação. Sem contexto, a consulta **falha**. ⚠ Relações carregadas junto (`include`/`select` aninhado) **não** recebem
      esse filtro na aplicação. Na **leitura**, o RLS (camada 2) esconde as linhas de outro cliente. Na **gravação** de
-     uma referência (armador, local, ponto…), quem barra é só a validação das rotas, que aceitam apenas cadastros da
-     própria organização (teste "referência cruzada" em `src/api.test.js`) — a conferência de chave estrangeira do
-     PostgreSQL **não** passa pelo RLS. Ver "Riscos aceitos".
+     uma referência (armador, local, ponto…), a conferência de chave estrangeira do PostgreSQL **não** passa pelo RLS —
+     por isso, desde a v3.6, toda ligação entre tabelas de cliente tem também uma **chave estrangeira composta**
+     `(campo, organizacaoId) → (id, organizacaoId)`: o banco recusa apontar para cadastro de outro cliente (erro
+     23503), além da validação das rotas (testes "referência cruzada" e "chaves compostas" em `src/api.test.js`).
      Rotinas automáticas rodam organização por organização (`paraCadaOrganizacao`).
   2. *Banco* (Row-Level Security): cada consulta roda com `app.org_id` definido; as políticas só liberam linhas daquela
      organização. O sistema conecta pelo usuário `ccs_app` (criado no build por `scripts/preparar-banco.js`), que não
@@ -148,11 +149,8 @@ Motorista **não é usuário do sistema** — com milhares de motoristas, criar 
 
 ## Riscos aceitos (registrados)
 
-- **Referência cruzada sem barreira no banco (v3.4.1):** se uma rota com defeito gravasse num registro de um cliente o id
-  de um cadastro de outro cliente, o banco aceitaria (chave estrangeira não passa pelo RLS). Não vaza dado — o RLS
-  esconde o cadastro do outro —, mas o registro fica preso a ele e a ficha passa a dar erro 500. Mitigação atual:
-  validação das rotas + teste automático de referência cruzada. Correção estrutural pendente: chaves estrangeiras
-  compostas `(id, organizacaoId)`.
+- ~~Referência cruzada sem barreira no banco~~ — **resolvido na v3.6** (chaves estrangeiras compostas). Exceção que
+  fica: `MensagemSms` de plataforma (sem organização) não é conferida — o campo vazio não entra na comparação.
 - **"Encerrar acessos" de motorista compartilhado** derruba os acessos dele em todos os clientes: o acesso do motorista
   pelo celular é um só na plataforma.
 - **E-mail único na plataforma:** ao cadastrar um e-mail que já é de um usuário de outro cliente, a mensagem é genérica
@@ -335,6 +333,10 @@ npm run seed                    # opcional: dados de EXEMPLO (só em banco vazio
 npm run dev:server              # API em http://localhost:3000
 npm run dev:web                 # tela em http://localhost:5174
 ```
+
+**Chaves compostas (v3.6):** as 31 chaves `..._org_fkey` e os 11 índices `..._id_organizacaoId_key` estão declarados no
+`schema.prisma` (relações `org_*`, só para conferência — o código continua gravando pelos ids). Ao criar uma tabela de
+cliente nova que aponte para outra, declare a relação composta do mesmo jeito.
 
 **Índice parcial (v3.2):** a migração `20261006100000_seguranca_3_2` cria `Container_numero_ativo_unico` (um container ativo por número em cada organização) direto em SQL, porque o Prisma 5 não representa índice com `WHERE`. Ao criar migrações novas com `prisma migrate dev`, confira o SQL gerado: se aparecer `DROP INDEX "Container_numero_ativo_unico"`, **apague essa linha** antes de aplicar.
 

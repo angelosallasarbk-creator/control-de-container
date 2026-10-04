@@ -4,6 +4,19 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.6.0 — não publicada
+
+- **Chaves estrangeiras compostas (pendência do item 7 da análise de segurança):** a conferência de chave
+  estrangeira do PostgreSQL não passa pelo RLS — o banco aceitava gravar num registro de um cliente o id de
+  um cadastro de outro (só a validação das rotas impedia). Agora as 31 ligações entre tabelas de cliente
+  têm também uma chave composta `(campo, organizacaoId) → (id, organizacaoId)`, e o próprio banco recusa.
+  As chaves simples continuam (exclusão em cascata, restrição e esvaziar o campo seguem iguais).
+- Declaradas no `schema.prisma` (relações `org_*` e `@@unique([id, organizacaoId])`): o Prisma as conhece e um
+  `migrate dev` futuro não propõe removê-las.
+- Migração `20261010100000_fk_compostas` (só acrescenta 11 índices e 31 restrições; se algum dado existente
+  apontasse para outro cliente, ela falharia inteira sem mudar nada).
+- README: o risco "referência cruzada sem barreira no banco" sai da lista de riscos aceitos.
+
 ## 3.5.0 — 04/10/2026 (tag `v3.5.0`)
 
 Revisão da v3.4 (itens 1, 2, 3, 5 e 6). Publicada junto com a 3.4.1.
