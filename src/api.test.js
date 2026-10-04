@@ -1680,7 +1680,7 @@ test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor 
   const liberarNovoPedido = (celular) => prisma.codigoAcessoMotorista.updateMany({ where: { celular }, data: { criadoEm: new Date(Date.now() - 2 * 60e3) } });
 
   // Transportadoras (cadastro).
-  const alfa = await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "Transp Alfa", cnpj: "12.345.678/0001-90" });
+  const alfa = await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "Transp Alfa", cnpj: "11.444.777/0001-61" });
   assert.equal(alfa.status, 201, JSON.stringify(alfa.body));
   const beta = (await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "Transp Beta" })).body;
   assert.equal((await agentes.SUPERVISOR.post("/api/transportadoras").send({ nome: "X", cnpj: "123" })).status, 400);
@@ -1813,13 +1813,14 @@ test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor 
   assert.equal(c3.status, 201);
   assert.equal(c3.body.motorista.id, pre.body.id);
 
-  // Bloqueio: derruba o acesso na hora; não consegue nem pedir código.
+  // Bloqueio do gestor (v3.5): vale só neste cliente — o acesso dele segue, mas o QR e o código deste cliente recusam.
   const bl = await gestor.patch(`/api/motoristas/${motorista.id}`).send({ bloqueado: true });
   assert.equal(bl.status, 200);
   assert.equal(bl.body.bloqueado, true);
-  const eu = await m1.get("/api/motorista/eu");
-  assert.equal(eu.status, 403);
-  assert.equal(eu.body.codigo, "MOTORISTA_BLOQUEADO");
+  assert.equal((await m1.get("/api/motorista/eu")).status, 200, "não derruba o acesso nos outros clientes");
+  const qrBloq = await m1.get(`/api/motorista/qr/${e.token}`);
+  assert.deepEqual([qrBloq.status, qrBloq.body.codigo], [403, "BLOQUEADO_NO_CLIENTE"]);
+  assert.equal((await prisma.motorista.findUnique({ where: { id: motorista.id } })).bloqueado, false, "não grava o bloqueio global");
   await liberarNovoPedido(TEL);
   assert.equal((await pedir(m1, TEL)).status, 403);
   const logB = (await agentes.ADMIN.get(`/api/logs?entidade=Motorista&entidadeId=${motorista.id}`)).body;
@@ -1828,7 +1829,7 @@ test("motoristas: acesso pelo celular com código SMS, QR, rastreamento, gestor 
   await prisma.container.update({ where: { id: c.body.id }, data: { rastreioUltimoEnvioEm: new Date(Date.now() - 60 * 60e3) } });
   await executarRastreamento();
   const ultimo = await prisma.mensagemSms.findFirst({ where: { containerId: c.body.id }, orderBy: { id: "desc" } });
-  assert.deepEqual([ultimo.status, ultimo.erro], ["FALHA", "Motorista bloqueado pela transportadora."]);
+  assert.deepEqual([ultimo.status, ultimo.erro], ["FALHA", "Motorista bloqueado por este cliente."]);
   // Desbloquear: volta a poder entrar (já cadastrado: entra direto).
   await gestor.patch(`/api/motoristas/${motorista.id}`).send({ bloqueado: false });
   await liberarNovoPedido(TEL);
@@ -3086,4 +3087,101 @@ test("v3.4.1: desfazer entrega com outro ativo de mesmo número → 409; total d
   const grande = await a.post("/api/containers/importar").set("Content-Type", "application/octet-stream").send(Buffer.alloc(1024 * 1024 + 10, 1));
   assert.equal(grande.status, 413);
   assert.match(grande.body.erro, /Arquivo grande demais/);
+});
+
+test("v3.5 revisão: bloqueio do gestor por cliente, anonimização sem homônimos, CNPJ e dono, prazo do acompanhamento, teto por etiqueta", async () => {
+  const { comoSistema, comOrganizacao } = await import("./lib/tenant.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const { buscarDestinatario } = await import("./lib/rastreamento.js");
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const { MAX_CODIGOS_POR_HORA_ETIQUETA } = await import("./lib/acessoMotorista.js");
+  const a = agentes.ADMIN;
+  const b = await logar("admin@ref34.local");
+  const orgB = (await comoSistema(() => bruto.usuario.findFirst({ where: { email: "admin@ref34.local" } }))).organizacaoId;
+  const H = 3600e3;
+
+  // ---- Item 1: gestor criado por A bloqueia motorista compartilhado com B → só em A ----
+  const T = await a.post("/api/transportadoras").send({ nome: "Transp Gestor 3.5" });
+  assert.equal(T.status, 201, JSON.stringify(T.body));
+  const M = await a.post("/api/motoristas").send({ nome: "Compartilhado Gestor", celular: "11955559001", transportadoraId: T.body.id });
+  await comoSistema(() => bruto.motoristaOrganizacao.create({ data: { motoristaId: M.body.id, organizacaoId: orgB } }));
+  assert.equal((await a.post("/api/usuarios").send({ email: "gestor35@teste.local", nome: "Gestor 3.5", perfil: "GESTOR_TRANSPORTADORA", senha: "senha-teste-123", transportadoraId: T.body.id })).status, 201);
+  const gestor = await logar("gestor35@teste.local");
+  const bl = await gestor.patch(`/api/motoristas/${M.body.id}`).send({ bloqueado: true });
+  assert.deepEqual([bl.status, bl.body.bloqueado, bl.body.bloqueadoNoCliente], [200, true, true], JSON.stringify(bl.body));
+  assert.equal((await comoSistema(() => bruto.motorista.findUnique({ where: { id: M.body.id } }))).bloqueado, false, "Motorista.bloqueado continua falso");
+  assert.equal((await b.get("/api/motoristas")).body.find((m) => m.id === M.body.id).bloqueado, false, "B vê ativo");
+  assert.equal((await comOrganizacao(orgB, () => buscarDestinatario({ motoristaId: M.body.id }))).ativo, true, "SMS de B segue");
+  assert.equal((await comOrganizacao(ORG_TESTE, () => buscarDestinatario({ motoristaId: M.body.id }))).ativo, false, "SMS de A para");
+
+  // ---- Item 2: anonimizar não toca homônimo e limpa a autoria ----
+  const N1 = await a.post("/api/motoristas").send({ nome: "Homônimo Silva", celular: "11955559011", transportadoraId: T.body.id });
+  const N2 = await a.post("/api/motoristas").send({ nome: "Homônimo Silva", celular: "11955559012", transportadoraId: T.body.id });
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const c1 = await a.post("/api/containers").send({ numero: "HOMU3500005", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  const c2 = await a.post("/api/containers").send({ numero: "HOMU3500010", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  assert.deepEqual([c1.status, c2.status], [201, 201], JSON.stringify([c1.body, c2.body]));
+  const identidade1 = "Homônimo Silva (motorista · Transp Gestor 3.5)";
+  await prisma.container.update({ where: { id: c1.body.id }, data: { motorista: "Homônimo Silva", placa: "AAA1A11", rastreioMotoristaId: N1.body.id } });
+  await prisma.container.update({ where: { id: c2.body.id }, data: { motorista: "Homônimo Silva", placa: "BBB2B22", rastreioMotoristaId: N2.body.id } });
+  await prisma.eventoContainer.create({ data: { containerId: c1.body.id, statusDe: "PROGRAMADO", statusPara: "COLETADO", ocorridoEm: new Date(), usuarioEmail: identidade1 } });
+  await prisma.leituraTemperatura.create({ data: { containerId: c1.body.id, temperatura: -18, lidaEm: new Date(), origem: "QRCODE", fonte: identidade1 } });
+  const an = await a.post(`/api/motoristas/${N1.body.id}/anonimizar`);
+  assert.equal(an.status, 200, JSON.stringify(an.body));
+  const d1 = await prisma.container.findUnique({ where: { id: c1.body.id } });
+  const d2 = await prisma.container.findUnique({ where: { id: c2.body.id } });
+  assert.deepEqual([d1.motorista, d1.placa], [`Motorista anonimizado #${N1.body.id}`, null]);
+  assert.deepEqual([d2.motorista, d2.placa], ["Homônimo Silva", "BBB2B22"], "homônimo intacto");
+  const restos = (await prisma.eventoContainer.count({ where: { usuarioEmail: identidade1 } })) + (await prisma.leituraTemperatura.count({ where: { fonte: identidade1 } }))
+    + (await prisma.container.count({ where: { criadoPor: identidade1 } })) + (await prisma.etiquetaQR.count({ where: { vinculadaPor: identidade1 } }));
+  assert.equal(restos, 0, "identidade anonimizada some das colunas de autoria");
+
+  // ---- Item 3: CNPJ com dígito verificador; dono edita, outro vinculado não ----
+  assert.equal((await a.post("/api/transportadoras").send({ nome: "CNPJ Ruim", cnpj: "12345678000100" })).status, 400);
+  const dono = await a.post("/api/transportadoras").send({ nome: "Transp Dona 3.5", cnpj: "47.960.950/0001-21" });
+  assert.equal(dono.status, 201, JSON.stringify(dono.body));
+  const td = dono.body;
+  const cnpjDono = "47960950000121";
+  const vinc = await b.post("/api/transportadoras").send({ nome: "Outro nome", cnpj: cnpjDono });
+  assert.deepEqual([vinc.status, vinc.body.id], [201, td.id], "B vinculado ao mesmo cadastro");
+  assert.equal((await a.patch(`/api/transportadoras/${td.id}`).send({ nome: "Transp Dona 3.5 Renomeada" })).status, 200, "dono edita mesmo compartilhado");
+  assert.equal((await b.patch(`/api/transportadoras/${td.id}`).send({ nome: "Tomada" })).status, 409, "quem não é dono só usa");
+
+  // ---- Item 5: acompanhamento termina por inatividade (6 h) e prazo máximo (72 h) ----
+  const u = await a.post("/api/usuarios").send({ email: "acomp35@teste.local", nome: "Acomp 3.5", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11966669035" });
+  const cfg = (await a.get("/api/configuracao")).body;
+  await a.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1 });
+  const c5 = await a.post("/api/containers").send({ numero: "ACPU3500004", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  await prisma.container.update({ where: { id: c5.body.id }, data: { status: "COLETADO", coletadoEm: new Date(Date.now() - 4 * H), rastreioResponsavelId: u.body.id, rastreioDesde: new Date(Date.now() - 4 * H) } });
+  assert.equal((await a.post(`/api/containers/${c5.body.id}/solicitar-posicao`)).status, 201);
+  const codigo = /\/p\/([A-Za-z0-9_-]+)$/.exec(caixaDeSaidaSms.filter((s) => s.para === "+5511966669035").at(-1).texto)[1];
+  const pos = { latitude: -23.5, longitude: -46.6, precisaoM: 10 };
+  assert.equal((await request(app).post(`/api/posicao/${codigo}`).send(pos)).status, 201);
+  const acompanhar = () => request(app).post(`/api/posicao/${codigo}/acompanhar`).send(pos);
+  const ajustar = (respondidaH, sinalH) => Promise.all([
+    prisma.solicitacaoPosicao.updateMany({ where: { containerId: c5.body.id }, data: { respondidaEm: new Date(Date.now() - respondidaH * H) } }),
+    prisma.container.update({ where: { id: c5.body.id }, data: { acompanhamentoSinalEm: sinalH === null ? null : new Date(Date.now() - sinalH * H) } }),
+    prisma.posicaoContainer.updateMany({ where: { containerId: c5.body.id, origem: "ACOMPANHAMENTO" }, data: { registradaEm: new Date(Date.now() - 2 * H) } }),
+  ]);
+  await ajustar(72 + 1, 1);
+  assert.equal((await acompanhar()).status, 409, "link respondido há 3 dias: passou de 72 h");
+  await ajustar(48, 7);
+  assert.equal((await acompanhar()).status, 409, "7 h sem sinal");
+  await ajustar(48, 1);
+  assert.equal((await acompanhar()).status, 201, "dentro das 72 h e com sinal há 1 h");
+  await a.put("/api/configuracao").send(cfg);
+
+  // ---- Item 6: teto por etiqueta só para números novos; motorista conhecido segue entrando ----
+  const [etq] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  await prisma.codigoAcessoMotorista.createMany({
+    data: Array.from({ length: MAX_CODIGOS_POR_HORA_ETIQUETA }, (_, i) => ({ celular: `+5511950${String(i).padStart(6, "0")}`, codigoHash: "y", expiraEm: new Date(Date.now() + 60e3), organizacaoId: ORG_TESTE, etiquetaId: etq.id })),
+  });
+  const novo = await request(app).post("/api/motorista/codigo").set("X-Forwarded-For", "198.51.100.61").send({ celular: "11955559099", etiqueta: etq.token });
+  assert.equal(novo.status, 429, "número novo: teto da etiqueta");
+  const conhecido = await request(app).post("/api/motorista/codigo").set("X-Forwarded-For", "198.51.100.62").send({ celular: "11955559012", etiqueta: etq.token });
+  assert.equal(conhecido.status, 200, JSON.stringify(conhecido.body));
+  assert.equal((await prisma.codigoAcessoMotorista.findFirst({ where: { celular: "+5511955559012" }, orderBy: { id: "desc" } })).conhecido, true);
+  await prisma.codigoAcessoMotorista.deleteMany({ where: { codigoHash: "y" } });
+  for (const id of [c1.body.id, c2.body.id, c5.body.id]) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste 3.5" });
 });

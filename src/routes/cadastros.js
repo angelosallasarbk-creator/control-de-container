@@ -9,6 +9,17 @@ import { STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { sincronizarAlertas } from "../lib/alertas.js";
 import { SELECT_TIPO } from "../lib/tiposLocal.js";
 
+// CNPJ com os dígitos verificadores (v3.5).
+export function cnpjValido(cnpj) {
+  if (!/^\d{14}$/.test(cnpj) || /^(\d)\1{13}$/.test(cnpj)) return false;
+  const dv = (n) => {
+    const pesos = n === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const s = pesos.reduce((acc, p, i) => acc + Number(cnpj[i]) * p, 0) % 11;
+    return s < 2 ? 0 : 11 - s;
+  };
+  return dv(12) === Number(cnpj[12]) && dv(13) === Number(cnpj[13]);
+}
+
 // Cadastros de apoio (Regiões, Ponto de Carregamento, Armadores, Produtos) com o mesmo CRUD.
 // Registro já usado não é excluído fisicamente: desativa-se (ativo = false).
 // `uso` = relação que conta onde o registro é usado (bloqueia exclusão).
@@ -130,7 +141,7 @@ const CADASTROS = {
     modelo: "transportadora",
     // Cadastro único na plataforma: o cliente vê as vinculadas a ele e só altera/exclui as que
     // são exclusivamente dele (compartilhadas com outro cliente ficam protegidas).
-    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", erroNome: "Não foi possível usar esse CNPJ. Confira o número ou fale com o suporte." },
+    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", dono: "organizacaoDonaId", erroNome: "Não foi possível usar esse CNPJ. Confira o número ou fale com o suporte." },
     // v3.4 (item 9): nome único só dentro do cliente; CNPJ igual = mesma empresa → reaproveita o
     // cadastro (cria só o vínculo). Sem CNPJ ou com CNPJ diferente, é outro cadastro.
     reaproveitar: async (tx, dados, req, antes = null) => {
@@ -158,7 +169,7 @@ const CADASTROS = {
       if (!parcial || "nome" in b) d.nome = texto(b.nome, "Nome da transportadora", { obrigatorio: true, max: 120 });
       if ("cnpj" in b) {
         const cnpj = String(b.cnpj ?? "").replace(/\D/g, "");
-        if (cnpj && cnpj.length !== 14) throw erroHttp(400, "CNPJ deve ter 14 números.");
+        if (cnpj && !cnpjValido(cnpj)) throw erroHttp(400, "CNPJ inválido (confira os 14 números).");
         d.cnpj = cnpj || null;
       }
       if ("ativo" in b) d.ativo = Boolean(b.ativo);
@@ -231,8 +242,15 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     ? { ...cfg.incluir, _count: { select: { [cfg.uso]: { where: { organizacoes: { some: { organizacaoId: req.usuario.organizacaoId } } } } } } }
     : include);
   // Global compartilhado com outro cliente: não altera nem exclui.
-  async function exclusivoDaOrganizacao(req, id) {
+  // v3.5: na EDIÇÃO, o cliente dono do cadastro (quem o criou) pode alterar mesmo compartilhado;
+  // os outros vinculados só usam. Na EXCLUSÃO continua valendo só se ninguém mais usa.
+  async function exclusivoDaOrganizacao(req, id, { editar = false } = {}) {
     if (!cfg.global) return;
+    if (editar && cfg.global.dono) {
+      const reg = await prisma[cfg.modelo].findUnique({ where: { id }, select: { [cfg.global.dono]: true } });
+      if (reg?.[cfg.global.dono] === req.usuario.organizacaoId) return;
+      if (reg?.[cfg.global.dono]) throw erroHttp(409, "Este cadastro foi criado por outro cliente da plataforma: aqui ele só pode ser usado. Fale com o suporte para corrigir.");
+    }
     const outros = await prisma[cfg.global.tabelaVinculo].count({ where: { [cfg.global.chave]: id, organizacaoId: { not: req.usuario.organizacaoId } } });
     if (outros) throw erroHttp(409, "Este cadastro é compartilhado com outros clientes da plataforma e não pode ser alterado aqui. Fale com o administrador da plataforma.");
   }
@@ -263,7 +281,8 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
       if (existente) return { criado: await repo(tx).findUnique({ where: { id: existente }, include: includeDe(req) }), propagados: 0, reaproveitado: true };
       const depoisDeSalvar = cfg.antesDeSalvar ? await cfg.antesDeSalvar(tx, dados, corpo, null) : null;
       const vinculo = cfg.global ? { [cfg.global.vinculo]: { create: { organizacaoId: req.usuario.organizacaoId } } } : {};
-      const criado = await repo(tx).create({ data: { ...dados, ...vinculo }, include: includeDe(req) }).catch(erroUnico);
+      const dono = cfg.global?.dono ? { [cfg.global.dono]: req.usuario.organizacaoId } : {};
+      const criado = await repo(tx).create({ data: { ...dados, ...vinculo, ...dono }, include: includeDe(req) }).catch(erroUnico);
       return { criado, propagados: depoisDeSalvar ? await depoisDeSalvar() : 0 };
     });
     await registrarLog({
@@ -284,7 +303,7 @@ for (const [rota, cfg] of Object.entries(CADASTROS)) {
     const corpo = req.body ?? {};
     const antes = await repo().findFirst({ where: { id: registroId, ...escopo(req) } });
     if (!antes) throw erroHttp(404, "Cadastro não encontrado.");
-    await exclusivoDaOrganizacao(req, registroId);
+    await exclusivoDaOrganizacao(req, registroId, { editar: true });
     const dados = cfg.validar(corpo, true);
     cfg.validarConjunto?.({ ...antes, ...dados });
     const aplicar = Boolean(corpo.aplicarEmAndamento && cfg.aplicarNosContainers);

@@ -4,6 +4,28 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.5.0 — não publicada
+
+Revisão da v3.4 (itens 1, 2, 3, 5 e 6). Publicada junto com a 3.4.1.
+
+- **Bloqueio do gestor só no cliente dele:** o gestor é criado por um cliente, e o bloqueio dele gravava
+  o bloqueio de toda a plataforma — um motorista compartilhado ficava bloqueado (e sem acesso) também
+  nos outros clientes. Agora gestor e administração bloqueiam só no próprio cliente (QR, pedido de
+  código pela etiqueta e SMS desse cliente). O bloqueio de plataforma fica só para a anonimização.
+- **Anonimizar motorista:** não usa mais o nome (texto livre) para achar containers — homônimos ficavam
+  sem nome/placa. Os containers são achados pelo id do motorista (rastreio, posições, pedidos, SMS, log)
+  e o nome só é trocado onde é exatamente o dele; a identidade "Nome (motorista · Transportadora)" sai das
+  etapas, leituras de temperatura, etiqueta, paradas, mudanças de trajeto e do criador do container.
+  Continua no log de auditoria (imutável, 365 dias).
+- **Transportadora:** CNPJ com dígitos verificadores; o **cliente dono** (quem criou) continua editando
+  mesmo quando outro cliente se vincula pelo mesmo CNPJ (antes, ficava bloqueado com 409).
+- **Acompanhamento pela página:** termina se a página ficar 6 h sem enviar ou após 72 h da resposta do
+  link — o link do SMS não vale mais por dias. Depois, só pelo link do próximo SMS.
+- **Código SMS do motorista:** teto de 20 pedidos/hora **por etiqueta** para números novos; motorista já
+  vinculado ao cliente não entra nos tetos de números novos (abuso não tranca quem já trabalha com o cliente).
+- Migração `20261009100000_revisao_3_5` (só acrescenta): `Transportadora.organizacaoDonaId` (existentes:
+  o primeiro cliente vinculado), `CodigoAcessoMotorista.etiquetaId` e `conhecido`.
+
 ## 3.4.1 — não publicada
 
 - **Desfazer etapa sem erro 500:** desfazer a entrega (ou o cancelamento) de um container cujo número já está ativo em

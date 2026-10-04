@@ -1,7 +1,8 @@
 // Gestão dos MOTORISTAS (tela Motoristas): o Gestor da transportadora vê e gerencia só os da
 // própria transportadora vinculados ao cliente dele; quem tem "Editar cadastros" vê os do cliente.
-// Bloqueio (v3.2): o do gestor é da transportadora (vale para todos os clientes e derruba o acesso
-// do celular); o da administração é só deste cliente. Nome, placa e celular só são editáveis aqui
+// Bloqueio (v3.5): do gestor e da administração valem SÓ no cliente de quem bloqueou (o gestor é
+// criado por um cliente — não pode afetar os outros). O bloqueio de toda a plataforma
+// (Motorista.bloqueado) não é feito por cliente: só pela anonimização (LGPD). Nome, placa e celular só são editáveis aqui
 // quando o motorista atende só este cliente — compartilhado, só ele mesmo (celular com SMS).
 // Cadastro manual e por planilha deixam o motorista pré-cadastrado: no 1º acesso ele confirma o
 // celular e aceita o termo.
@@ -12,7 +13,7 @@ import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { tem, ehGestorTransportadora } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { id as validarId } from "../lib/validacao.js";
-import { celularValido, validarDadosMotorista } from "../lib/acessoMotorista.js";
+import { celularValido, validarDadosMotorista, identidadeMotorista } from "../lib/acessoMotorista.js";
 import { mascararCelular } from "../lib/rastreamento.js";
 import { vincularMotorista } from "../lib/organizacoes.js";
 import { normalizar } from "../lib/importacaoContainers.js";
@@ -144,16 +145,10 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
     }
   }
   const agora = new Date();
-  // Bloqueio do gestor = da transportadora (todos os clientes, derruba o acesso); da administração = só deste cliente.
-  const bloqueioGlobal = Boolean(req.escopoTransportadora);
+  // Bloqueio (gestor ou administração) = só neste cliente (v3.5, revisão do item 2).
   const bloquear = "bloqueado" in b ? Boolean(b.bloqueado) : null;
   const vinculo = await prisma.motoristaOrganizacao.findUnique({ where: { motoristaId_organizacaoId: { motoristaId: antes.id, organizacaoId: org } } });
-  const bloqueadoAntes = bloqueioGlobal ? antes.bloqueado : Boolean(vinculo?.bloqueado);
-  if (bloquear !== null && bloqueioGlobal) {
-    dados.bloqueado = bloquear;
-    dados.bloqueadoEm = bloquear ? agora : null;
-    dados.bloqueadoPor = bloquear ? req.usuario.email : null;
-  }
+  const bloqueadoAntes = Boolean(vinculo?.bloqueado);
   await prisma.$transaction(async (tx) => {
     if (Object.keys(dados).length) {
       await tx.motorista.update({ where: { id: antes.id }, data: dados }).catch((err) => {
@@ -161,15 +156,15 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
         throw err;
       });
     }
-    if (bloquear !== null && !bloqueioGlobal) {
+    if (bloquear !== null) {
       await tx.motoristaOrganizacao.update({
         where: { motoristaId_organizacaoId: { motoristaId: antes.id, organizacaoId: org } },
         data: { bloqueado: bloquear, bloqueadoEm: bloquear ? agora : null, bloqueadoPor: bloquear ? req.usuario.email : null },
       });
     }
-    // Bloqueio da transportadora ou troca de celular derrubam o acesso na hora (o do cliente é
-    // conferido a cada leitura de QR desse cliente).
-    if ((dados.bloqueado && !antes.bloqueado) || dados.celular) {
+    // Troca de celular derruba o acesso na hora. O bloqueio do cliente é conferido a cada leitura
+    // de QR e a cada pedido de código desse cliente (os acessos aos outros clientes seguem).
+    if (dados.celular) {
       await tx.sessaoMotorista.updateMany({ where: { motoristaId: antes.id, revogadaEm: null }, data: { revogadaEm: agora, revogadaPor: req.usuario.email } });
     }
   });
@@ -178,7 +173,7 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
   const acao = mudouBloqueio ? (bloquear ? "bloqueado" : "desbloqueado") : "alterado";
   await registrarLog({
     usuarioEmail: req.usuario.email, acao: acao === "alterado" ? "ALTERAR" : acao === "bloqueado" ? "BLOQUEAR" : "DESBLOQUEAR", entidade: "Motorista", entidadeId: m.id,
-    descricao: `Motorista ${m.nome} (${m.transportadora.nome}) ${acao}${mudouBloqueio ? (bloqueioGlobal ? " pela transportadora (todos os clientes)" : " para este cliente") : ""}${dados.celular ? ` · celular trocado (final ${dados.celular.slice(-4)})` : ""}`,
+    descricao: `Motorista ${m.nome} (${m.transportadora.nome}) ${acao}${mudouBloqueio ? (req.escopoTransportadora ? " pelo gestor da transportadora, para este cliente" : " para este cliente") : ""}${dados.celular ? ` · celular trocado (final ${dados.celular.slice(-4)})` : ""}`,
   });
   res.json(serializar(m));
 }));
@@ -188,6 +183,42 @@ motoristasRouter.patch("/:id", asyncHandler(async (req, res) => {
 // nos containers deste cliente. Ficam as posições/etapas dos containers (registro da operação) e o
 // log de auditoria (imutável, retenção legal de 365 dias). Só a administração do cliente e só com
 // motorista exclusivo dele (compartilhado: pedido à plataforma, que fala com todos os clientes).
+// Rastros do motorista neste cliente (v3.5, revisão do item 15). Containers: só os ligados a ELE
+// pelo id (rastreio, posições, pedidos/SMS, log) ou pela identidade completa nas etapas — e o nome
+// só é trocado onde é exatamente o dele (homônimo de outro motorista não é tocado). Autoria: troca
+// a identidade completa "Nome (motorista · Transportadora)" — nunca só o nome (texto livre).
+// Fica de fora o log de auditoria (imutável, retenção legal de 365 dias).
+async function anonimizarRastros(m, anonimo) {
+  const identidade = identidadeMotorista(m);
+  const novaIdentidade = identidadeMotorista({ ...m, nome: anonimo });
+  const ids = new Set();
+  const juntar = (lista) => lista.forEach((x) => x.containerId && ids.add(x.containerId));
+  const [rastreio, pos, ped, msgs, eventos, logs] = await Promise.all([
+    prisma.container.findMany({ where: { rastreioMotoristaId: m.id }, select: { id: true } }),
+    prisma.posicaoContainer.findMany({ where: { motoristaId: m.id }, select: { containerId: true }, distinct: ["containerId"] }),
+    prisma.solicitacaoPosicao.findMany({ where: { motoristaId: m.id }, select: { containerId: true }, distinct: ["containerId"] }),
+    prisma.mensagemSms.findMany({ where: { motoristaId: m.id }, select: { containerId: true }, distinct: ["containerId"] }),
+    prisma.eventoContainer.findMany({ where: { usuarioEmail: identidade }, select: { containerId: true }, distinct: ["containerId"] }),
+    prisma.logAuditoria.findMany({ where: { motoristaId: m.id, entidade: "Container" }, select: { entidadeId: true } }),
+  ]);
+  rastreio.forEach((c) => ids.add(c.id));
+  [pos, ped, msgs, eventos].forEach(juntar);
+  logs.forEach((l) => Number(l.entidadeId) && ids.add(Number(l.entidadeId)));
+  return prisma.$transaction(async (tx) => {
+    const containers = await tx.container.updateMany({ where: { id: { in: [...ids] }, motorista: m.nome }, data: { motorista: anonimo, placa: null } });
+    // Em sequência: a transação usa uma conexão só.
+    let autoria = 0;
+    autoria += (await tx.container.updateMany({ where: { criadoPor: identidade }, data: { criadoPor: novaIdentidade } })).count;
+    autoria += (await tx.eventoContainer.updateMany({ where: { usuarioEmail: identidade }, data: { usuarioEmail: novaIdentidade } })).count;
+    autoria += (await tx.etiquetaQR.updateMany({ where: { vinculadaPor: identidade }, data: { vinculadaPor: novaIdentidade } })).count;
+    autoria += (await tx.etiquetaQR.updateMany({ where: { canceladaPor: identidade }, data: { canceladaPor: novaIdentidade } })).count;
+    autoria += (await tx.leituraTemperatura.updateMany({ where: { fonte: identidade }, data: { fonte: novaIdentidade } })).count;
+    autoria += (await tx.paradaContainer.updateMany({ where: { registradoPor: identidade }, data: { registradoPor: novaIdentidade } })).count;
+    autoria += (await tx.mudancaTrajeto.updateMany({ where: { usuarioEmail: identidade }, data: { usuarioEmail: novaIdentidade } })).count;
+    return { containers: containers.count, autoria };
+  });
+}
+
 motoristasRouter.post("/:id/anonimizar", asyncHandler(async (req, res) => {
   if (req.escopoTransportadora) throw erroHttp(403, "Só a administração do cliente pode anonimizar um motorista.");
   const m = await buscarNoEscopo(req, validarId(req.params.id));
@@ -205,10 +236,10 @@ motoristasRouter.post("/:id/anonimizar", asyncHandler(async (req, res) => {
     await tx.codigoAcessoMotorista.deleteMany({ where: { celular: m.celular } });
   });
   const sms = await prisma.mensagemSms.updateMany({ where: { motoristaId: m.id }, data: { telefone: null } });
-  const containers = await prisma.container.updateMany({ where: { OR: [{ rastreioMotoristaId: m.id }, { motorista: m.nome }] }, data: { motorista: anonimo, placa: null } });
+  const { containers, autoria } = await anonimizarRastros(m, anonimo);
   await registrarLog({
     usuarioEmail: req.usuario.email, acao: "ANONIMIZAR", entidade: "Motorista", entidadeId: m.id,
-    descricao: `Motorista #${m.id} anonimizado (LGPD): cadastro, ${sms.count} telefone(s) de SMS e ${containers.count} container(s)`,
+    descricao: `Motorista #${m.id} anonimizado (LGPD): cadastro, ${sms.count} telefone(s) de SMS, ${containers} container(s) e ${autoria} registro(s) de autoria`,
   });
   res.json(serializar(await prisma.motorista.findUnique({ where: { id: m.id }, include: incluir(req.escopoOrganizacao) })));
 }));

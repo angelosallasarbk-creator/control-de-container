@@ -53,15 +53,15 @@ const limiteVerificar = limitador(30, "Muitas tentativas. Aguarde alguns minutos
 // cancelada, de cliente ativo) — é ela que define o cliente do teto de SMS (v3.3, item 10).
 async function clienteDaEtiquetaDoPedido(token) {
   if (!TOKEN_ETIQUETA.test(String(token ?? ""))) throw erroHttp(400, "Abra pelo QR da etiqueta para entrar.");
-  const e = await comoSistema(() => prisma.etiquetaQR.findUnique({ where: { token: String(token) }, select: { organizacaoId: true, status: true } }));
+  const e = await comoSistema(() => prisma.etiquetaQR.findUnique({ where: { token: String(token) }, select: { id: true, organizacaoId: true, status: true } }));
   if (!e || e.status === "CANCELADA") throw erroHttp(400, "Esta etiqueta não vale mais. Leia o QR de outra etiqueta ou fale com o responsável.");
   await exigirOrganizacaoAtiva(e.organizacaoId);
-  return e.organizacaoId;
+  return { organizacaoId: e.organizacaoId, etiquetaId: e.id };
 }
 
 motoristaRouter.post("/codigo", limiteCodigo, asyncHandler(async (req, res) => {
-  const organizacaoId = await clienteDaEtiquetaDoPedido(req.body?.etiqueta);
-  const r = await pedirCodigo({ celular: req.body?.celular, ip: req.ip, organizacaoId });
+  const { organizacaoId, etiquetaId } = await clienteDaEtiquetaDoPedido(req.body?.etiqueta);
+  const r = await comoSistema(() => pedirCodigo({ celular: req.body?.celular, ip: req.ip, organizacaoId, etiquetaId }));
   res.json({ mensagem: "Enviamos um código por SMS para o seu celular.", expiraEm: r.expiraEm, simulado: r.simulado });
 }));
 
