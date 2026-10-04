@@ -18,6 +18,7 @@ import { ROTULO_FUNCAO, SELECT_LOCAIS_ETAPAS, SELECT_TIPO, rotulosDasEtapas } fr
 import { SELECT_PARADA, serializarParadas, validarTrajeto, gravarTrajeto, registrarPassagem, registrarMudancaTrajeto } from "../lib/trajeto.js";
 import { etapasDoContainer, regrasDeLocal, fluxoDoTipo, motivoLocalForaDaRegra, SELECT_TIPO_OPERACAO } from "../lib/fluxo.js";
 import { Prisma } from "@prisma/client";
+import { viagemDoContainer } from "../lib/viagem.js";
 
 export const containersRouter = Router();
 
@@ -138,7 +139,11 @@ async function detalhe(containerId) {
     prisma.leituraTemperatura.findMany({ where: { containerId }, orderBy: { lidaEm: "asc" }, include: { etiqueta: { select: { codigo: true } } } }),
     montarContextos([c], config),
   ]);
-  return { ...montarContainer(c, leituras, new Date(), config, contextos.get(c.id)), leituras: leituras.map(serializarLeitura), paradas: serializarParadas(c.paradas) };
+  return {
+    ...montarContainer(c, leituras, new Date(), config, contextos.get(c.id)), leituras: leituras.map(serializarLeitura), paradas: serializarParadas(c.paradas),
+    // Viagem (v3.8): outros containers no mesmo caminhão agora.
+    viagem: await viagemDoContainer(c.id),
+  };
 }
 
 function ultimaDataDoProcesso(c) {

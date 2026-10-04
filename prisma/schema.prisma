@@ -131,6 +131,8 @@ model Usuario {
   org_MensagemSms_usuarioId           MensagemSms[]        @relation("MensagemSms_usuarioId_org")
   org_PosicaoContainer_usuarioId      PosicaoContainer[]   @relation("PosicaoContainer_usuarioId_org")
   org_SolicitacaoPosicao_usuarioId    SolicitacaoPosicao[] @relation("SolicitacaoPosicao_usuarioId_org")
+  viagens                             Viagem[]             @relation("Viagem_usuarioId")
+  org_Viagem_usuarioId                Viagem[]             @relation("Viagem_usuarioId_org")
 
   @@unique([id, organizacaoId], map: "Usuario_id_organizacaoId_key")
   @@index([organizacaoId])
@@ -509,6 +511,9 @@ model Container {
   org_PosicaoContainer_containerId   PosicaoContainer[]   @relation("PosicaoContainer_containerId_org")
   org_SolicitacaoPosicao_containerId SolicitacaoPosicao[] @relation("SolicitacaoPosicao_containerId_org")
 
+  viagens                         ViagemContainer[]
+  org_ViagemContainer_containerId ViagemContainer[] @relation("ViagemContainer_containerId_org")
+
   @@unique([id, organizacaoId], map: "Container_id_organizacaoId_key")
   @@index([numero])
   @@index([status])
@@ -816,6 +821,7 @@ model Motorista {
   posicoes            PosicaoContainer[]
   solicitacoesPosicao SolicitacaoPosicao[]
   mensagensSms        MensagemSms[]
+  viagens             Viagem[]
 
   @@index([transportadoraId])
 }
@@ -944,6 +950,8 @@ model Organizacao {
   mudancasTrajeto     MudancaTrajeto[]
   motoristas          MotoristaOrganizacao[]
   transportadoras     TransportadoraOrganizacao[]
+  viagens             Viagem[]
+  viagensContainers   ViagemContainer[]
 }
 
 // Motorista (cadastro único na plataforma) visível para a organização: criado quando ele lê um QR
@@ -974,4 +982,47 @@ model TransportadoraOrganizacao {
 
   @@id([transportadoraId, organizacaoId])
   @@index([organizacaoId])
+}
+
+// Viagem (v3.8): o mesmo caminhão levando mais de um container (cada um com o seu QR e trajeto).
+// Um SMS de posição por viagem; a posição recebida vale para todos os containers dela.
+model Viagem {
+  organizacaoId                Int
+  organizacao                  Organizacao       @relation(fields: [organizacaoId], references: [id])
+  id                           Int               @id @default(autoincrement())
+  motoristaId                  Int?
+  motorista                    Motorista?        @relation(fields: [motoristaId], references: [id], onDelete: SetNull)
+  usuarioId                    Int?
+  usuario                      Usuario?          @relation("Viagem_usuarioId", fields: [usuarioId], references: [id], onDelete: SetNull)
+  placa                        String?
+  criadaEm                     DateTime          @default(now())
+  criadaPor                    String
+  encerradaEm                  DateTime?
+  containers                   ViagemContainer[]
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_usuarioId                Usuario?          @relation("Viagem_usuarioId_org", fields: [usuarioId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Viagem_usuarioId_org_fkey")
+  org_ViagemContainer_viagemId ViagemContainer[] @relation("ViagemContainer_viagemId_org")
+
+  @@unique([id, organizacaoId], map: "Viagem_id_organizacaoId_key")
+  @@index([organizacaoId])
+}
+
+// Quem esteve em cada viagem (histórico): saiuEm vazio = está na viagem agora.
+model ViagemContainer {
+  organizacaoId   Int
+  organizacao     Organizacao @relation(fields: [organizacaoId], references: [id])
+  id              Int         @id @default(autoincrement())
+  viagemId        Int
+  viagem          Viagem      @relation(fields: [viagemId], references: [id], onDelete: Cascade)
+  containerId     Int
+  container       Container   @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  entrouEm        DateTime    @default(now())
+  saiuEm          DateTime?
+  motivoSaida     String?
+  org_viagemId    Viagem      @relation("ViagemContainer_viagemId_org", fields: [viagemId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "ViagemContainer_viagemId_org_fkey")
+  org_containerId Container   @relation("ViagemContainer_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "ViagemContainer_containerId_org_fkey")
+
+  @@index([organizacaoId])
+  @@index([viagemId])
+  @@index([containerId])
 }

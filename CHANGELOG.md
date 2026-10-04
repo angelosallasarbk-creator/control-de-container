@@ -4,6 +4,22 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.8.0 — não publicada
+
+- **Viagem com vários containers (mesmo caminhão):** antes cada container era tratado como uma viagem —
+  2 containers no mesmo caminhão geravam 2 SMS (custo em dobro) e a posição de um link ficava só num
+  deles (o outro podia acusar "sem posição"/"parado").
+  - Na leitura do 2º QR: **"Este container vai no mesmo caminhão que X?"** (motorista/transportador).
+  - **Um SMS por viagem**, citando os containers; a posição do link e do acompanhamento pela página vale
+    para todos (a situação do acompanhamento também).
+  - **Portaria:** na entrada, oferece os outros containers do caminhão com o mesmo ponto de carregamento
+    — marca os que ficam (entrada registrada junto, com a temperatura dos reefer); os outros seguem viagem.
+  - O container sai da viagem ao chegar a um ponto, ao ser encerrado ou se outra pessoa assumir o
+    rastreamento; com menos de 2, a viagem termina. Histórico guardado (`ViagemContainer`).
+  - Ficha: "Viaja junto com" (com link para o outro container).
+- Migração `20261012100000_viagem`: tabelas `Viagem` e `ViagemContainer` (RLS por organização e chaves
+  compostas, como as demais tabelas de cliente).
+
 ## 3.7.0 — 04/10/2026 (tag `v3.7.0`)
 
 - **Entrega a definir:** o local de entrega pode ficar "A definir" (cadastro, ficha, Editar trajeto). Antes, sem
