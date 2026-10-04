@@ -4,7 +4,7 @@ import { lerConfiguracao } from "./configuracao.js";
 import { calcularSituacao, alertasDesejados, STATUS_ENCERRADOS } from "./prazos.js";
 import { estimarCiclo } from "./estimativa.js";
 import { montarContextos, configRodagem } from "./previsao.js";
-import { congelarPlanoSeFaltar } from "./planejamento.js";
+import { congelarPlanoSeFaltar, completarPlanoSeFaltar } from "./planejamento.js";
 
 // Leituras suficientes para achar o início de uma sequência fora da faixa sem carregar o histórico todo.
 const LEITURAS_AVALIADAS = 200;
@@ -62,6 +62,7 @@ async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, ago
   const basePlano = !container.coletadoEm && container.coletaProgramadaEm ? new Date(container.coletaProgramadaEm) : null;
   const previsaoPlano = basePlano && basePlano < agora ? estimarCiclo(container, contexto, basePlano, configRodagem(cfg)) : previsao;
   await congelarPlanoSeFaltar(container, previsaoPlano, agora);
+  await completarPlanoSeFaltar(container, previsao, agora);
   const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao, cfg.atrasoColetaCriticoHoras);
   const desejados = alertasDesejados(container, situacao);
   const chavesDesejadas = new Set(desejados.map((a) => chaveAlerta(containerId, a.tipo, a.nivel)));

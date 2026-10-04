@@ -59,6 +59,7 @@ const textoDemurrage = computed(() => {
       <span v-else class="mudo">sem leitura</span>
     </div>
     <div v-if="c.temperatura?.semLeitura" class="linha-tile txt-ATENCAO"><span>⏱ leitura atrasada</span></div>
+    <div v-if="c.entregaADefinir" class="linha-tile txt-ATENCAO"><span>Entrega</span><span>a definir</span></div>
     <div v-if="c.previsao" class="linha-tile" :title="`Entrega prevista: ${fmtDataHora(c.previsao.previsaoEntrega)}`">
       <span>Previsão</span>
       <span :class="`txt-${c.previsao.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : c.previsao.riscoDemurrage}`">

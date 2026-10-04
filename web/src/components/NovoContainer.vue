@@ -227,7 +227,7 @@ async function salvar(confirmarDigito = false) {
         <div class="campo">
           <label for="nc-entrega">{{ nomeEtapa("ENTREGA", "Local de entrega (cheio)") }}</label>
           <select id="nc-entrega" v-model="f.portoEntregaId">
-            <option value="">— não informado —</option>
+            <option value="">A definir</option>
             <option v-for="l in entregas" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
           </select>
         </div>

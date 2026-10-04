@@ -47,6 +47,7 @@ enum TipoAlerta {
   RISCO_DEMURRAGE // previsão de entrega passa do free time
   RISCO_DEADLINE // previsão de entrega passa do deadline do navio
   ATRASO_COLETA // passou a data/hora programada da coleta e o container segue Programado
+  ENTREGA_A_DEFINIR // local de entrega ainda a definir (atenção no carregamento, crítico a caminho da entrega)
 }
 
 // Onde o tipo de local pode ser usado no trajeto do container.

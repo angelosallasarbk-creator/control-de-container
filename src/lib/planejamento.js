@@ -10,13 +10,17 @@ const STATUS_QUE_GERAM_PLANO = ["PROGRAMADO", "COLETADO"];
 
 // Coleta planejada = a coleta programada, quando houver (mesmo que já tenha passado — senão o
 // atraso ficaria escondido); sem ela, a coleta da simulação.
+const iso = (d) => (d ? new Date(d).toISOString() : null);
+
 export function planoDaPrevisao(previsao, agora = new Date(), c = {}) {
   return {
     geradoEm: agora.toISOString(),
     COLETADO: new Date(c.coletaProgramadaEm ?? previsao.trechos[0].inicio).toISOString(),
-    NA_FABRICA: previsao.previsaoChegadaFabrica ? new Date(previsao.previsaoChegadaFabrica).toISOString() : null,
-    SAIU_FABRICA: previsao.previsaoSaidaFabrica ? new Date(previsao.previsaoSaidaFabrica).toISOString() : null,
-    ENTREGUE_PORTO: new Date(previsao.previsaoEntrega).toISOString(),
+    NA_FABRICA: iso(previsao.previsaoChegadaFabrica),
+    SAIU_FABRICA: iso(previsao.previsaoSaidaFabrica),
+    ENTREGUE_PORTO: iso(previsao.previsaoEntrega),
+    // Entrega a definir (v3.7): o plano congela a parte conhecida; a entrega entra quando for definida.
+    entregaPendente: Boolean(previsao.parcial),
     // Passagem planejada por cada parada do trajeto (ex.: Ponto Fiscal), por id da parada.
     PARADAS: Object.fromEntries((previsao.paradas ?? []).filter((m) => m.previsao).map((m) => [m.paradaId, new Date(m.previsao).toISOString()])),
   };
@@ -31,6 +35,27 @@ export async function congelarPlanoSeFaltar(c, previsao, agora = new Date()) {
   const r = await prisma.container.updateMany({
     where: { id: c.id, planejamento: { equals: Prisma.DbNull } },
     data: { planejamento: planoDaPrevisao(previsao, agora, c) },
+  });
+  return r.count === 1;
+}
+
+/**
+ * Entrega definida depois do plano (v3.7): completa SÓ a entrega planejada (e as paradas novas) com
+ * a previsão do momento da definição — a parte já congelada não muda. Condição no WHERE: uma vez só.
+ */
+export async function completarPlanoSeFaltar(c, previsao, agora = new Date()) {
+  if (!c.planejamento?.entregaPendente || !previsao?.disponivel || previsao.parcial || !previsao.previsaoEntrega) return false;
+  const paradas = Object.fromEntries((previsao.paradas ?? []).filter((m) => m.previsao).map((m) => [m.paradaId, iso(m.previsao)]));
+  const plano = {
+    ...c.planejamento,
+    ENTREGUE_PORTO: iso(previsao.previsaoEntrega),
+    PARADAS: { ...paradas, ...(c.planejamento.PARADAS ?? {}) },
+    entregaPendente: false,
+    entregaPlanejadaEm: agora.toISOString(),
+  };
+  const r = await prisma.container.updateMany({
+    where: { id: c.id, planejamento: { path: ["entregaPendente"], equals: true } },
+    data: { planejamento: plano },
   });
   return r.count === 1;
 }

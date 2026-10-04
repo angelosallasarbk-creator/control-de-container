@@ -35,7 +35,8 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
   </div>
   <div v-else-if="p" class="previsao">
     <div class="linha" style="gap: 8px; flex-wrap: wrap">
-      <span class="chip" :class="COR[p.riscoDemurrage]">Demurrage: {{ TEXTO_RISCO[p.riscoDemurrage] }}</span>
+      <span v-if="p.parcial" class="chip amarelo">Entrega a definir — previsão até a saída do carregamento</span>
+      <span v-else class="chip" :class="COR[p.riscoDemurrage]">Demurrage: {{ TEXTO_RISCO[p.riscoDemurrage] }}</span>
       <span v-if="p.riscoDeadline" class="chip" :class="COR[p.riscoDeadline]">Deadline: {{ TEXTO_RISCO[p.riscoDeadline] }}</span>
       <span class="mudo pequeno">
         {{ p.hipotetico ? (p.coletaSimulada && new Date(p.coletaSimulada) - Date.now() > 60000 ? `Simulação: coleta na data programada (${fmtDataHora(p.coletaSimulada)})` : "Simulação: se coletar agora") : "Previsão atualizada com as etapas já registradas" }}
@@ -45,7 +46,7 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
     <div v-if="!semNumeros" class="numeros">
       <div>
         <div class="rotulo">Ciclo estimado</div>
-        <div class="valor">{{ cicloDias.toFixed(1).replace(".", ",") }} dias</div>
+        <div class="valor">{{ p.parcial ? "—" : `${cicloDias.toFixed(1).replace(".", ",")} dias` }}</div>
         <div v-if="freeTimeDias !== null" class="pequeno mudo">free time: {{ freeTimeDias }} dias</div>
       </div>
       <div v-if="trechosKm.length">
@@ -57,10 +58,11 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
       </div>
       <div>
         <div class="rotulo">Entrega prevista</div>
-        <div class="valor">{{ fmtDataHora(p.previsaoEntrega) }}</div>
-        <div class="pequeno mudo">último dia livre: {{ fmtDataHora(p.vencimentoFreeTime) }}</div>
+        <div class="valor">{{ p.parcial ? "a definir" : fmtDataHora(p.previsaoEntrega) }}</div>
+        <div v-if="!p.parcial" class="pequeno mudo">último dia livre: {{ fmtDataHora(p.vencimentoFreeTime) }}</div>
+        <div v-else class="pequeno mudo">saída do carregamento: {{ fmtDataHora(p.previsaoSaidaFabrica) }}</div>
       </div>
-      <div>
+      <div v-if="!p.parcial">
         <div class="rotulo">Folga até o fim do free time</div>
         <div class="valor" :class="`txt-${p.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : p.riscoDemurrage}`">{{ fmtFolga(p.folgaHoras) }}</div>
         <div v-if="p.diasDemurragePrevistos" class="pequeno txt-VENCIDO">
@@ -79,7 +81,8 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
       <tbody>
         <tr v-for="t in p.trechos" :key="t.etapa">
           <td class="negrito">{{ t.etapa }}</td>
-          <td>
+          <td v-if="t.aDefinir" colspan="3" class="txt-ATENCAO">defina o local de entrega para completar a previsão</td>
+          <td v-if="!t.aDefinir">
             <template v-if="t.km !== null">{{ fmtKm(t.km) }}</template>
             <template v-else-if="t.fonte">{{ fmtHoras(t.horas) }}</template>
             <template v-else>{{ fmtHoras(t.horas) }} ({{ t.parada ? "tempo de parada" : "fila na entrega" }})</template>
@@ -87,8 +90,8 @@ const detalheKm = computed(() => trechosKm.value.map((t) => `${t.etapa}: ${fmtKm
               {{ FONTE[t.fonte] }}<template v-if="t.fonte === 'HISTORICO'"> ({{ t.amostras }} passagens)</template>
             </div>
           </td>
-          <td>{{ fmtHoras(t.duracaoHoras) }}</td>
-          <td>{{ fmtDataHora(t.inicio) }} → {{ fmtDataHora(t.fim) }}</td>
+          <td v-if="!t.aDefinir">{{ fmtHoras(t.duracaoHoras) }}</td>
+          <td v-if="!t.aDefinir">{{ fmtDataHora(t.inicio) }} → {{ fmtDataHora(t.fim) }}</td>
           <td><span v-if="t.real" class="chip verde">realizado</span></td>
         </tr>
       </tbody>

@@ -30,6 +30,7 @@ export const ROTULO_TIPO = {
 };
 
 export const ROTULO_ALERTA = {
+  ENTREGA_A_DEFINIR: "Definir local de entrega",
   ESTADIA: "Estadia",
   DEMURRAGE: "Demurrage",
   DEADLINE: "Deadline",

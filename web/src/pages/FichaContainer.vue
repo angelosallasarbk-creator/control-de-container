@@ -104,8 +104,11 @@ const proximo = computed(() => {
   return i >= 0 && i < fluxo.value.length - 1 ? fluxo.value[i + 1] : null;
 });
 const s = computed(() => c.value?.situacao ?? {});
-const p = computed(() => (s.value.previsao?.disponivel ? s.value.previsao : null));
-const km = computed(() => kmDoCiclo(p.value));
+// p = previsão completa; prev = qualquer previsão disponível (inclui a parcial — entrega a definir, v3.7).
+const p = computed(() => (s.value.previsao?.disponivel && !s.value.previsao.parcial ? s.value.previsao : null));
+const prev = computed(() => (s.value.previsao?.disponivel ? s.value.previsao : null));
+// Com a entrega a definir, soma o que já se conhece (a ida); o rótulo indica que é parcial.
+const km = computed(() => kmDoCiclo(prev.value));
 const alertasAbertos = computed(() => (c.value?.alertas ?? []).filter((a) => a.chaveAberta));
 const alertasEncerrados = computed(() => (c.value?.alertas ?? []).filter((a) => !a.chaveAberta));
 const leiturasDesc = computed(() => [...(c.value?.leituras ?? [])].reverse());
@@ -249,7 +252,7 @@ const etapas = computed(() => {
     const feita = Boolean(realizado) && (cancelado || i <= atual);
     // Sem plano congelado (sem trajeto completo), a coleta programada vale como planejado da coleta.
     const planejado = c.value.planejamento?.[etapa] ?? (etapa === "COLETADO" ? c.value.coletaProgramadaEm : null);
-    const eta = !feita && !cancelado && p.value && ETA_DA_ETAPA[etapa] ? ETA_DA_ETAPA[etapa](p.value) : null;
+    const eta = !feita && !cancelado && prev.value && ETA_DA_ETAPA[etapa] ? ETA_DA_ETAPA[etapa](prev.value) : null;
     let situacao = "futura";
     let desvioMin = null;
     if (feita) {
@@ -342,7 +345,7 @@ const sequenciaTrajeto = computed(() => {
     ...pa.filter((x) => x.fase === "ANTES_CARREGAMENTO").map((x) => ({ papel: x.tipo ?? "Parada", nome: x.nome, parada: x })),
     ...(c.value.temOperacao === false ? [] : [{ papel: "Carregamento", nome: c.value.localCarregamento?.nome }]),
     ...pa.filter((x) => x.fase === "APOS_CARREGAMENTO").map((x) => ({ papel: x.tipo ?? "Parada", nome: x.nome, parada: x })),
-    { papel: "Entrega", nome: c.value.portoEntrega?.nome },
+    { papel: "Entrega", nome: c.value.portoEntrega?.nome ?? "a definir" },
   ];
 });
 
@@ -554,7 +557,7 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
               <div>
                 <div class="rotulo">Distância total prevista</div>
                 <div class="valor">{{ km.trechos.length ? fmtKm(km.total) : "—" }}</div>
-                <div v-if="km.trechos.length" class="sub">{{ km.trechos.map((t) => fmtKm(t.km)).join(" + ") }}<template v-if="km.aproximado"> · aproximada</template></div>
+                <div v-if="km.trechos.length" class="sub">{{ km.trechos.map((t) => fmtKm(t.km)).join(" + ") }}<template v-if="km.aproximado"> · aproximada</template><template v-if="prev?.parcial"> · até o carregamento</template></div>
               </div>
             </div>
             <div class="ind">
@@ -564,6 +567,7 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
                 <div class="valor">{{ p ? fmtDataHora(p.previsaoEntrega) : c.entreguePortoEm ? fmtDataHora(c.entreguePortoEm) : "—" }}</div>
                 <div v-if="p" class="sub">Último dia livre: {{ fmtDataHora(p.vencimentoFreeTime) }}</div>
                 <div v-else-if="c.entreguePortoEm" class="sub">entregue</div>
+                <div v-else-if="prev?.parcial" class="sub txt-ATENCAO">local de entrega a definir</div>
                 <div v-else class="sub">sem trajeto completo</div>
               </div>
             </div>
@@ -828,7 +832,7 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
             <span class="pequeno">
               <strong>{{ c.portoRetirada?.nome ?? "retirada ?" }}</strong> →
               <template v-if="c.temOperacao !== false"><strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →</template>
-              <strong>{{ c.portoEntrega?.nome ?? "entrega ?" }}</strong>
+              <strong>{{ c.portoEntrega?.nome ?? "entrega a definir" }}</strong>
             </span>
           </div>
           <div class="trajeto-pontos">
@@ -1123,7 +1127,7 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
           <div class="campo">
             <label>Local de entrega (cheio)</label>
             <select v-model="ed.portoEntregaId">
-              <option value="">— não informado —</option>
+              <option value="">A definir</option>
               <option v-for="l in entregas" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>

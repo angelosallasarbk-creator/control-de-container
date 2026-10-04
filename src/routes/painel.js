@@ -109,7 +109,9 @@ painelRouter.get("/", asyncHandler(async (_req, res) => {
         tempMin: temperatura.tempMin,
         tempMax: temperatura.tempMax,
       },
-      previsao: previsao?.disponivel
+      // Entrega a definir (v3.7): sem ETA final; o card mostra o aviso.
+      entregaADefinir: !bruto.portoEntregaId,
+      previsao: previsao?.disponivel && !previsao.parcial
         ? {
             previsaoEntrega: previsao.previsaoEntrega,
             folgaHoras: previsao.folgaHoras,

@@ -1,6 +1,6 @@
 // Regras de prazo (estadia, demurrage, deadline) e de temperatura.
 // Funções puras: recebem o container (com os prazos já copiados nele) e o "agora", sem acessar banco.
-import { camposFreeTime } from "./fluxo.js";
+import { camposFreeTime, etapasDoContainer } from "./fluxo.js";
 
 const HORA = 60 * 60 * 1000;
 const DIA = 24 * HORA;
@@ -188,8 +188,23 @@ export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) 
 
 // `previsao` = resultado de estimativa.estimarCiclo (calculado por quem chama, que tem o
 // contexto de rota); null quando não há trajeto cadastrado.
+// Entrega a definir (v3.7): sem local de entrega, o container pode seguir — mas a definição é
+// cobrada: ATENCAO no local de operação (carregamento) e VENCIDO (crítico) a caminho da entrega
+// (etapa logo antes dela: saída do carregamento; sem local de operação, a coleta).
+export function calcularEntregaADefinir(c) {
+  if (c.portoEntregaId || STATUS_ENCERRADOS.includes(c.status)) return null;
+  const etapas = etapasDoContainer(c);
+  const i = etapas.indexOf(c.status);
+  const iEntrega = etapas.indexOf("ENTREGUE_PORTO");
+  if (i < 0 || iEntrega < 0) return null;
+  if (c.status !== "PROGRAMADO" && i === iEntrega - 1) return { situacao: "VENCIDO" };
+  if (["NA_FABRICA", "EM_OPERACAO", "LIBERADO"].includes(c.status)) return { situacao: "ATENCAO" };
+  return { situacao: "OK" };
+}
+
 export function calcularSituacao(c, leituras, agora, intervaloLeituraMinutos, previsao = null, atrasoColetaCriticoHoras = ATRASO_COLETA_CRITICO_HORAS_PADRAO) {
   return {
+    entregaADefinir: calcularEntregaADefinir(c),
     atrasoColeta: calcularAtrasoColeta(c, agora, atrasoColetaCriticoHoras),
     estadia: calcularEstadia(c, agora),
     demurrage: calcularDemurrage(c, agora),
@@ -304,6 +319,17 @@ export function alertasDesejados(c, situacao) {
     }
   }
 
+  const entregaADefinir = situacao.entregaADefinir;
+  if (entregaADefinir && entregaADefinir.situacao !== "OK") {
+    alertas.push({
+      tipo: "ENTREGA_A_DEFINIR",
+      nivel: entregaADefinir.situacao === "VENCIDO" ? "CRITICO" : "ATENCAO",
+      mensagem: entregaADefinir.situacao === "VENCIDO"
+        ? "Container a caminho da entrega sem local de entrega definido. Defina na ficha (Editar trajeto)."
+        : "Local de entrega ainda a definir. Defina na ficha (Editar trajeto) ou na saída pela portaria.",
+    });
+  }
+
   if (temperatura?.semLeitura) {
     alertas.push({
       tipo: "SEM_LEITURA",
@@ -318,7 +344,7 @@ export function alertasDesejados(c, situacao) {
 // Pior situação entre os prazos, usada para colorir o container no painel.
 export function semaforo(situacao) {
   const niveis = [];
-  for (const chave of ["estadia", "demurrage", "deadline", "atrasoColeta"]) {
+  for (const chave of ["estadia", "demurrage", "deadline", "atrasoColeta", "entregaADefinir"]) {
     const s = situacao[chave];
     if (s && !s.encerrada) niveis.push(s.situacao === "VENCIDO" ? 2 : s.situacao === "ATENCAO" ? 1 : 0);
   }
