@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.5.0 — não publicada
+## 3.5.0 — 04/10/2026 (tag `v3.5.0`)
 
 Revisão da v3.4 (itens 1, 2, 3, 5 e 6). Publicada junto com a 3.4.1.
 
@@ -26,7 +26,7 @@ Revisão da v3.4 (itens 1, 2, 3, 5 e 6). Publicada junto com a 3.4.1.
 - Migração `20261009100000_revisao_3_5` (só acrescenta): `Transportadora.organizacaoDonaId` (existentes:
   o primeiro cliente vinculado), `CodigoAcessoMotorista.etiquetaId` e `conhecido`.
 
-## 3.4.1 — não publicada
+## 3.4.1 — 04/10/2026 (tag `v3.4.1`, publicada junto com a 3.5.0)
 
 - **Desfazer etapa sem erro 500:** desfazer a entrega (ou o cancelamento) de um container cujo número já está ativo em
   outro cadastro respondia erro interno (índice único da v3.2). Agora responde 409 com mensagem clara.
