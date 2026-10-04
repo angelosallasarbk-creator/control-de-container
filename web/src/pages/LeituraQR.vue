@@ -84,6 +84,36 @@ const erroFatal = ref(null);
 const erro = ref(null);
 const enviando = ref(false);
 const sucesso = ref(null); // { temperatura, resultado, numero }
+// Viagem (v3.8)
+const viagemDispensada = ref(false);
+const juntando = ref(false);
+const erroViagem = ref(null);
+async function juntarViagem(comContainerId) {
+  erroViagem.value = null;
+  juntando.value = true;
+  try {
+    info.value = await q.qrViagem(props.token, comContainerId);
+  } catch (e) {
+    if (!tratarErroMotorista(e)) erroViagem.value = e.message;
+  } finally {
+    juntando.value = false;
+  }
+}
+// Portaria: outros containers do caminhão que também ficam neste ponto.
+const ficam = reactive({ ids: [], temperaturas: {}, enviando: false, erro: null, feito: null });
+async function confirmarFicam() {
+  ficam.erro = null;
+  ficam.enviando = true;
+  try {
+    const temps = Object.fromEntries(Object.entries(ficam.temperaturas).filter(([id]) => ficam.ids.includes(Number(id))).map(([id, v]) => [id, String(v).replace(",", ".")]));
+    const r = await q.qrPortariaFicam(props.token, { containerIds: ficam.ids, temperaturas: temps });
+    ficam.feito = r.registrados;
+  } catch (e) {
+    ficam.erro = e.message;
+  } finally {
+    ficam.enviando = false;
+  }
+}
 const confirmarSubstituicao = ref(null); // código da etiqueta anterior
 const f = reactive({ numero: "", temperatura: "", lidaEm: paraInputLocal(), placa: "", motivoPlaca: "" });
 // Etiqueta nova: programação do container digitado (trajeto, placa e se controla temperatura).
@@ -363,6 +393,7 @@ watch(() => [modoPortaria.value, container.value?.placa], () => {
 
 async function registrarPortaria(substituir = false) {
   erro.value = null;
+  Object.assign(ficam, { ids: [], temperaturas: {}, erro: null, feito: null });
   confirmarSubstituicao.value = null;
   if (!movimento.value) {
     erro.value = "Escolha se é ENTRADA ou SAÍDA.";
@@ -388,7 +419,7 @@ async function registrarPortaria(substituir = false) {
     const r = await q.qrPortaria(props.token, dados);
     info.value = r;
     sucesso.value = {
-      movimento: r.movimento, etapa: r.etapa, completadas: r.completadas,
+      movimento: r.movimento, etapa: r.etapa, completadas: r.completadas, ficamTambem: r.ficamTambem ?? [],
       temperatura: dados.temperatura, resultado: r.resultado, numero: r.container?.numero,
     };
     f.temperatura = "";
@@ -452,6 +483,18 @@ async function registrarPassagemQr() {
         <p v-if="sucesso.completadas.length" class="aviso" style="margin: 0">
           Etapas que não estavam registradas foram completadas com o mesmo horário: {{ sucesso.completadas.join(", ") }}.
         </p>
+        <!-- Viagem (v3.8): o caminhão traz outros containers para este mesmo ponto -->
+        <div v-if="sucesso.ficamTambem?.length && !ficam.feito" class="viagem-pergunta">
+          <div class="negrito">Este caminhão também traz container(es) para este ponto. Quais ficam aqui?</div>
+          <label v-for="o in sucesso.ficamTambem" :key="o.id" class="linha" style="gap: 8px; flex-wrap: wrap">
+            <input v-model="ficam.ids" type="checkbox" :value="o.id" /> <span class="mono">{{ o.numero }}</span>
+            <input v-if="o.reefer && ficam.ids.includes(o.id)" v-model="ficam.temperaturas[o.id]" class="temp-curta" inputmode="decimal" placeholder="Temp. °C" required />
+          </label>
+          <button type="button" class="primario bloco" :disabled="!ficam.ids.length || ficam.enviando" @click="confirmarFicam">Registrar entrada dos marcados</button>
+          <p class="mudo pequeno" style="margin: 0">Os não marcados seguem viagem com o caminhão.</p>
+          <div v-if="ficam.erro" class="erro">{{ ficam.erro }}</div>
+        </div>
+        <p v-if="ficam.feito" class="aviso" style="margin: 0">Entrada registrada também para: {{ ficam.feito.join(", ") }}.</p>
         <div v-if="sucesso.temperatura !== undefined" class="temp">{{ fmtTemp(sucesso.temperatura) }}</div>
         <p v-if="sucesso.resultado === 'ACIMA'" class="aviso-forte">Temperatura ACIMA da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
         <p v-else-if="sucesso.resultado === 'ABAIXO'" class="aviso-forte">Temperatura ABAIXO da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
@@ -466,6 +509,14 @@ async function registrarPassagemQr() {
           {{ rotuloEtapa(container, "COLETADO") }} · {{ sucesso.retirada }}{{ sucesso.cadastrado ? " · container cadastrado agora" : "" }}
         </p>
         <p v-else class="mudo" style="margin: 0">A coleta deste container já estava registrada ({{ fmtDataHora(container?.coletadoEm) }}).</p>
+        <!-- Viagem (v3.8): no mesmo caminhão / pergunta "vai no mesmo caminhão?" -->
+        <div v-if="info.viagem" class="viagem-info">🚚 No mesmo caminhão: <strong>{{ info.viagem.containers.filter((x) => x.id !== container?.id).map((x) => x.numero).join(", ") }}</strong></div>
+        <div v-if="info.sugestoesViagem?.length && !viagemDispensada" class="viagem-pergunta">
+          <div class="negrito">Este container vai no mesmo caminhão que:</div>
+          <button v-for="s in info.sugestoesViagem" :key="s.id" type="button" class="primario bloco" :disabled="juntando" @click="juntarViagem(s.id)">Sim, junto com {{ s.numero }}</button>
+          <button type="button" class="bloco" @click="viagemDispensada = true">Não, viaja sozinho</button>
+          <div v-if="erroViagem" class="erro">{{ erroViagem }}</div>
+        </div>
         <div v-if="sucesso.temperatura !== undefined" class="temp">{{ fmtTemp(sucesso.temperatura) }}</div>
         <p v-if="sucesso.resultado === 'ACIMA'" class="aviso-forte">Temperatura ACIMA da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
         <p v-else-if="sucesso.resultado === 'ABAIXO'" class="aviso-forte">Temperatura ABAIXO da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
@@ -485,6 +536,14 @@ async function registrarPassagemQr() {
         <div class="icone" aria-hidden="true">{{ sucesso.resultado && sucesso.resultado !== "OK" ? "⚠" : "✓" }}</div>
         <h1>{{ sucesso.temperatura !== undefined ? "Leitura registrada" : "Etiqueta ligada ao container" }}</h1>
         <div class="mono numero">{{ sucesso.numero }}</div>
+        <!-- Viagem (v3.8): no mesmo caminhão / pergunta "vai no mesmo caminhão?" -->
+        <div v-if="info.viagem" class="viagem-info">🚚 No mesmo caminhão: <strong>{{ info.viagem.containers.filter((x) => x.id !== container?.id).map((x) => x.numero).join(", ") }}</strong></div>
+        <div v-if="info.sugestoesViagem?.length && !viagemDispensada" class="viagem-pergunta">
+          <div class="negrito">Este container vai no mesmo caminhão que:</div>
+          <button v-for="s in info.sugestoesViagem" :key="s.id" type="button" class="primario bloco" :disabled="juntando" @click="juntarViagem(s.id)">Sim, junto com {{ s.numero }}</button>
+          <button type="button" class="bloco" @click="viagemDispensada = true">Não, viaja sozinho</button>
+          <div v-if="erroViagem" class="erro">{{ erroViagem }}</div>
+        </div>
         <div v-if="sucesso.temperatura !== undefined" class="temp">{{ fmtTemp(sucesso.temperatura) }}</div>
         <p v-if="sucesso.resultado === 'ACIMA'" class="aviso-forte">Temperatura ACIMA da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
         <p v-else-if="sucesso.resultado === 'ABAIXO'" class="aviso-forte">Temperatura ABAIXO da faixa ({{ fmtTemp(container.tempMin) }} a {{ fmtTemp(container.tempMax) }}). O alerta já apareceu no sistema — avise o responsável.</p>
@@ -494,6 +553,14 @@ async function registrarPassagemQr() {
 
       <template v-else>
         <div class="etiqueta-cod">Etiqueta <strong class="mono">{{ info.etiqueta.codigo }}</strong></div>
+        <!-- Viagem (v3.8): no mesmo caminhão / pergunta "vai no mesmo caminhão?" -->
+        <div v-if="info.viagem" class="viagem-info">🚚 No mesmo caminhão: <strong>{{ info.viagem.containers.filter((x) => x.id !== container?.id).map((x) => x.numero).join(", ") }}</strong></div>
+        <div v-if="info.sugestoesViagem?.length && !viagemDispensada" class="viagem-pergunta">
+          <div class="negrito">Este container vai no mesmo caminhão que:</div>
+          <button v-for="s in info.sugestoesViagem" :key="s.id" type="button" class="primario bloco" :disabled="juntando" @click="juntarViagem(s.id)">Sim, junto com {{ s.numero }}</button>
+          <button type="button" class="bloco" @click="viagemDispensada = true">Não, viaja sozinho</button>
+          <div v-if="erroViagem" class="erro">{{ erroViagem }}</div>
+        </div>
 
         <!-- Motorista: placa do caminhão (vai para o container em cada registro) -->
         <section v-if="motorista" class="cartao placa-motorista">
@@ -851,6 +918,9 @@ async function registrarPassagemQr() {
 </template>
 
 <style scoped>
+.viagem-pergunta { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--borda); padding-top: 10px; margin-top: 6px; text-align: left; }
+.viagem-info { background: var(--fundo); border-radius: 8px; padding: 8px 10px; font-size: 14px; text-align: left; }
+.temp-curta { width: 110px; }
 .celular-motorista { border-top: 1px solid var(--borda); margin-top: 10px; padding-top: 10px; }
 .movel { min-height: 100vh; background: var(--fundo); display: flex; flex-direction: column; }
 .movel-topo { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--lateral); color: #fff; font-weight: 700; position: sticky; top: 0; z-index: 10; }

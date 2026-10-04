@@ -16,6 +16,7 @@ import { SELECT_LOCAIS_ETAPAS, rotulosDasEtapas } from "../lib/tiposLocal.js";
 import { assumirRastreio } from "../lib/rastreamento.js";
 import { SELECT_PARADA, serializarParadas, proximaParada, registrarPassagem, registrarMudancaTrajeto } from "../lib/trajeto.js";
 import { etapasDoContainer, temOperacao, regrasDeLocal, motivoLocalForaDaRegra } from "../lib/fluxo.js";
+import { viagemDoContainer, sugestoesDeViagem, juntarNaViagem } from "../lib/viagem.js";
 
 export const qrRouter = Router();
 
@@ -56,6 +57,9 @@ async function resumo(e, req) {
       ultimasLeituras: ultimas.map((l) => ({ ...l, temperatura: Number(l.temperatura) })),
     },
     podeRegistrar: tem(req, "qr.registrar"),
+    // Viagem (v3.8): no mesmo caminhão agora + pergunta "vai no mesmo caminhão?" (quem leva o container).
+    viagem: c ? await viagemDoContainer(c.id) : null,
+    sugestoesViagem: c && tem(req, "qr.registrar") && !ehPortaria(req) ? await sugestoesDeViagem(c, req) : [],
     // Transportador: ao ler, registra a coleta (Tipo > Local de retirada) se ainda não houver.
     modoTransportador: ehTransportador(req),
     // Portaria: ao ler, registra entrada ou saída no ponto de carregamento.
@@ -430,6 +434,9 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
     throw erroHttp(409, "A entrada deste container ainda não foi registrada. Registre a ENTRADA primeiro (pode ajustar o horário) e depois a saída.");
   }
   validarMomento(ocorridoEm, container);
+  // Viagem (v3.8): na ENTRADA, os outros containers do caminhão com o mesmo ponto de carregamento
+  // podem ficar aqui também — a portaria escolhe quais (os outros seguem viagem).
+  const viagemAntes = movimento === "ENTRADA" ? await viagemDoContainer(container.id) : null;
   const reefer = controlaTemperatura(container);
   // Portaria: placa do veículo obrigatória; se já havia outra placa no container, motivo obrigatório.
   const placa = String(b.placa ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -504,5 +511,76 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
     movimento,
     etapa: nome(alvo),
     completadas: completadas.map(nome),
+    ficamTambem: await candidatosAFicar(viagemAntes, container),
   });
+}));
+
+// Outros containers do caminhão que podem ficar neste ponto: mesmo local de carregamento e ainda
+// antes da chegada a ele.
+async function candidatosAFicar(viagem, principal) {
+  if (!viagem || !principal.localCarregamentoId) return [];
+  const ids = viagem.containers.map((x) => x.id).filter((id) => id !== principal.id);
+  if (!ids.length) return [];
+  const outros = await prisma.container.findMany({ where: { id: { in: ids } }, include: SELECT_LOCAIS_ETAPAS });
+  return outros
+    .filter((o) => temOperacao(o) && o.localCarregamentoId === principal.localCarregamentoId && etapasDoContainer(o).indexOf(o.status) < etapasDoContainer(o).indexOf("NA_FABRICA"))
+    .map((o) => ({ id: o.id, numero: o.numero, reefer: controlaTemperatura(o) }));
+}
+
+// "Vai no mesmo caminhão?" (v3.8): o motorista/transportador confirma que este container viaja junto com outro.
+qrRouter.post("/:token/viagem", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
+  const e = await buscarEtiqueta(req.params.token);
+  if (!e.container) throw erroHttp(409, "Esta etiqueta ainda não está ligada a um container.");
+  await juntarNaViagem({ containerIds: [e.container.id, req.body?.comContainerId], req });
+  res.json(await resumo(await buscarEtiqueta(req.params.token), req));
+}));
+
+// Portaria (v3.8): os outros containers do mesmo caminhão que também ficam neste ponto. Registra a
+// chegada de cada um (mesmo horário e placa da entrada já registrada); os não escolhidos seguem viagem.
+qrRouter.post("/:token/portaria/ficam", requirePermissao("qr.registrar"), asyncHandler(async (req, res) => {
+  if (!ehPortaria(req)) throw erroHttp(403, "O registro de entrada/saída pelo QR é do perfil Portaria.");
+  const b = req.body ?? {};
+  const email = req.usuario.email;
+  const e = await buscarEtiqueta(req.params.token);
+  const principal = e.container;
+  if (!principal || principal.status !== "NA_FABRICA") throw erroHttp(409, "Registre primeiro a entrada do container desta etiqueta.");
+  const ids = (Array.isArray(b.containerIds) ? b.containerIds : []).map((x) => validarId(x, "Container"));
+  if (!ids.length) throw erroHttp(400, "Escolha os containers que ficam aqui.");
+  // Precisam ter viajado com o principal (mesma viagem, que ele deixou ao entrar aqui).
+  const viagensDoPrincipal = (await prisma.viagemContainer.findMany({ where: { containerId: principal.id }, select: { viagemId: true } })).map((v) => v.viagemId);
+  const companheiros = new Set((await prisma.viagemContainer.findMany({ where: { viagemId: { in: viagensDoPrincipal }, containerId: { in: ids } }, select: { containerId: true } })).map((v) => v.containerId));
+  const chegada = principal.chegadaFabricaEm;
+  const temperaturas = b.temperaturas ?? {};
+  const registrados = [];
+  for (const id of ids) {
+    if (!companheiros.has(id)) throw erroHttp(409, "Só containers que vieram no mesmo caminhão podem ser registrados aqui.");
+    const c = await prisma.container.findUnique({ where: { id }, include: SELECT_LOCAIS_ETAPAS });
+    const fluxo = etapasDoContainer(c);
+    if (!temOperacao(c) || c.localCarregamentoId !== principal.localCarregamentoId || fluxo.indexOf(c.status) >= fluxo.indexOf("NA_FABRICA")) {
+      throw erroHttp(409, `O container ${c.numero} não tem este ponto como próximo local de carregamento.`);
+    }
+    const reefer = controlaTemperatura(c);
+    const temperatura = reefer ? decimal(temperaturas[id], `Temperatura do ${c.numero}`, { obrigatorio: true, min: -60, max: 60 }) : null;
+    const etapas = fluxo.slice(fluxo.indexOf(c.status) + 1, fluxo.indexOf("NA_FABRICA") + 1);
+    const nome = (s) => rotulosDasEtapas(c)[s] ?? ROTULO_ETAPA[s];
+    await prisma.$transaction(async (tx) => {
+      const r = await tx.container.updateMany({
+        where: { id: c.id, status: c.status },
+        data: { status: "NA_FABRICA", placa: principal.placa, ...Object.fromEntries(etapas.map((s) => [CAMPO_DATA[s], chegada])) },
+      });
+      if (r.count !== 1) throw erroHttp(409, `O container ${c.numero} acabou de mudar de etapa. Atualize a tela.`);
+      let de = c.status;
+      for (const s of etapas) {
+        await tx.eventoContainer.create({
+          data: { containerId: c.id, statusDe: de, statusPara: s, ocorridoEm: chegada, usuarioEmail: email, observacao: s === "NA_FABRICA" ? `Entrada registrada pela portaria junto com o ${principal.numero} (mesmo caminhão)` : "Etapa completada pela portaria (não registrada pela operação)" },
+        });
+        de = s;
+      }
+      await registrarLog({ usuarioEmail: email, acao: "AVANCAR", entidade: "Container", entidadeId: c.id, descricao: `Container ${c.numero}: ${nome("NA_FABRICA")} pela portaria junto com o ${principal.numero} (mesmo caminhão)` }, tx);
+      if (reefer) await registrarLeitura({ container: { ...c, status: "NA_FABRICA" }, temperatura, lidaEm: new Date(), origem: "MANUAL", usuarioEmail: email }, tx);
+    });
+    await sincronizarAlertas(c.id);
+    registrados.push(c.numero);
+  }
+  res.json({ registrados });
 }));

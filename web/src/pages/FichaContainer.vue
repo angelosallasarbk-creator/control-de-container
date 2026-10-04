@@ -829,6 +829,10 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
         <div v-if="aba === 'trajeto'" class="card">
           <div class="linha-entre" style="margin-bottom: 10px; flex-wrap: wrap; gap: 8px">
             <h2 style="margin: 0">Trajeto e previsão</h2>
+            <span v-if="c.viagem" class="chip azul" title="Mesmo caminhão (v3.8): o pedido de posição por SMS e as posições valem para todos.">
+              🚚 Viaja junto com:
+              <template v-for="(x, i) in c.viagem.containers.filter((y) => y.id !== c.id)" :key="x.id">{{ i ? ", " : " " }}<router-link :to="`/containers/${x.id}`">{{ x.numero }}</router-link></template>
+            </span>
             <span class="pequeno">
               <strong>{{ c.portoRetirada?.nome ?? "retirada ?" }}</strong> →
               <template v-if="c.temOperacao !== false"><strong>{{ c.localCarregamento?.nome ?? "carregamento ?" }}</strong> →</template>

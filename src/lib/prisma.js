@@ -12,6 +12,7 @@ export const MODELOS_DA_ORGANIZACAO = new Set([
   "Usuario", "Regiao", "GrupoOperacao", "TipoLocal", "TipoOperacao", "EtapaFluxo", "Local", "DistanciaRota", "Armador",
   "Produto", "Container", "EventoContainer", "LeituraTemperatura", "LoteEtiquetas", "EtiquetaQR", "Alerta", "TokenIntegracao",
   "Configuracao", "LogAuditoria", "PosicaoContainer", "SolicitacaoPosicao", "MensagemSms", "ParadaContainer", "MudancaTrajeto",
+  "Viagem", "ViagemContainer",
 ]);
 
 // Tabelas em que o registro pode ser "da plataforma" (sem organização).

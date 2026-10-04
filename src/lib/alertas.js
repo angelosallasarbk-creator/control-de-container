@@ -5,6 +5,7 @@ import { calcularSituacao, alertasDesejados, STATUS_ENCERRADOS } from "./prazos.
 import { estimarCiclo } from "./estimativa.js";
 import { montarContextos, configRodagem } from "./previsao.js";
 import { congelarPlanoSeFaltar, completarPlanoSeFaltar } from "./planejamento.js";
+import { sincronizarViagem } from "./viagem.js";
 
 // Leituras suficientes para achar o início de uma sequência fora da faixa sem carregar o histórico todo.
 const LEITURAS_AVALIADAS = 200;
@@ -56,6 +57,8 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
 // só grava quando algo muda (plano a congelar, alerta a abrir/encerrar, mensagem a atualizar).
 async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, agora }) {
   const containerId = container.id;
+  // Viagem (v3.8): quem chegou a um ponto, encerrou ou mudou de responsável sai dela.
+  await sincronizarViagem(container, agora);
   const previsao = estimarCiclo(container, contexto, agora, configRodagem(cfg));
   // O plano parte da coleta programada mesmo que ela já tenha passado (a previsão "ao vivo" não
   // simula no passado): assim coleta, chegada, saída e entrega planejadas ficam coerentes entre si.

@@ -33,6 +33,9 @@ const rotasQr = (prefixo) => ({
   qrColeta: (token, dados) => request(`${prefixo}/${token}/coleta`, { method: "POST", body: dados }),
   // Portaria: entrada/saída no ponto de carregamento.
   qrPortaria: (token, dados) => request(`${prefixo}/${token}/portaria`, { method: "POST", body: dados }),
+  // Viagem (v3.8): "vai no mesmo caminhão?" e, na portaria, os outros do caminhão que ficam no ponto.
+  qrViagem: (token, comContainerId) => request(`${prefixo}/${token}/viagem`, { method: "POST", body: { comContainerId } }),
+  qrPortariaFicam: (token, dados) => request(`${prefixo}/${token}/portaria/ficam`, { method: "POST", body: dados }),
 });
 export const qrMotorista = rotasQr("/motorista/qr");
 

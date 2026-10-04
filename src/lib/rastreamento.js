@@ -16,6 +16,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { comoSistema, organizacaoAtual } from "./tenant.js";
 import { paraCadaOrganizacao, vincularMotorista, motoristaBloqueadoNaOrganizacao } from "./organizacoes.js";
+import { companheirosDeViagem } from "./viagem.js";
 import { registrarLog } from "./auditoria.js";
 import { erroHttp } from "./asyncHandler.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -326,7 +327,14 @@ async function contextoDosPedidos(ids) {
 }
 
 // Cria o link, manda o SMS e registra. Link desfeito se o SMS não saiu. Devolve o status.
-async function enviarPedidoPosicao({ c, dest, base, motivo, agora }) {
+// Texto do pedido: com viagem (v3.8), cita todos os containers do caminhão (cabe em 1 SMS com 3).
+function textoDoPedido(numeros, url) {
+  if (numeros.length === 1) return `CCS: envie a posicao atual do container ${numeros[0]}: ${url}`;
+  const lista = numeros.length > 3 ? `${numeros.slice(0, 2).join(", ")} e mais ${numeros.length - 2}` : `${numeros.slice(0, -1).join(", ")} e ${numeros.at(-1)}`;
+  return `CCS: envie a posicao atual dos containers ${lista}: ${url}`;
+}
+
+async function enviarPedidoPosicao({ c, dest, base, motivo, agora, numeros = [c.numero] }) {
   if (!base) {
     await registrarSms({
       containerId: c.id, ...chaveDestino(dest), tipo: "POSICAO", status: "FALHA", texto: "(não enviado)", motivo,
@@ -340,7 +348,7 @@ async function enviarPedidoPosicao({ c, dest, base, motivo, agora }) {
   });
   const status = await enviarAoDestino({
     dest, containerId: c.id, tipo: "POSICAO", motivo,
-    texto: `CCS: envie a posicao atual do container ${c.numero}: ${base}/p/${codigo}`,
+    texto: textoDoPedido(numeros, `${base}/p/${codigo}`),
   });
   // SMS não saiu: o link não chegou a ninguém.
   if (status === "FALHA" || status === "SEM_CELULAR") await prisma.solicitacaoPosicao.delete({ where: { id: pedido.id } });
@@ -381,8 +389,16 @@ export async function executarRastreamento(agora = new Date()) {
       data: { rastreioUltimoEnvioEm: agora },
     });
     if (reserva.count !== 1) continue;
+    // Viagem (v3.8): os outros containers do mesmo caminhão entram neste pedido (um SMS só) e o
+    // próximo pedido deles passa a contar daqui.
+    const juntos = await companheirosDeViagem(c.id);
+    let numeros = [c.numero];
+    if (juntos.length) {
+      await prisma.container.updateMany({ where: { id: { in: juntos }, status: { notIn: STATUS_ENCERRADOS } }, data: { rastreioUltimoEnvioEm: agora } });
+      numeros = [c.numero, ...(await prisma.container.findMany({ where: { id: { in: juntos } }, select: { numero: true }, orderBy: { id: "asc" } })).map((x) => x.numero)];
+    }
     const dest = await buscarDestinatario(destinoDoContainer(c));
-    const status = await enviarPedidoPosicao({ c, dest, base, motivo: devidos.map((m) => m.texto).join(" · "), agora });
+    const status = await enviarPedidoPosicao({ c, dest, base, motivo: devidos.map((m) => m.texto).join(" · ") + (juntos.length ? ` (viagem com ${numeros.slice(1).join(", ")})` : ""), agora, numeros });
     if (status === "FALHA") {
       // Tenta de novo em alguns minutos: volta o "último envio" para o intervalo vencer mais cedo.
       const volta = Math.min(...devidos.map((m) => m.intervaloMin)) - NOVA_TENTATIVA_MIN;
@@ -503,8 +519,25 @@ export async function registrarPosicaoDoLink({ codigo, latitude, longitude, prec
         origem: "LINK_SMS", etapa: pedido.container.status, registradaEm: agora,
       },
     });
+    await posicaoParaAViagem(tx, pedido, { latitude, longitude, precisaoM, origem: "LINK_SMS", agora });
     return { ok: true, numero: pedido.container.numero };
   });
+}
+
+// Viagem (v3.8): a mesma posição vale para os outros containers do caminhão.
+async function posicaoParaAViagem(cliente, pedido, { latitude, longitude, precisaoM, origem, agora }) {
+  const juntos = await companheirosDeViagem(pedido.containerId);
+  if (!juntos.length) return [];
+  const outros = await cliente.container.findMany({ where: { id: { in: juntos }, status: { notIn: STATUS_ENCERRADOS } }, select: { id: true, status: true } });
+  if (outros.length) {
+    await cliente.posicaoContainer.createMany({
+      data: outros.map((o) => ({
+        containerId: o.id, usuarioId: pedido.usuarioId, motoristaId: pedido.motoristaId, latitude, longitude, precisaoM: precisaoM ?? null,
+        origem, etapa: o.status, registradaEm: agora,
+      })),
+    });
+  }
+  return outros.map((o) => o.id);
 }
 
 /**
@@ -521,7 +554,9 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
   if (ultima && agora - ultima.registradaEm < INTERVALO_MINIMO_ACOMPANHAMENTO_S * 1000) {
     return { ok: false, cedo: true, mensagem: "Posição recebida há menos de 1 minuto." };
   }
-  // Sinal de vida da página (mesmo quando a posição parada não é gravada de novo).
+  // Sinal de vida da página (mesmo quando a posição parada não é gravada de novo) — também nos
+  // outros containers da viagem (v3.8), que recebem as mesmas posições.
+  const juntos = await companheirosDeViagem(pedido.containerId);
   await prisma.container.update({
     where: { id: pedido.containerId },
     data: {
@@ -529,6 +564,9 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
       ...(pedido.container.acompanhamentoEstado !== "ATIVO" ? { acompanhamentoEstado: "ATIVO", acompanhamentoEstadoEm: agora } : {}),
     },
   });
+  if (juntos.length) {
+    await prisma.container.updateMany({ where: { id: { in: juntos } }, data: { acompanhamentoSinalEm: agora, acompanhamentoEstado: "ATIVO" } });
+  }
   const mesmoLugar = ultima && distanciaM({ latitude: Number(ultima.latitude), longitude: Number(ultima.longitude) }, { latitude, longitude }) <= RAIO_REPETIDA_M;
   if (mesmoLugar && agora - ultima.registradaEm < GRAVAR_PARADO_A_CADA_MIN * MIN) {
     return { ok: true, gravada: false, numero: pedido.container.numero }; // parado: recebida, não grava de novo
@@ -539,6 +577,7 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
       origem: "ACOMPANHAMENTO", etapa: pedido.container.status, registradaEm: agora,
     },
   });
+  await posicaoParaAViagem(prisma, pedido, { latitude, longitude, precisaoM, origem: "ACOMPANHAMENTO", agora });
   return { ok: true, gravada: true, numero: pedido.container.numero };
 }
 
@@ -546,8 +585,9 @@ export async function registrarAcompanhamento({ codigo, latitude, longitude, pre
 export async function registrarEstadoAcompanhamento({ codigo, estado, agora = new Date() }) {
   const { pedido, erro } = await pedidoDoCodigo(codigo, agora, { acompanhamento: true });
   if (!pedido) return { ok: false, mensagem: erro };
-  await prisma.container.update({
-    where: { id: pedido.containerId },
+  const juntos = await companheirosDeViagem(pedido.containerId);
+  await prisma.container.updateMany({
+    where: { id: { in: [pedido.containerId, ...juntos] } },
     data: { acompanhamentoEstado: estado, acompanhamentoEstadoEm: agora, ...(estado === "ATIVO" ? { acompanhamentoSinalEm: agora } : {}) },
   });
   return { ok: true };

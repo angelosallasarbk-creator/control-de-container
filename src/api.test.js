@@ -2630,6 +2630,8 @@ test("v3.0: invasão — organização B ataca TODAS as rotas com identificador 
     ["POST /api/qr/:token/leituras", () => b.post(`/api/qr/${etiqueta.token}/leituras`).send({ temperatura: -18 })],
     ["POST /api/qr/:token/passagem", () => b.post(`/api/qr/${etiqueta.token}/passagem`).send({})],
     ["POST /api/qr/:token/portaria", () => b.post(`/api/qr/${etiqueta.token}/portaria`).send({ movimento: "ENTRADA", placa: "ABC1D23" })],
+    ["POST /api/qr/:token/viagem", () => b.post(`/api/qr/${etiqueta.token}/viagem`).send({ comContainerId: cont.id })],
+    ["POST /api/qr/:token/portaria/ficam", () => b.post(`/api/qr/${etiqueta.token}/portaria/ficam`).send({ containerIds: [cont.id] })],
     ["POST /api/qr/:token/vincular", () => b.post(`/api/qr/${etiqueta.token}/vincular`).send({ numero: cont.numero, temperatura: -18 })],
     ["POST /api/tokens/:id/revogar", () => b.post(`/api/tokens/${token.id}/revogar`).send({})],
     ["PATCH /api/usuarios/:id", () => b.patch(`/api/usuarios/${usuarioA.id}`).send({ ativo: false, perfil: "ADMIN" })],
@@ -3206,7 +3208,8 @@ test("v3.6 chaves compostas: o banco recusa apontar para cadastro de outro clien
   const [{ fks, idx }] = await comoSistema(() => bruto.$queryRaw`
     SELECT (SELECT count(*)::int FROM pg_constraint WHERE contype = 'f' AND conname LIKE '%\_org\_fkey') AS fks,
            (SELECT count(*)::int FROM pg_indexes WHERE indexname LIKE '%\_id\_organizacaoId\_key') AS idx`);
-  assert.deepEqual([fks, idx], [31, 11]);
+  // v3.6: 31 + v3.8 (viagem): 3 chaves e 1 índice.
+  assert.deepEqual([fks, idx], [34, 12]);
 });
 
 test("v3.7 entrega a definir: previsão parcial, plano em duas partes, alerta, só equipe e portaria definem", async () => {
@@ -3271,4 +3274,89 @@ test("v3.7 entrega a definir: previsão parcial, plano em duas partes, alerta, s
   assert.deepEqual(await alertas(c2.body.id), []);
 
   for (const id of [c1.body.id, c2.body.id]) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste 3.7" });
+});
+
+test("v3.8 viagem: 2 containers no mesmo caminhão — pergunta no QR, 1 SMS, posição para os dois, portaria escolhe quem fica", async () => {
+  const executarRastreamento = naOrg((await import("./lib/rastreamento.js")).executarRastreamento);
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const a = agentes.ADMIN;
+  const tr = await logar("transportador@teste.local");
+  const po = await logar("portaria@teste.local");
+  const trId = (await prisma.usuario.findFirst({ where: { email: "transportador@teste.local" } })).id;
+  assert.equal((await a.patch(`/api/usuarios/${trId}`).send({ celular: "11977770038" })).status, 200);
+  const TEL = "+5511977770038";
+  const cfg = (await a.get("/api/configuracao")).body;
+  await a.put("/api/configuracao").send({ ...cfg, rastreioSmsAtivo: 1, rastreioPersonalizado: 1 });
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const trajeto = { portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos };
+  const criar = async (numero) => {
+    const r = await a.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad, ...trajeto });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body;
+  };
+  const etiqueta = async () => (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas[0];
+  const coletar = async (e, numero) => {
+    const r = await tr.post(`/api/qr/${e.token}/coleta`).send({ numero, portoRetiradaId: ids.santos });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body;
+  };
+
+  // ---- Monta a viagem: 2º QR pergunta "vai no mesmo caminhão?" ----
+  const v1 = await criar("VGMU3800003");
+  const v2 = await criar("VGMU3800019");
+  const e1 = await etiqueta();
+  const e2 = await etiqueta();
+  const r1 = await coletar(e1, "VGMU3800003");
+  assert.deepEqual(r1.sugestoesViagem, [], "1º container: nada a sugerir");
+  const r2 = await coletar(e2, "VGMU3800019");
+  assert.deepEqual(r2.sugestoesViagem.map((s) => s.numero), ["VGMU3800003"]);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e2.token}/viagem`).send({ comContainerId: v1.id })).status, 409, "quem não registrou não monta a viagem");
+  const junta = await tr.post(`/api/qr/${e2.token}/viagem`).send({ comContainerId: v1.id });
+  assert.equal(junta.status, 200, JSON.stringify(junta.body));
+  assert.deepEqual(junta.body.viagem.containers.map((c) => c.numero).sort(), ["VGMU3800003", "VGMU3800019"]);
+  assert.deepEqual(junta.body.sugestoesViagem, [], "já juntos: não pergunta de novo");
+  assert.deepEqual((await a.get(`/api/containers/${v1.id}`)).body.viagem.containers.map((c) => c.numero).sort(), ["VGMU3800003", "VGMU3800019"], "ficha mostra a viagem");
+
+  // ---- Um SMS para os dois; a posição do link vai para os dois ----
+  await prisma.container.updateMany({ where: { id: { in: [v1.id, v2.id] } }, data: { rastreioUltimoEnvioEm: new Date(Date.now() - 40 * 60e3) } });
+  const antes = caixaDeSaidaSms.filter((s) => s.para === TEL).length;
+  await executarRastreamento();
+  const novos = caixaDeSaidaSms.filter((s) => s.para === TEL).slice(antes);
+  assert.equal(novos.length, 1, "um SMS só por viagem");
+  assert.match(novos[0].texto, /containers VGMU3800003 e VGMU3800019|containers VGMU3800019 e VGMU3800003/);
+  assert.ok(novos[0].texto.length <= 160);
+  const codigo = /\/p\/([A-Za-z0-9_-]+)$/.exec(novos[0].texto)[1];
+  assert.equal((await request(app).post(`/api/posicao/${codigo}`).send({ latitude: -23.7, longitude: -46.5, precisaoM: 9 })).status, 201);
+  for (const v of [v1, v2]) assert.equal(await prisma.posicaoContainer.count({ where: { containerId: v.id, origem: "LINK_SMS" } }), 1, `posição gravada no ${v.numero}`);
+
+  // ---- Portaria: entrada do V1; o V2 (mesmo ponto) é oferecido e fica também ----
+  const ent = await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "ENTRADA", placa: "VGM1A23" });
+  assert.equal(ent.status, 201, JSON.stringify(ent.body));
+  assert.deepEqual(ent.body.ficamTambem.map((x) => x.numero), ["VGMU3800019"]);
+  assert.equal((await agentes.OPERADOR.post(`/api/qr/${e1.token}/portaria/ficam`).send({ containerIds: [v2.id] })).status, 403, "só portaria");
+  const ficam = await po.post(`/api/qr/${e1.token}/portaria/ficam`).send({ containerIds: [v2.id] });
+  assert.equal(ficam.status, 200, JSON.stringify(ficam.body));
+  const d2 = await prisma.container.findUnique({ where: { id: v2.id } });
+  assert.deepEqual([d2.status, d2.placa], ["NA_FABRICA", "VGM1A23"]);
+  assert.ok((await prisma.eventoContainer.findFirst({ where: { containerId: v2.id, statusPara: "NA_FABRICA" } })).observacao.includes("mesmo caminhão"));
+  assert.equal((await a.get(`/api/containers/${v1.id}`)).body.viagem, null, "viagem terminou");
+
+  // ---- Outra viagem: o V4 fica, o V5 segue (não escolhido) ----
+  const v4 = await criar("VGMU3800024");
+  const v5 = await criar("VGMU3800030");
+  const e4 = await etiqueta();
+  const e5 = await etiqueta();
+  await coletar(e4, "VGMU3800024");
+  await coletar(e5, "VGMU3800030");
+  assert.equal((await tr.post(`/api/qr/${e5.token}/viagem`).send({ comContainerId: v4.id })).status, 200);
+  const ent4 = await po.post(`/api/qr/${e4.token}/portaria`).send({ movimento: "ENTRADA", placa: "VGM1A23" });
+  assert.deepEqual(ent4.body.ficamTambem.map((x) => x.numero), ["VGMU3800030"]);
+  const d5 = await prisma.container.findUnique({ where: { id: v5.id } });
+  assert.equal(d5.status, "COLETADO", "o não escolhido segue viagem");
+  assert.equal((await a.get(`/api/containers/${v5.id}`)).body.viagem, null, "sozinho: viagem terminou");
+  assert.ok(await prisma.viagemContainer.findFirst({ where: { containerId: v5.id, saiuEm: { not: null } } }), "histórico fica");
+
+  await a.put("/api/configuracao").send(cfg);
+  for (const v of [v1, v2, v4, v5]) await a.post(`/api/containers/${v.id}/cancelar`).send({ motivo: "fim do teste 3.8" });
 });
