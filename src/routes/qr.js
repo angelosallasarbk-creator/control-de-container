@@ -313,6 +313,8 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
       if (!b.novo) {
         throw erroHttp(404, `O container ${numero} ainda não está cadastrado. Preencha os dados abaixo para cadastrá-lo.`, { codigo: "CONTAINER_NAO_CADASTRADO", numero });
       }
+      // Entrega a definir (v3.7): quem define é a equipe (ficha) ou a portaria — não a coleta.
+      delete informados.portoEntregaId;
       // Locais conferidos pela regra do Tipo de Operação escolhido (b.novo.tipoOperacaoId; vazio = padrão).
       novo = await validarNovoContainer(
         { ...b.novo, numero: b.numero, confirmarDigito: b.confirmarDigito, portoRetiradaId: retirada.id, ...informados, coletadoEm },
@@ -323,6 +325,7 @@ qrRouter.post("/:token/coleta", requirePermissao("qr.registrar"), asyncHandler(a
   if (container) {
     // Container já cadastrado: retirada, carregamento e entrega seguem o fluxo do tipo dele.
     conferirRetirada(retirada, container);
+    if (!container.portoEntregaId) delete informados.portoEntregaId; // a definir: equipe ou portaria (v3.7)
     trajeto = await validarLocais(informados, container);
   }
   const reefer = controlaTemperatura(container ?? novo);
@@ -439,6 +442,10 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
   }
   const notaPlaca = trocouPlaca ? ` · placa ${container.placa} → ${placa} (motivo: ${motivoPlaca.slice(0, 200)})` : ` · placa ${placa}`;
   const temperatura = reefer ? decimal(b.temperatura, "Temperatura", { obrigatorio: true, min: -60, max: 60 }) : null;
+  // Entrega a definir (v3.7): a portaria pode definir o local de entrega na leitura.
+  const entregaDefinida = !container.portoEntregaId && b.portoEntregaId !== undefined && b.portoEntregaId !== null && b.portoEntregaId !== ""
+    ? (await validarLocais({ portoEntregaId: b.portoEntregaId }, container)).portoEntregaId
+    : null;
 
   const anterior = e.status === "LIVRE" ? await prisma.etiquetaQR.findFirst({ where: { containerId: container.id, status: "VINCULADA" } }) : null;
   if (anterior && !b.substituir) {
@@ -451,7 +458,7 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
   const completadas = etapas.slice(0, -1);
   const final = await prisma.$transaction(async (tx) => {
     // Condição no WHERE: se outra pessoa avançou o container no meio tempo, nada é gravado.
-    const dados = { status: alvo, placa, ...Object.fromEntries(etapas.map((s) => [CAMPO_DATA[s], ocorridoEm])) };
+    const dados = { status: alvo, placa, ...Object.fromEntries(etapas.map((s) => [CAMPO_DATA[s], ocorridoEm])), ...(entregaDefinida ? { portoEntregaId: entregaDefinida } : {}) };
     const r = await tx.container.updateMany({ where: { id: container.id, status: container.status }, data: dados });
     if (r.count !== 1) throw erroHttp(409, "O container acabou de mudar de etapa. Leia o QR de novo.");
     let de = container.status;
@@ -478,12 +485,17 @@ qrRouter.post("/:token/portaria", requirePermissao("qr.registrar"), asyncHandler
       }, tx);
     }
     const atualizado = { ...container, ...dados };
+    if (entregaDefinida) {
+      // Local de entrega definido pela portaria → Histórico da ficha (mudança de trajeto).
+      await registrarMudancaTrajeto(tx, { container, antes: container, depois: atualizado, usuarioEmail: email, origem: "QR" });
+    }
     if (reefer) {
       await registrarLeitura({ container: atualizado, temperatura, lidaEm: new Date(), origem: "QRCODE", usuarioEmail: email, extras: { etiquetaId: e.id, ...posicao } }, tx);
     }
     return atualizado;
   });
 
+  if (entregaDefinida) await prepararRota(final.id);
   await sincronizarAlertas(final.id);
   await assumirRastreio({ containerId: final.id, ...quemRegistrou(req), posicao });
   res.status(201).json({

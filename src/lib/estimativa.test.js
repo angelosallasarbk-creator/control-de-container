@@ -93,12 +93,25 @@ test("programado com deadline: simula coleta agora e diz até quando coletar", (
 });
 
 test("sem locais ou sem distância: indica o que falta", () => {
-  const p = estimarCiclo({ ...base, portoEntregaId: null }, ctx(100, 100), new Date(), cfg);
+  const p = estimarCiclo({ ...base, portoRetiradaId: null }, ctx(100, 100), new Date(), cfg);
   assert.equal(p.disponivel, false);
-  assert.deepEqual(p.faltando, ["local de entrega"]);
+  assert.deepEqual(p.faltando, ["local de retirada"]);
   const semKm = estimarCiclo(base, ctx(null, 100), new Date(), cfg);
   assert.match(semKm.faltando[0], /distância retirada/);
   assert.equal(estimarCiclo({ ...base, status: "ENTREGUE_PORTO" }, ctx(1, 1), new Date(), cfg), null);
+});
+
+test("entrega a definir (v3.7): previsão parcial até a saída do carregamento, sem ETA final nem risco", () => {
+  const p = estimarCiclo({ ...base, portoEntregaId: null }, ctx(100, 100), new Date(), cfg);
+  assert.equal(p.disponivel, true);
+  assert.equal(p.parcial, true);
+  assert.ok(p.previsaoChegadaFabrica instanceof Date && p.previsaoSaidaFabrica > p.previsaoChegadaFabrica);
+  assert.deepEqual([p.previsaoEntrega, p.cicloHoras, p.folgaHoras, p.riscoDemurrage, p.riscoDeadline], [null, null, null, null, null]);
+  assert.ok(p.trechos.at(-1).aDefinir);
+  // Sem local de operação não há o que prever sem a entrega.
+  const direto = estimarCiclo({ ...base, portoEntregaId: null, localCarregamentoId: null, fluxo: { etapas: ["COLETADO", "ENTREGUE_PORTO"] } }, { kmDireto: 100, filaEntregaHoras: 4 }, new Date(), cfg);
+  assert.equal(direto.disponivel, false);
+  assert.deepEqual(direto.faltando, ["local de entrega (a definir)"]);
 });
 
 test("programado com coleta futura: a simulação parte da data programada", () => {

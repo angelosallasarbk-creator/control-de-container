@@ -96,6 +96,14 @@ const opcoes = ref(null);
 const precisaCadastro = ref(false);
 // Portaria: entrada ou saída do ponto de carregamento.
 const movimento = ref("");
+// Coleta: a entrega só aparece para conferir se já estava programada; senão fica "a definir" (v3.7).
+const entregaProgramada = ref(false);
+// Portaria: define o local de entrega quando ainda está a definir (v3.7).
+const entregaPortaria = ref("");
+const entregaADefinirPortaria = computed(() => {
+  const t = container.value?.trajeto ?? programacao.value?.trajeto;
+  return Boolean(t) && !t.portoEntregaId;
+});
 
 // Localização só funciona em página segura (https) ou localhost — no teste pela rede local (http) não.
 const podeLocalizar = typeof window !== "undefined" && window.isSecureContext && "geolocation" in navigator;
@@ -105,7 +113,9 @@ async function carregar() {
   try {
     // Transportador: busca as opções da coleta junto (a tela já abre com Tipo/Local prontos).
     const transportador = Boolean(props.motorista) || auth.usuario?.perfil === "TRANSPORTADOR";
-    const [r, op] = await Promise.all([q.qr(props.token), transportador && !opcoes.value ? q.qrOpcoesColeta(props.token) : null]);
+    // Portaria também: lista de locais para definir a entrega "a definir" (v3.7).
+    const precisaOpcoes = transportador || auth.usuario?.perfil === "PORTARIA";
+    const [r, op] = await Promise.all([q.qr(props.token), precisaOpcoes && !opcoes.value ? q.qrOpcoesColeta(props.token) : null]);
     if (op) {
       opcoes.value = op;
       // Cadastro pelo QR: começa no Tipo de Operação padrão.
@@ -186,6 +196,7 @@ async function aplicarTrajeto(t) {
   }
   col.carregamentoId = t.localCarregamentoId ?? "";
   col.entregaId = t.portoEntregaId ?? "";
+  entregaProgramada.value = Boolean(t.portoEntregaId);
   trajetoPreenchido.value = Boolean(t.portoRetiradaId || t.localCarregamentoId || t.portoEntregaId);
 }
 // Etiqueta nova: número digitado e válido → busca a programação (se o container já estiver cadastrado).
@@ -370,6 +381,7 @@ async function registrarPortaria(substituir = false) {
       motivoTrocaPlaca: trocaDePlaca.value ? f.motivoPlaca : undefined,
       ocorridoEm: horarioDaLeitura(),
       temperatura: f.temperatura === "" ? undefined : String(f.temperatura).replace(",", "."),
+      portoEntregaId: entregaADefinirPortaria.value && entregaPortaria.value ? entregaPortaria.value : undefined,
       substituir,
       ...(await obterLocalizacao()),
     };
@@ -608,6 +620,15 @@ async function registrarPassagemQr() {
             </span>
           </div>
 
+          <div v-if="entregaADefinirPortaria" class="campo">
+            <label for="entrega-portaria">Local de entrega (está a definir)</label>
+            <select id="entrega-portaria" v-model="entregaPortaria" class="grande-campo">
+              <option value="">Continua a definir</option>
+              <option v-for="l in locaisEntrega" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
+            </select>
+            <span class="dica">Se já souber para onde o container vai, escolha aqui — a previsão e os alertas se completam.</span>
+          </div>
+
           <div class="campo">
             <label for="placa-portaria">Placa do veículo *</label>
             <input
@@ -696,12 +717,15 @@ async function registrarPassagemQr() {
               <option v-for="l in locaisCarregamento" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
-          <div class="campo">
+          <div v-if="entregaProgramada" class="campo">
             <label for="local-entrega">Local de entrega</label>
             <select id="local-entrega" v-model="col.entregaId" class="grande-campo">
-              <option value="">— não informado —</option>
               <option v-for="l in locaisEntrega" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
+          </div>
+          <div v-else class="campo">
+            <label>Local de entrega</label>
+            <div class="mudo">A definir — a operação ou a portaria define depois.</div>
           </div>
           <div v-if="trajetoPreenchido" class="aviso pequeno trajeto-aviso">
             ✓ Retirada, carregamento e entrega vieram da programação do container. Confira e altere só o que estiver diferente.

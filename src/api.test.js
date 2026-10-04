@@ -3208,3 +3208,67 @@ test("v3.6 chaves compostas: o banco recusa apontar para cadastro de outro clien
            (SELECT count(*)::int FROM pg_indexes WHERE indexname LIKE '%\_id\_organizacaoId\_key') AS idx`);
   assert.deepEqual([fks, idx], [31, 11]);
 });
+
+test("v3.7 entrega a definir: previsão parcial, plano em duas partes, alerta, só equipe e portaria definem", async () => {
+  const a = agentes.ADMIN;
+  const tr = await logar("transportador@teste.local");
+  const po = await logar("portaria@teste.local");
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const novo = (numero) => a.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad, portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao });
+
+  // Criado sem entrega: previsão parcial e plano congelado só na parte conhecida.
+  const c1 = await novo("ADFU3700001");
+  assert.equal(c1.status, 201, JSON.stringify(c1.body));
+  assert.equal(c1.body.portoEntregaId, null);
+  const p1 = c1.body.situacao.previsao;
+  assert.deepEqual([p1.disponivel, p1.parcial, p1.previsaoEntrega], [true, true, null], JSON.stringify(p1).slice(0, 300));
+  let db = await prisma.container.findUnique({ where: { id: c1.body.id } });
+  assert.equal(db.planejamento.entregaPendente, true);
+  assert.equal(db.planejamento.ENTREGUE_PORTO, null);
+  const chegadaPlanejada = db.planejamento.NA_FABRICA;
+  assert.ok(chegadaPlanejada);
+  assert.equal((await a.get("/api/painel")).body.grupos.flatMap((g) => g.containers).find((x) => x.id === c1.body.id).entregaADefinir, true, "Home mostra 'a definir'");
+
+  // Transportador na coleta NÃO define a entrega a definir (o campo é ignorado).
+  const [e1] = (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const col = await tr.post(`/api/qr/${e1.token}/coleta`).send({ numero: "ADFU3700001", portoRetiradaId: ids.santos, portoEntregaId: ids.santos });
+  assert.equal(col.status, 201, JSON.stringify(col.body));
+  assert.equal((await prisma.container.findUnique({ where: { id: c1.body.id } })).portoEntregaId, null);
+
+  // Alerta: nada no trânsito para o carregamento; atenção na chegada.
+  const alertas = async (id) => (await prisma.alerta.findMany({ where: { containerId: id, tipo: "ENTREGA_A_DEFINIR", chaveAberta: { not: null } } })).map((x) => x.nivel);
+  assert.deepEqual(await alertas(c1.body.id), []);
+  const ent = await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "ENTRADA", placa: "ABC1D23" });
+  assert.equal(ent.status, 201, JSON.stringify(ent.body));
+  assert.deepEqual(await alertas(c1.body.id), ["ATENCAO"]);
+
+  // Portaria define a entrega na saída: alerta some, trajeto no Histórico, plano completado (a parte congelada não muda).
+  const sai = await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "SAIDA", placa: "ABC1D23", portoEntregaId: ids.santos });
+  assert.equal(sai.status, 201, JSON.stringify(sai.body));
+  db = await prisma.container.findUnique({ where: { id: c1.body.id } });
+  assert.equal(db.portoEntregaId, ids.santos);
+  assert.deepEqual(await alertas(c1.body.id), []);
+  assert.equal(db.planejamento.entregaPendente, false);
+  assert.ok(db.planejamento.ENTREGUE_PORTO, "entrega planejada preenchida");
+  assert.equal(db.planejamento.NA_FABRICA, chegadaPlanejada, "parte congelada não muda");
+  assert.equal(await prisma.mudancaTrajeto.count({ where: { containerId: c1.body.id } }), 1);
+  const ficha = (await a.get(`/api/containers/${c1.body.id}`)).body;
+  assert.equal(ficha.situacao.previsao.parcial, undefined, "previsão completa");
+
+  // Saída sem definir: alerta crítico; a equipe define pelo Editar trajeto.
+  const c2 = await novo("ADFU3700017");
+  assert.equal(c2.status, 201, JSON.stringify(c2.body));
+  await prisma.container.update({ where: { id: c2.body.id }, data: { status: "SAIU_FABRICA", coletadoEm: new Date(Date.now() - 30 * 3600e3), chegadaFabricaEm: new Date(Date.now() - 20 * 3600e3), saidaFabricaEm: new Date(Date.now() - 3600e3) } });
+  const { sincronizarAlertas } = await import("./lib/alertas.js");
+  await naOrg(sincronizarAlertas)(c2.body.id);
+  assert.deepEqual(await alertas(c2.body.id), ["CRITICO"]);
+  // Editar trajeto aceita a entrega "a definir" (localId vazio) e também defini-la.
+  const pontos = (entrega) => [{ papel: "RETIRADA", localId: ids.santos }, { papel: "CARREGAMENTO", localId: ids.cubatao }, { papel: "ENTREGA", localId: entrega }];
+  assert.equal((await a.put(`/api/containers/${c2.body.id}/trajeto`).send({ pontos: pontos("") })).status, 200);
+  const def = await a.put(`/api/containers/${c2.body.id}/trajeto`).send({ pontos: pontos(ids.santos) });
+  assert.equal(def.status, 200, JSON.stringify(def.body));
+  assert.deepEqual(await alertas(c2.body.id), []);
+
+  for (const id of [c1.body.id, c2.body.id]) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste 3.7" });
+});

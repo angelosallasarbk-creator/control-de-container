@@ -8,7 +8,7 @@ const HORA = 3600 * 1000;
 const agora = new Date("2026-09-24T15:00:00Z");
 const base = {
   tipo: "DRY_40", status: "NA_FABRICA", metaEstadiaHoras: 24, alertaEstadiaHoras: 6, custoEstadiaPorHora: null,
-  freeTimeDias: 7, valorDiaria: 100, moeda: "USD", alertaDemurrageDias: 2,
+  freeTimeDias: 7, valorDiaria: 100, moeda: "USD", alertaDemurrageDias: 2, portoEntregaId: 1,
 };
 
 // ---------- ISO 6346 ----------
@@ -200,4 +200,15 @@ test("temperatura fora da faixa alerta em qualquer etapa ativa (inclusive Progra
   }
   const entregue = { ...base, status: "ENTREGUE_PORTO" };
   assert.deepEqual(alertasDesejados(entregue, calcularSituacao(entregue, leituras, agora, 240)), [], "encerrado não alerta");
+});
+
+test("entrega a definir (v3.7): atenção no carregamento, crítico a caminho da entrega, nada antes", () => {
+  const semEntrega = { ...base, portoEntregaId: null, chegadaFabricaEm: new Date(agora - 1 * HORA) };
+  const nivel = (c) => alertasDesejados(c, calcularSituacao(c, [], agora, 240)).filter((a) => a.tipo === "ENTREGA_A_DEFINIR").map((a) => a.nivel);
+  assert.deepEqual(nivel({ ...semEntrega, status: "COLETADO", chegadaFabricaEm: null }), [], "antes do carregamento: nada");
+  assert.deepEqual(nivel({ ...semEntrega, status: "NA_FABRICA" }), ["ATENCAO"]);
+  assert.deepEqual(nivel({ ...semEntrega, status: "SAIU_FABRICA", saidaFabricaEm: agora }), ["CRITICO"]);
+  assert.deepEqual(nivel({ ...semEntrega, status: "COLETADO", chegadaFabricaEm: null, fluxo: { etapas: ["COLETADO", "ENTREGUE_PORTO"] } }), ["CRITICO"], "sem local de operação: a caminho da entrega desde a coleta");
+  assert.deepEqual(nivel({ ...semEntrega, status: "SAIU_FABRICA", portoEntregaId: 5 }), [], "definida: some");
+  assert.equal(semaforo(calcularSituacao({ ...semEntrega, status: "SAIU_FABRICA", saidaFabricaEm: agora }, [], agora, 240)), "VERMELHO");
 });

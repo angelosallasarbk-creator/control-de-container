@@ -78,7 +78,8 @@ function perna(origemId, destinoId, paradas, km) {
 // containers: precisam de id, portoRetiradaId, localCarregamentoId, portoEntregaId, metaEstadiaHoras.
 // As paradas do trajeto (ParadaContainer) são lidas aqui mesmo.
 export async function montarContextos(containers, config) {
-  const comTrajeto = containers.filter((c) => c.portoRetiradaId && (c.localCarregamentoId || !temOperacao(c)) && c.portoEntregaId);
+  // Entrega a definir (v3.7): o contexto sai mesmo sem a entrega (previsão parcial da ida).
+  const comTrajeto = containers.filter((c) => c.portoRetiradaId && (c.localCarregamentoId || !temOperacao(c)));
   const paradas = await paradasPorContainer(comTrajeto.map((c) => c.id));
   const ids = new Set();
   for (const c of comTrajeto) {

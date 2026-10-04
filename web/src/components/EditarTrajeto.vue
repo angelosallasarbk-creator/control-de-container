@@ -116,7 +116,8 @@ function remover(i) {
   pontos.value = pontos.value.filter((_, j) => j !== i);
 }
 
-const faltaEscolher = computed(() => pontos.value.some((p) => !p.localId));
+// A entrega pode ficar "A definir" (v3.7); os outros pontos precisam de local.
+const faltaEscolher = computed(() => pontos.value.some((p) => !p.localId && p.papel !== "ENTREGA"));
 async function salvar() {
   erro.value = null;
   if (faltaEscolher.value) {
@@ -159,8 +160,9 @@ async function salvar() {
               <span v-if="comCarregamento && p.papel === 'PARADA' && !foraDoLugar(i) && !p.nova" class="chip pequeno">{{ faseDe(i) === "ANTES_CARREGAMENTO" ? "antes do carregamento" : "depois do carregamento" }}</span>
               <span v-if="p.passouEm" class="chip verde pequeno">passagem registrada</span>
             </div>
-            <select v-model="p.localId" :aria-label="ROTULO[p.papel]" required @change="escolheu(p)">
-              <option value="" disabled>{{ p.papel === "PARADA" ? "Escolha o ponto (ex.: Ponto Fiscal)…" : "Escolha o local…" }}</option>
+            <select v-model="p.localId" :aria-label="ROTULO[p.papel]" :required="p.papel !== 'ENTREGA'" @change="escolheu(p)">
+              <option v-if="p.papel === 'ENTREGA'" value="">A definir</option>
+              <option v-else value="" disabled>{{ p.papel === "PARADA" ? "Escolha o ponto (ex.: Ponto Fiscal)…" : "Escolha o local…" }}</option>
               <option v-for="l in opcoes(p)" :key="l.id" :value="l.id">
                 {{ l.pontoCarregamento ? "Ponto de Carregamento: " : "" }}{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}{{ p.papel === "PARADA" && l.posicaoParada ? ` — ${ROTULO_POSICAO_PARADA[l.posicaoParada].toLowerCase()}` : "" }}
               </option>

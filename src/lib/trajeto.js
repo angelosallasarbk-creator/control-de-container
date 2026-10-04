@@ -59,15 +59,18 @@ export async function validarTrajeto(pontos, container) {
     where: { id: { in: Object.values(regras).map((r) => r?.tipoLocalId).filter(Boolean) } }, select: { id: true, nome: true },
   })).map((t) => [t.id, t.nome]));
 
+  // Entrega a definir (v3.7): o ponto de entrega pode vir sem local.
+  const entregaADefinir = (i) => papeis[i] === "ENTREGA" && (pontos[i]?.localId === null || pontos[i]?.localId === undefined || pontos[i]?.localId === "");
   const ids = pontos.map((p, i) => {
+    if (entregaADefinir(i)) return null;
     const n = Number(p?.localId);
     if (!Number.isInteger(n) || n <= 0) throw erroHttp(400, `${NOME_DO_PAPEL[papeis[i]]} (posição ${i + 1}): escolha o local.`);
     return n;
   });
-  const locais = new Map((await prisma.local.findMany({ where: { id: { in: ids } }, include: { tipo: true } })).map((l) => [l.id, l]));
+  const locais = new Map((await prisma.local.findMany({ where: { id: { in: ids.filter(Boolean) } }, include: { tipo: true } })).map((l) => [l.id, l]));
   // Pontos de Carregamento marcados como "pode ser ponto de parada" (o local deles vale como parada).
   const locaisDeGrupoParada = new Set((await prisma.grupoOperacao.findMany({
-    where: { podeSerParada: true, ativo: true, localId: { in: ids } }, select: { localId: true },
+    where: { podeSerParada: true, ativo: true, localId: { in: ids.filter(Boolean) } }, select: { localId: true },
   })).map((g) => g.localId));
   const atuais = new Map((container.paradas ?? []).map((p) => [p.id, p]));
   const usados = new Set([container.portoRetiradaId, container.localCarregamentoId, container.portoEntregaId, ...[...atuais.values()].map((p) => p.localId)]);
@@ -77,6 +80,10 @@ export async function validarTrajeto(pontos, container) {
 
   pontos.forEach((p, i) => {
     const papel = papeis[i];
+    if (entregaADefinir(i)) {
+      resultado.portoEntregaId = null;
+      return;
+    }
     const local = locais.get(ids[i]);
     const rotulo = `${NOME_DO_PAPEL[papel]} (posição ${i + 1})`;
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);

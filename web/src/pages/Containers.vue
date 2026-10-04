@@ -65,7 +65,7 @@ const ordem = useOrdenacao({
   },
   temperatura: (c) => c.situacao.temperatura?.ultima?.temperatura ?? null,
   deadline: (c) => (c.deadline ? new Date(c.deadline) : null),
-  previsao: (c) => (c.situacao.previsao?.disponivel ? c.situacao.previsao.folgaHoras : null),
+  previsao: (c) => (c.situacao.previsao?.disponivel && !c.situacao.previsao.parcial ? c.situacao.previsao.folgaHoras : null),
 });
 // Região / Ponto de Carregamento: filtros do cabeçalho (múltipla escolha, valem também no Grid).
 const linhas = computed(() => ordem.ordenar(lista.value.filter(passaFiltroContainers)));
@@ -153,7 +153,8 @@ const pag = usePaginacao(() => linhas.value, "containers");
           </td>
           <td :class="c.situacao.deadline && `txt-${c.situacao.deadline.situacao}`">{{ fmtDataHora(c.deadline) }}</td>
           <td>
-            <template v-if="c.situacao.previsao?.disponivel">
+            <span v-if="c.situacao.previsao?.parcial" class="txt-ATENCAO pequeno">entrega a definir</span>
+            <template v-else-if="c.situacao.previsao?.disponivel">
               {{ fmtDataHora(c.situacao.previsao.previsaoEntrega) }}
               <div class="pequeno" :class="`txt-${c.situacao.previsao.riscoDemurrage === 'CRITICO' ? 'VENCIDO' : c.situacao.previsao.riscoDemurrage}`">
                 folga {{ fmtFolga(c.situacao.previsao.folgaHoras) }}

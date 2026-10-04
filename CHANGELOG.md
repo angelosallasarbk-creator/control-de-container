@@ -4,6 +4,21 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.7.0 — não publicada
+
+- **Entrega a definir:** o local de entrega pode ficar "A definir" (cadastro, ficha, Editar trajeto). Antes, sem
+  ele, não havia previsão nenhuma e o plano não congelava; ninguém era avisado.
+  - **Previsão parcial:** coleta, ida, chegada e saída do carregamento (distância da ida na ficha). Sem ETA
+    final, ciclo, folga nem risco de demurrage/deadline até a entrega ser definida.
+  - **Planejado em duas partes:** congela a parte conhecida; quando a entrega é definida, entra só a entrega
+    planejada (com a previsão daquele momento) — a parte já congelada não muda.
+  - **Alerta novo "Definir local de entrega":** atenção no local de carregamento, crítico a caminho da
+    entrega (fluxos sem local de operação: desde a coleta). Some quando a entrega é definida.
+  - **Quem define:** a equipe (ficha → Editar trajeto, que aceita "A definir") e a portaria (campo novo na
+    leitura do QR, registrado no Histórico do trajeto). Na coleta, transportador e motorista não definem.
+  - Home ("Entrega a definir" no card), lista de containers e ficha mostram a situação.
+- Migração `20261011100000_entrega_a_definir` (só acrescenta o tipo de alerta).
+
 ## 3.6.0 — 04/10/2026 (tag `v3.6.0`)
 
 - **Chaves estrangeiras compostas (pendência do item 7 da análise de segurança):** a conferência de chave

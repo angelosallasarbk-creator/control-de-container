@@ -124,8 +124,10 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   const faltando = [];
   if (!c.portoRetiradaId) faltando.push("local de retirada");
   if (!c.localCarregamentoId) faltando.push("local de carregamento");
-  if (!c.portoEntregaId) faltando.push("local de entrega");
   if (!faltando.length && (ctx?.kmIda === null || ctx?.kmIda === undefined)) faltando.push("distância retirada → carregamento (confira as coordenadas)");
+  // Entrega a definir (v3.7): previsão PARCIAL até a saída do carregamento.
+  if (!faltando.length && !c.portoEntregaId) return estimarParcial(c, ctx, agora, cfg, exportacao);
+  if (!c.portoEntregaId) faltando.push("local de entrega (a definir)");
   if (!faltando.length && (ctx?.kmVolta === null || ctx?.kmVolta === undefined)) faltando.push("distância carregamento → entrega (confira as coordenadas)");
   if (faltando.length) return { disponivel: false, faltando };
 
@@ -159,12 +161,56 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   return resultadoDoCiclo(c, { hipotetico, coleta, chegadaFabrica, saidaFabrica, chegadaPorto, entrega, trechos, marcos: [...ida.marcos, ...volta.marcos] }, cfg);
 }
 
+// Entrega a definir (v3.7): calcula o que se sabe — coleta, ida, chegada e saída do carregamento.
+// Sem entrega não há ETA final, ciclo, folga nem risco (ficam null); o plano congela só esta parte.
+function estimarParcial(c, ctx, agora, cfg, exportacao) {
+  const hipotetico = !c.coletadoEm;
+  const aconteceu = (d) => (d ? new Date(d) : null);
+  const futuro = (d) => maisTarde(d, agora);
+  const coleta = aconteceu(c.coletadoEm) ?? futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
+  const ida = percorrerPerna({
+    inicio: coleta, kmTotal: ctx.kmIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
+    nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "carregamento" }, carga: exportacao ? "vazio" : null, fase: "ANTES_CARREGAMENTO",
+    destinoReal: aconteceu(c.chegadaFabricaEm), cfg, futuro,
+  });
+  const chegadaFabrica = ida.fim;
+  const saidaFabrica = aconteceu(c.saidaFabricaEm) ?? futuro(new Date(chegadaFabrica.getTime() + ctx.tempoFabricaHoras * HORA));
+  const lista = [
+    ...ida.trechos.map((t, i) => (i === 0 ? { ...t, hipotetico } : t)),
+    { etapa: "No local de carregamento", horas: ctx.tempoFabricaHoras, fonte: ctx.fonteTempoFabrica, amostras: ctx.amostrasFabrica, inicio: chegadaFabrica, fim: saidaFabrica, real: Boolean(c.saidaFabricaEm) },
+    { etapa: "Carregamento → entrega (local a definir)", aDefinir: true, inicio: saidaFabrica, fim: saidaFabrica, real: false },
+  ];
+  return {
+    disponivel: true,
+    parcial: true,
+    entregaADefinir: true,
+    hipotetico,
+    coletaSimulada: hipotetico ? coleta : null,
+    trechos: lista.map((t) => ({ ...t, km: arred(t.km), horas: t.aDefinir ? null : arred(t.horas ?? (t.fim - t.inicio) / HORA), duracaoHoras: t.aDefinir ? null : arred((t.fim - t.inicio) / HORA) })),
+    paradas: ida.marcos,
+    previsaoChegadaFabrica: chegadaFabrica,
+    previsaoSaidaFabrica: saidaFabrica,
+    previsaoChegadaPorto: null,
+    previsaoEntrega: null,
+    cicloHoras: null,
+    vencimentoFreeTime: null,
+    folgaHoras: null,
+    diasDemurragePrevistos: null,
+    custoPrevisto: null,
+    moeda: c.moeda,
+    folgaDeadlineHoras: null,
+    limiteColeta: null,
+    riscoDemurrage: null,
+    riscoDeadline: null,
+  };
+}
+
 // Tipo de Operação sem local de operação (coleta de cheio, transferência): retirada → paradas →
 // entrega, sem tempo de fábrica. Sem estadia; previsões de chegada/saída do carregamento vazias.
 function estimarDireto(c, ctx, agora, cfg) {
   const faltando = [];
   if (!c.portoRetiradaId) faltando.push("local de retirada");
-  if (!c.portoEntregaId) faltando.push("local de entrega");
+  if (!c.portoEntregaId) faltando.push("local de entrega (a definir)");
   if (!faltando.length && (ctx?.kmDireto === null || ctx?.kmDireto === undefined)) faltando.push("distância retirada → entrega (confira as coordenadas)");
   if (faltando.length) return { disponivel: false, faltando };
   const hipotetico = !c.coletadoEm;
