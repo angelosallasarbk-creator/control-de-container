@@ -95,6 +95,7 @@ export function criarApp() {
   // Precisa ser o último: o middleware de erro só recebe o que vier antes dele.
   app.use((err, _req, res, _next) => {
     if (err.type === "entity.parse.failed") return res.status(400).json({ erro: "JSON inválido no corpo da requisição." });
+    if (err.type === "entity.too.large") return res.status(413).json({ erro: "Arquivo grande demais (máximo 1 MB — até 1.000 containers ou 5.000 motoristas por arquivo)." });
     // 4xx e os 502/503 que o próprio código cria (serviço externo fora/não configurado) têm
     // mensagem pensada para o usuário; qualquer outro erro vira "erro interno" genérico.
     if (err.status && (err.status < 500 || err.status === 502 || err.status === 503)) {

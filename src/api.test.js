@@ -3036,3 +3036,54 @@ test("v3.4 transportadora: nome único só no cliente; mesmo CNPJ reaproveita o 
   const log = (await b.get(`/api/logs?entidade=Transportadora&entidadeId=${ca.body.id}`)).body;
   assert.ok(log.some((l) => /vinculado.*mesmo CNPJ/.test(l.descricao)));
 });
+
+test("v3.4.1: desfazer entrega com outro ativo de mesmo número → 409; total de Custos = soma das fichas; 413 em português", async () => {
+  const { resumir } = await import("../web/src/custos.js");
+  const a = agentes.ADMIN;
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+
+  // Item 4: A entregue, B ativo com o mesmo número, desfazer a entrega de A → 409 (antes: 500).
+  const A = await a.post("/api/containers").send({ numero: "DSFU3410004", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  assert.equal(A.status, 201, JSON.stringify(A.body));
+  await a.post(`/api/containers/${A.body.id}/cancelar`).send({ motivo: "teste desfazer" });
+  const B = await a.post("/api/containers").send({ numero: "DSFU3410004", confirmarDigito: true, tipo: "DRY_40", ...cad });
+  assert.equal(B.status, 201, JSON.stringify(B.body));
+  const desfazer = await a.post(`/api/containers/${A.body.id}/desfazer`);
+  assert.equal(desfazer.status, 409);
+  assert.match(desfazer.body.erro, /Já existe outro container DSFU3410004 ativo/);
+  await a.post(`/api/containers/${B.body.id}/cancelar`).send({ motivo: "fim" });
+
+  // Item 7: N containers com estadia excedida e custo/h "quebrado": total da tela = soma das fichas.
+  let semente = 7;
+  const aleatorio = () => ((semente = (semente * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const criados = [];
+  for (let i = 0; i < 40; i++) {
+    const numero = `CSTU34${String(10000 + i).slice(1)}`;
+    const r = await a.post("/api/containers").send({ numero: numero + "0", confirmarDigito: true, tipo: "DRY_40", ...cad });
+    const id = r.status === 201 ? r.body.id : (await a.post("/api/containers").send({ numero: numero + "0", tipo: "DRY_40", ...cad })).body?.id;
+    if (!id) continue;
+    await prisma.container.update({
+      where: { id },
+      // Saída já registrada: custo fixo (não cresce entre a leitura da tela e a das fichas).
+      data: { status: "SAIU_FABRICA", coletadoEm: new Date(Date.now() - 6 * 24 * 3600e3), chegadaFabricaEm: new Date(Date.now() - (60 + aleatorio() * 60) * 3600e3), saidaFabricaEm: new Date(Date.now() - aleatorio() * 30 * 3600e3), metaEstadiaHoras: 24, custoEstadiaPorHora: Math.round(aleatorio() * 99999) / 100 },
+    });
+    criados.push(id);
+  }
+  assert.ok(criados.length >= 30, `containers de custo criados: ${criados.length}`);
+  const dados = (await a.get("/api/custos")).body;
+  const meus = new Set(criados);
+  const r = resumir({ ...dados, containers: dados.containers.filter((c) => meus.has(c.id)) }, dados.grupos.map((g) => g.id));
+  let fichas = 0;
+  for (const c of dados.containers.filter((x) => meus.has(x.id))) {
+    const f = (await a.get(`/api/containers/${c.id}`)).body;
+    fichas += f.situacao?.estadia?.custo ?? 0;
+  }
+  assert.equal(Math.round((r.estadia.BRL ?? 0) * 100), Math.round(fichas * 100), "total da tela bate ao centavo com a soma das fichas");
+  for (const id of criados) await a.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste de custos" });
+
+  // Planilha > 1 MB: mensagem em português.
+  const grande = await a.post("/api/containers/importar").set("Content-Type", "application/octet-stream").send(Buffer.alloc(1024 * 1024 + 10, 1));
+  assert.equal(grande.status, 413);
+  assert.match(grande.body.erro, /Arquivo grande demais/);
+});

@@ -50,8 +50,10 @@ Cada container pode ter o **trajeto**: local de retirada do vazio (porto, termin
   1. *Aplicação* (`src/lib/tenant.js` + `src/lib/prisma.js`): a organização da requisição fica num contexto e o Prisma
      acrescenta o filtro `organizacaoId` em toda consulta de **primeiro nível** às tabelas de cliente e o preenche em toda
      criação. Sem contexto, a consulta **falha**. ⚠ Relações carregadas junto (`include`/`select` aninhado) **não** recebem
-     esse filtro na aplicação — quem garante é o RLS (camada 2) e a validação das rotas, que só aceitam referências
-     (armador, local, ponto…) da própria organização (teste "referência cruzada" em `src/api.test.js`).
+     esse filtro na aplicação. Na **leitura**, o RLS (camada 2) esconde as linhas de outro cliente. Na **gravação** de
+     uma referência (armador, local, ponto…), quem barra é só a validação das rotas, que aceitam apenas cadastros da
+     própria organização (teste "referência cruzada" em `src/api.test.js`) — a conferência de chave estrangeira do
+     PostgreSQL **não** passa pelo RLS. Ver "Riscos aceitos".
      Rotinas automáticas rodam organização por organização (`paraCadaOrganizacao`).
   2. *Banco* (Row-Level Security): cada consulta roda com `app.org_id` definido; as políticas só liberam linhas daquela
      organização. O sistema conecta pelo usuário `ccs_app` (criado no build por `scripts/preparar-banco.js`), que não
@@ -143,6 +145,18 @@ Motorista **não é usuário do sistema** — com milhares de motoristas, criar 
 - **Pré-cadastrado** (pelo gestor): no 1º acesso confirma o celular pelo código, confere os dados e aceita o termo.
 - **Retenção (LGPD):** posições GPS mais antigas que **90 dias** (Configurações → Rastreamento) são apagadas automaticamente 1x por dia; códigos de acesso com mais de 1 dia e sessões encerradas/vencidas há mais de 30 dias também.
 - O login da equipe continua no mesmo QR ("Sou da equipe"); os usuários do perfil Transportador continuam funcionando.
+
+## Riscos aceitos (registrados)
+
+- **Referência cruzada sem barreira no banco (v3.4.1):** se uma rota com defeito gravasse num registro de um cliente o id
+  de um cadastro de outro cliente, o banco aceitaria (chave estrangeira não passa pelo RLS). Não vaza dado — o RLS
+  esconde o cadastro do outro —, mas o registro fica preso a ele e a ficha passa a dar erro 500. Mitigação atual:
+  validação das rotas + teste automático de referência cruzada. Correção estrutural pendente: chaves estrangeiras
+  compostas `(id, organizacaoId)`.
+- **"Encerrar acessos" de motorista compartilhado** derruba os acessos dele em todos os clientes: o acesso do motorista
+  pelo celular é um só na plataforma.
+- **E-mail único na plataforma:** ao cadastrar um e-mail que já é de um usuário de outro cliente, a mensagem é genérica
+  ("Este e-mail não pode ser usado"), mas a recusa em si mostra que o e-mail já existe na plataforma.
 
 ## Etiquetas QR (leitura pelo celular)
 

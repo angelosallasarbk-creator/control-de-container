@@ -576,8 +576,13 @@ containersRouter.delete("/:id/paradas/:paradaId/passagem", requirePermissao("con
 }));
 
 // Troca de etapa condicionada à etapa lida: se outra requisição mudou antes, nada é gravado (409).
+// Voltar um container entregue/cancelado para ativo esbarra no índice único (já existe outro ativo
+// com o mesmo número): 409 com mensagem clara, não erro 500 (v3.4.1).
 async function mudarStatus(tx, c, data) {
-  const r = await tx.container.updateMany({ where: { id: c.id, status: c.status }, data });
+  const r = await tx.container.updateMany({ where: { id: c.id, status: c.status }, data }).catch((err) => {
+    if (err.code === "P2002") throw erroHttp(409, `Já existe outro container ${c.numero} ativo no sistema. Encerre ou cancele aquele antes de desfazer esta etapa.`);
+    throw err;
+  });
   if (r.count !== 1) throw erroHttp(409, `O container ${c.numero} acabou de mudar de etapa por outra pessoa. Atualize a tela.`);
 }
 
