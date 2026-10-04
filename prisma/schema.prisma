@@ -126,6 +126,12 @@ model Usuario {
   transportadoraId     Int?
   transportadora       Transportadora?      @relation(fields: [transportadoraId], references: [id])
 
+  org_Container_rastreioResponsavelId Container[]          @relation("Container_rastreioResponsavelId_org")
+  org_MensagemSms_usuarioId           MensagemSms[]        @relation("MensagemSms_usuarioId_org")
+  org_PosicaoContainer_usuarioId      PosicaoContainer[]   @relation("PosicaoContainer_usuarioId_org")
+  org_SolicitacaoPosicao_usuarioId    SolicitacaoPosicao[] @relation("SolicitacaoPosicao_usuarioId_org")
+
+  @@unique([id, organizacaoId], map: "Usuario_id_organizacaoId_key")
   @@index([organizacaoId])
 }
 
@@ -140,6 +146,9 @@ model Regiao {
   criadoEm      DateTime        @default(now())
   grupos        GrupoOperacao[]
 
+  org_GrupoOperacao_regiaoId GrupoOperacao[] @relation("GrupoOperacao_regiaoId_org")
+
+  @@unique([id, organizacaoId], map: "Regiao_id_organizacaoId_key")
   @@unique([organizacaoId, nome])
   @@index([organizacaoId])
 }
@@ -171,6 +180,12 @@ model GrupoOperacao {
   criadoEm            DateTime       @default(now())
   containers          Container[]
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_localId           Local?      @relation("GrupoOperacao_localId_org", fields: [localId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "GrupoOperacao_localId_org_fkey")
+  org_regiaoId          Regiao?     @relation("GrupoOperacao_regiaoId_org", fields: [regiaoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "GrupoOperacao_regiaoId_org_fkey")
+  org_Container_grupoId Container[] @relation("Container_grupoId_org")
+
+  @@unique([id, organizacaoId], map: "GrupoOperacao_id_organizacaoId_key")
   @@unique([organizacaoId, cliente, fabrica])
   @@index([regiaoId])
   @@index([organizacaoId])
@@ -195,6 +210,10 @@ model TipoLocal {
   locais        Local[]
   etapasFluxo   EtapaFluxo[]
 
+  org_EtapaFluxo_tipoLocalId EtapaFluxo[] @relation("EtapaFluxo_tipoLocalId_org")
+  org_Local_tipoId           Local[]      @relation("Local_tipoId_org")
+
+  @@unique([id, organizacaoId], map: "TipoLocal_id_organizacaoId_key")
   @@unique([organizacaoId, nome])
   @@index([organizacaoId])
 }
@@ -217,6 +236,10 @@ model TipoOperacao {
   etapas         EtapaFluxo[]
   containers     Container[]
 
+  org_Container_tipoOperacaoId  Container[]  @relation("Container_tipoOperacaoId_org")
+  org_EtapaFluxo_tipoOperacaoId EtapaFluxo[] @relation("EtapaFluxo_tipoOperacaoId_org")
+
+  @@unique([id, organizacaoId], map: "TipoOperacao_id_organizacaoId_key")
   @@unique([organizacaoId, nome])
   @@index([organizacaoId])
 }
@@ -238,6 +261,11 @@ model EtapaFluxo {
   tipoLocal       TipoLocal?   @relation(fields: [tipoLocalId], references: [id])
   localSugeridoId Int?
   localSugerido   Local?       @relation("LocalSugeridoEtapa", fields: [localSugeridoId], references: [id])
+
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_localSugeridoId Local?       @relation("EtapaFluxo_localSugeridoId_org", fields: [localSugeridoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "EtapaFluxo_localSugeridoId_org_fkey")
+  org_tipoLocalId     TipoLocal?   @relation("EtapaFluxo_tipoLocalId_org", fields: [tipoLocalId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "EtapaFluxo_tipoLocalId_org_fkey")
+  org_tipoOperacaoId  TipoOperacao @relation("EtapaFluxo_tipoOperacaoId_org", fields: [tipoOperacaoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "EtapaFluxo_tipoOperacaoId_org_fkey")
 
   @@index([tipoOperacaoId])
   @@index([organizacaoId])
@@ -273,6 +301,18 @@ model Local {
   paradas           ParadaContainer[]
   etapasSugeridas   EtapaFluxo[]      @relation("LocalSugeridoEtapa")
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_tipoId                        TipoLocal         @relation("Local_tipoId_org", fields: [tipoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Local_tipoId_org_fkey")
+  org_Container_localCarregamentoId Container[]       @relation("Container_localCarregamentoId_org")
+  org_Container_portoEntregaId      Container[]       @relation("Container_portoEntregaId_org")
+  org_Container_portoRetiradaId     Container[]       @relation("Container_portoRetiradaId_org")
+  org_DistanciaRota_destinoId       DistanciaRota[]   @relation("DistanciaRota_destinoId_org")
+  org_DistanciaRota_origemId        DistanciaRota[]   @relation("DistanciaRota_origemId_org")
+  org_EtapaFluxo_localSugeridoId    EtapaFluxo[]      @relation("EtapaFluxo_localSugeridoId_org")
+  org_GrupoOperacao_localId         GrupoOperacao[]   @relation("GrupoOperacao_localId_org")
+  org_ParadaContainer_localId       ParadaContainer[] @relation("ParadaContainer_localId_org")
+
+  @@unique([id, organizacaoId], map: "Local_id_organizacaoId_key")
   @@unique([organizacaoId, nome])
   @@index([tipoId])
   @@index([organizacaoId])
@@ -293,6 +333,10 @@ model DistanciaRota {
   fonte         String
   calculadoEm   DateTime    @default(now())
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_destinoId Local @relation("DistanciaRota_destinoId_org", fields: [destinoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "DistanciaRota_destinoId_org_fkey")
+  org_origemId  Local @relation("DistanciaRota_origemId_org", fields: [origemId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "DistanciaRota_origemId_org_fkey")
+
   @@unique([origemId, destinoId])
   @@index([organizacaoId])
 }
@@ -312,6 +356,9 @@ model Armador {
   criadoEm            DateTime    @default(now())
   containers          Container[]
 
+  org_Container_armadorId Container[] @relation("Container_armadorId_org")
+
+  @@unique([id, organizacaoId], map: "Armador_id_organizacaoId_key")
   @@unique([organizacaoId, nome])
   @@index([organizacaoId])
 }
@@ -340,6 +387,9 @@ model Produto {
   criadoEm          DateTime         @default(now())
   containers        Container[]
 
+  org_Container_produtoId Container[] @relation("Container_produtoId_org")
+
+  @@unique([id, organizacaoId], map: "Produto_id_organizacaoId_key")
   @@unique([organizacaoId, nome])
   @@index([organizacaoId])
 }
@@ -439,6 +489,26 @@ model Container {
   solicitacoesPosicao    SolicitacaoPosicao[]
   mensagensSms           MensagemSms[]
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_armadorId                      Armador              @relation("Container_armadorId_org", fields: [armadorId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_armadorId_org_fkey")
+  org_grupoId                        GrupoOperacao        @relation("Container_grupoId_org", fields: [grupoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_grupoId_org_fkey")
+  org_localCarregamentoId            Local?               @relation("Container_localCarregamentoId_org", fields: [localCarregamentoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_localCarregamentoId_org_fkey")
+  org_portoEntregaId                 Local?               @relation("Container_portoEntregaId_org", fields: [portoEntregaId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_portoEntregaId_org_fkey")
+  org_portoRetiradaId                Local?               @relation("Container_portoRetiradaId_org", fields: [portoRetiradaId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_portoRetiradaId_org_fkey")
+  org_produtoId                      Produto?             @relation("Container_produtoId_org", fields: [produtoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_produtoId_org_fkey")
+  org_rastreioResponsavelId          Usuario?             @relation("Container_rastreioResponsavelId_org", fields: [rastreioResponsavelId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_rastreioResponsavelId_org_fkey")
+  org_tipoOperacaoId                 TipoOperacao?        @relation("Container_tipoOperacaoId_org", fields: [tipoOperacaoId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Container_tipoOperacaoId_org_fkey")
+  org_Alerta_containerId             Alerta[]             @relation("Alerta_containerId_org")
+  org_EtiquetaQR_containerId         EtiquetaQR[]         @relation("EtiquetaQR_containerId_org")
+  org_EventoContainer_containerId    EventoContainer[]    @relation("EventoContainer_containerId_org")
+  org_LeituraTemperatura_containerId LeituraTemperatura[] @relation("LeituraTemperatura_containerId_org")
+  org_MensagemSms_containerId        MensagemSms[]        @relation("MensagemSms_containerId_org")
+  org_MudancaTrajeto_containerId     MudancaTrajeto[]     @relation("MudancaTrajeto_containerId_org")
+  org_ParadaContainer_containerId    ParadaContainer[]    @relation("ParadaContainer_containerId_org")
+  org_PosicaoContainer_containerId   PosicaoContainer[]   @relation("PosicaoContainer_containerId_org")
+  org_SolicitacaoPosicao_containerId SolicitacaoPosicao[] @relation("SolicitacaoPosicao_containerId_org")
+
+  @@unique([id, organizacaoId], map: "Container_id_organizacaoId_key")
   @@index([numero])
   @@index([status])
   @@index([grupoId])
@@ -459,6 +529,9 @@ model EventoContainer {
   registradoEm  DateTime         @default(now())
   usuarioEmail  String
   observacao    String?
+
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container @relation("EventoContainer_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "EventoContainer_containerId_org_fkey")
 
   @@index([containerId])
   @@index([organizacaoId])
@@ -484,6 +557,10 @@ model LeituraTemperatura {
   precisaoM     Int?
 
   // Reenvio da mesma leitura (mesmo container e horário) não duplica.
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container   @relation("LeituraTemperatura_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "LeituraTemperatura_containerId_org_fkey")
+  org_etiquetaId  EtiquetaQR? @relation("LeituraTemperatura_etiquetaId_org", fields: [etiquetaId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "LeituraTemperatura_etiquetaId_org_fkey")
+
   @@unique([containerId, lidaEm])
   @@index([containerId, lidaEm])
   @@index([organizacaoId])
@@ -501,6 +578,9 @@ model LoteEtiquetas {
   etiquetas     EtiquetaQR[]
 
   // Cada usuário só vê/imprime as etiquetas dos lotes que ele gerou.
+  org_EtiquetaQR_loteId EtiquetaQR[] @relation("EtiquetaQR_loteId_org")
+
+  @@unique([id, organizacaoId], map: "LoteEtiquetas_id_organizacaoId_key")
   @@index([criadoPor])
   @@index([organizacaoId])
 }
@@ -531,6 +611,12 @@ model EtiquetaQR {
   criadoEm           DateTime             @default(now())
   leituras           LeituraTemperatura[]
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId                   Container?           @relation("EtiquetaQR_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "EtiquetaQR_containerId_org_fkey")
+  org_loteId                        LoteEtiquetas        @relation("EtiquetaQR_loteId_org", fields: [loteId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "EtiquetaQR_loteId_org_fkey")
+  org_LeituraTemperatura_etiquetaId LeituraTemperatura[] @relation("LeituraTemperatura_etiquetaId_org")
+
+  @@unique([id, organizacaoId], map: "EtiquetaQR_id_organizacaoId_key")
   @@index([containerId])
   @@index([loteId])
   @@index([status])
@@ -555,6 +641,9 @@ model Alerta {
   // Preenchida só enquanto o alerta está aberto ("containerId:tipo:nivel"). O índice único
   // impede abrir o mesmo alerta duas vezes (idempotência do verificador).
   chaveAberta    String?     @unique
+
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container @relation("Alerta_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "Alerta_containerId_org_fkey")
 
   @@index([containerId])
   @@index([encerradoEm])
@@ -624,6 +713,10 @@ model PosicaoContainer {
   etapa         String // status do container no momento
   registradaEm  DateTime    @default(now())
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container @relation("PosicaoContainer_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "PosicaoContainer_containerId_org_fkey")
+  org_usuarioId   Usuario?  @relation("PosicaoContainer_usuarioId_org", fields: [usuarioId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "PosicaoContainer_usuarioId_org_fkey")
+
   @@index([containerId, registradaEm])
   @@index([organizacaoId])
 }
@@ -646,6 +739,10 @@ model SolicitacaoPosicao {
   expiraEm      DateTime
   respondidaEm  DateTime?
   motivo        String? // por que foi pedido (trecho crítico, intervalo, manual…)
+
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container @relation("SolicitacaoPosicao_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "SolicitacaoPosicao_containerId_org_fkey")
+  org_usuarioId   Usuario?  @relation("SolicitacaoPosicao_usuarioId_org", fields: [usuarioId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "SolicitacaoPosicao_usuarioId_org_fkey")
 
   @@index([containerId])
   @@index([organizacaoId])
@@ -670,6 +767,10 @@ model MensagemSms {
   erro          String?
   motivo        String? // pedidos de posição: por que foi pedido
   criadaEm      DateTime     @default(now())
+
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container? @relation("MensagemSms_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "MensagemSms_containerId_org_fkey")
+  org_usuarioId   Usuario?   @relation("MensagemSms_usuarioId_org", fields: [usuarioId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "MensagemSms_usuarioId_org_fkey")
 
   @@index([containerId, criadaEm])
   @@index([organizacaoId])
@@ -775,6 +876,10 @@ model ParadaContainer {
   precisaoM      Int?
   criadoEm       DateTime      @default(now())
 
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container @relation("ParadaContainer_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "ParadaContainer_containerId_org_fkey")
+  org_localId     Local     @relation("ParadaContainer_localId_org", fields: [localId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "ParadaContainer_localId_org_fkey")
+
   @@index([containerId])
   @@index([organizacaoId])
 }
@@ -795,6 +900,9 @@ model MudancaTrajeto {
   depois        String
   detalhes      Json // ["Entrega: Porto A → Porto B", "+ parada: Posto Fiscal X", …]
   aposPlanejado Boolean
+
+  // Mesma organização garantida pelo banco (v3.6, chaves compostas — só conferência).
+  org_containerId Container @relation("MudancaTrajeto_containerId_org", fields: [containerId, organizacaoId], references: [id, organizacaoId], onDelete: NoAction, onUpdate: NoAction, map: "MudancaTrajeto_containerId_org_fkey")
 
   @@index([containerId])
   @@index([organizacaoId])
