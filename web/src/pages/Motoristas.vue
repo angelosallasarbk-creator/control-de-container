@@ -35,9 +35,9 @@ onMounted(async () => {
 
 const situacao = (m) => (m.bloqueado ? "BLOQUEADO" : !m.consentimentoEm ? "AGUARDANDO" : "ATIVO");
 const ROTULO_SITUACAO = { ATIVO: ["Ativo", "verde"], BLOQUEADO: ["Bloqueado", "vermelho"], AGUARDANDO: ["Aguardando 1º acesso", "amarelo"] };
-// v3.2: o bloqueio do gestor é o da transportadora (todos os clientes); o da administração, só deste cliente.
-const rotuloBloqueio = (m) => (m.bloqueadoPelaTransportadora ? "Bloqueado pela transportadora" : "Bloqueado para este cliente");
-const meuBloqueio = (m) => (ehGestor.value ? m.bloqueadoPelaTransportadora : m.bloqueadoNoCliente);
+// v3.5: bloqueio do gestor e da administração vale só para este cliente; o da plataforma (raro) aparece à parte.
+const rotuloBloqueio = (m) => (m.bloqueadoPelaTransportadora ? "Bloqueado na plataforma" : "Bloqueado para este cliente");
+const meuBloqueio = (m) => m.bloqueadoNoCliente;
 const visiveis = computed(() => {
   const b = filtro.busca.trim().toLowerCase();
   const digitos = b.replace(/\D/g, "");
@@ -102,9 +102,7 @@ function mostrar(msg) {
 }
 async function alternarBloqueio(m) {
   const bloquear = !meuBloqueio(m);
-  const efeito = ehGestor.value
-    ? "O acesso dele pelo celular cai na hora, para todos os clientes, até ser desbloqueado."
-    : "Ele não consegue mais registrar cargas deste cliente pelo QR nem recebe os SMS de rastreamento dele. Com outros clientes continua normal.";
+  const efeito = "Ele não consegue mais registrar cargas deste cliente pelo QR nem recebe os SMS de rastreamento dele. Com outros clientes continua normal.";
   if (bloquear && !confirm(`Bloquear ${m.nome}? ${efeito}`)) return;
   try {
     await api.atualizarMotorista(m.id, { bloqueado: bloquear });

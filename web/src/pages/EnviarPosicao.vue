@@ -221,7 +221,7 @@ onBeforeUnmount(parar);
             <div class="negrito">Quer acompanhar a viagem pela página? <span class="mudo">(opcional)</span></div>
             <p class="pequeno" style="margin: 0">
               Com esta página <strong>aberta</strong>, o celular envia a posição do container <strong>{{ numero }}</strong> a cada 5 minutos. Se a página for <strong>minimizada, fechada ou a tela bloquear</strong>, o envio para — os SMS continuam chegando normalmente.
-              Vale até a entrega do container no destino.
+              Vale até a entrega do container no destino (termina antes se ficar 6 h sem enviar, ou após 72 h — aí use o link do próximo SMS).
             </p>
             <button type="button" class="primario grande" @click="iniciar">Acompanhar com a página aberta</button>
           </template>

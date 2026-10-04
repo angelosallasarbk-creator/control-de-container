@@ -677,14 +677,15 @@ model MensagemSms {
 
 // Transportadora: agrupa os motoristas; o Gestor da transportadora cuida só dos dela.
 model Transportadora {
-  id           Int                         @id @default(autoincrement())
-  nome         String // único só dentro de cada cliente (v3.4) — conferido na rota
-  cnpj         String?                     @unique // mesmo CNPJ = mesma empresa (cadastro reaproveitado)
-  ativo        Boolean                     @default(true)
-  criadoEm     DateTime                    @default(now())
-  motoristas   Motorista[]
-  gestores     Usuario[]
-  organizacoes TransportadoraOrganizacao[]
+  id                Int                         @id @default(autoincrement())
+  nome              String // único só dentro de cada cliente (v3.4) — conferido na rota
+  cnpj              String?                     @unique // mesmo CNPJ = mesma empresa (cadastro reaproveitado)
+  organizacaoDonaId Int? // cliente que criou o cadastro: só ele edita (v3.5); os outros vinculados só usam
+  ativo             Boolean                     @default(true)
+  criadoEm          DateTime                    @default(now())
+  motoristas        Motorista[]
+  gestores          Usuario[]
+  organizacoes      TransportadoraOrganizacao[]
 
   @@index([nome])
 }
@@ -729,9 +730,12 @@ model CodigoAcessoMotorista {
   encerradoEm   DateTime? // usado, substituído por um novo ou esgotou as tentativas
   ip            String?
   organizacaoId Int? // cliente da etiqueta pela qual o motorista pediu o código (teto por cliente, v3.3)
+  etiquetaId    Int? // etiqueta usada no pedido (teto por etiqueta, v3.5)
+  conhecido     Boolean   @default(false) // celular já era de motorista do cliente: fora do teto de números novos
 
   @@index([celular, criadoEm])
   @@index([organizacaoId, criadoEm])
+  @@index([etiquetaId, criadoEm])
 }
 
 // Sessão do motorista no celular (cookie httpOnly, 60 dias). Só o hash do token fica no banco.

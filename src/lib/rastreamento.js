@@ -32,6 +32,11 @@ export const VALIDADE_LINK_HORAS = 12;
 // (todo fluxo termina nela; container entregue/cancelado encerra), no máximo 1 por minuto. Só vale
 // enquanto a pessoa for a responsável pelo container.
 export const INTERVALO_MINIMO_ACOMPANHAMENTO_S = 60;
+// v3.5: o link é um segredo que trafega por SMS — o acompanhamento termina antes da entrega se a
+// página ficar ACOMPANHAMENTO_SEM_SINAL_MAX_H sem mandar nada, e nunca passa de
+// ACOMPANHAMENTO_MAX_H desde a resposta do link. Depois, só pelo link do próximo SMS.
+export const ACOMPANHAMENTO_SEM_SINAL_MAX_H = 6;
+export const ACOMPANHAMENTO_MAX_H = 72;
 // Parado no mesmo lugar (até 200 m da última posição do acompanhamento): grava no máximo 1 a cada
 // 15 min — evita encher o banco e o mapa com pontos repetidos (caminhão parado com a página aberta).
 export const RAIO_REPETIDA_M = 200;
@@ -72,7 +77,7 @@ export async function buscarDestinatario({ usuarioId = null, motoristaId = null 
     return {
       tipo: "MOTORISTA", id: m.id, nome: m.nome, identidade: identidadeMotorista(m), celular: m.celular,
       ativo: !m.bloqueado && !bloqueadoAqui && m.transportadora.ativo,
-      motivoInativo: bloqueadoAqui ? "Motorista bloqueado por este cliente." : "Motorista bloqueado pela transportadora.", transportadora: m.transportadora.nome,
+      motivoInativo: bloqueadoAqui ? "Motorista bloqueado por este cliente." : "Motorista bloqueado na plataforma.", transportadora: m.transportadora.nome,
     };
   }
   if (!usuarioId) return null;
@@ -435,15 +440,20 @@ async function pedidoDoCodigo(codigo, agora, { acompanhamento = false } = {}) {
   const p = await prisma.solicitacaoPosicao.findUnique({
     where: { tokenHash: hashDoCodigo(codigo) },
     include: {
-      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, acompanhamentoEstado: true } },
+      container: { select: { id: true, numero: true, status: true, rastreioResponsavelId: true, rastreioMotoristaId: true, acompanhamentoEstado: true, acompanhamentoSinalEm: true } },
       usuario: { select: { id: true, ativo: true } },
       motorista: { select: { id: true, bloqueado: true, transportadora: { select: { ativo: true } } } },
     },
   });
   if (!p) return { erro: "Link inválido." };
   if (acompanhamento) {
-    // Acompanhamento: só depois da posição do link; vale até a entrega (checagem de encerrado abaixo).
+    // Acompanhamento: só depois da posição do link; vale até a entrega (checagem de encerrado abaixo),
+    // limitado por inatividade e por prazo máximo (v3.5).
     if (!p.respondidaEm) return { erro: "Envie primeiro a posição pelo botão do link." };
+    const sinal = p.container.acompanhamentoSinalEm > p.respondidaEm ? p.container.acompanhamentoSinalEm : p.respondidaEm;
+    if (agora - p.respondidaEm > ACOMPANHAMENTO_MAX_H * 60 * MIN || agora - sinal > ACOMPANHAMENTO_SEM_SINAL_MAX_H * 60 * MIN) {
+      return { erro: "O acompanhamento deste link terminou. Use o link do próximo SMS." };
+    }
   } else {
     if (p.respondidaEm) return { erro: "A posição deste link já foi enviada. Obrigado!", respondida: true };
     if (p.expiraEm < agora) return { erro: "Este link expirou. Aguarde o próximo SMS." };

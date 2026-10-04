@@ -4,6 +4,38 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.5.0 — 04/10/2026 (tag `v3.5.0`)
+
+Revisão da v3.4 (itens 1, 2, 3, 5 e 6). Publicada junto com a 3.4.1.
+
+- **Bloqueio do gestor só no cliente dele:** o gestor é criado por um cliente, e o bloqueio dele gravava
+  o bloqueio de toda a plataforma — um motorista compartilhado ficava bloqueado (e sem acesso) também
+  nos outros clientes. Agora gestor e administração bloqueiam só no próprio cliente (QR, pedido de
+  código pela etiqueta e SMS desse cliente). O bloqueio de plataforma fica só para a anonimização.
+- **Anonimizar motorista:** não usa mais o nome (texto livre) para achar containers — homônimos ficavam
+  sem nome/placa. Os containers são achados pelo id do motorista (rastreio, posições, pedidos, SMS, log)
+  e o nome só é trocado onde é exatamente o dele; a identidade "Nome (motorista · Transportadora)" sai das
+  etapas, leituras de temperatura, etiqueta, paradas, mudanças de trajeto e do criador do container.
+  Continua no log de auditoria (imutável, 365 dias).
+- **Transportadora:** CNPJ com dígitos verificadores; o **cliente dono** (quem criou) continua editando
+  mesmo quando outro cliente se vincula pelo mesmo CNPJ (antes, ficava bloqueado com 409).
+- **Acompanhamento pela página:** termina se a página ficar 6 h sem enviar ou após 72 h da resposta do
+  link — o link do SMS não vale mais por dias. Depois, só pelo link do próximo SMS.
+- **Código SMS do motorista:** teto de 20 pedidos/hora **por etiqueta** para números novos; motorista já
+  vinculado ao cliente não entra nos tetos de números novos (abuso não tranca quem já trabalha com o cliente).
+- Migração `20261009100000_revisao_3_5` (só acrescenta): `Transportadora.organizacaoDonaId` (existentes:
+  o primeiro cliente vinculado), `CodigoAcessoMotorista.etiquetaId` e `conhecido`.
+
+## 3.4.1 — 04/10/2026 (tag `v3.4.1`, publicada junto com a 3.5.0)
+
+- **Desfazer etapa sem erro 500:** desfazer a entrega (ou o cancelamento) de um container cujo número já está ativo em
+  outro cadastro respondia erro interno (índice único da v3.2). Agora responde 409 com mensagem clara.
+- **Custos, total do topo ao centavo:** os totais em dinheiro passam a somar os containers (cada um igual à sua ficha),
+  não a série por dia — que, arredondada por dia, ainda diferia 1 centavo em lotes grandes. A série segue só nos gráficos.
+- **Planilha acima de 1 MB:** mensagem em português (antes: "request entity too large").
+- **Correção de texto (3.4.0):** o RLS não barra a GRAVAÇÃO de referência a cadastro de outro cliente (a conferência de
+  chave estrangeira não passa por ele); quem barra é a validação das rotas. README ganhou a seção "Riscos aceitos".
+
 ## 3.4.0 — 02/10/2026 (tag `v3.4.0`)
 
 **Estrutura e desempenho** (análise de segurança da v3.0.2: itens 7, 9 e 12). Publicada junto com
@@ -15,7 +47,8 @@ a 3.1.2, a 3.2.0 e a 3.3.0.
   da validação das rotas. Teste novo de "referência cruzada": o cliente B tenta usar ponto de
   carregamento, armador, produto, local, região e tipo de local da A em containers e cadastros — tudo
   recusado, e nenhum container no banco aponta para cadastro de outro cliente. (Chaves estrangeiras
-  compostas ficaram para depois, como recomendado na análise: custo alto, e o teste cobre o risco hoje.)
+  compostas ficaram para depois, como recomendado na análise: custo alto, e o teste cobre o risco hoje. Correção na 3.4.1:
+  o RLS não barra a gravação cruzada — ver README, "Riscos aceitos".)
 - **Transportadora (item 9):** nome único só dentro do cliente; CNPJ único na plataforma; mesmo CNPJ
   reaproveita o cadastro (só o vínculo é criado, e fica no log). Migração
   `20261008100000_transportadora_cnpj` (troca o índice único do nome pelo do CNPJ; não apaga nada).

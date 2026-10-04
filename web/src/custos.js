@@ -38,15 +38,14 @@ export function totalContainer(c, cotacoes) {
 export function resumir(dados, grupoIds) {
   const ids = new Set(grupoIds);
   const r = { estadia: {}, demurrage: {}, estadiaHoras: 0, diarias: 0, containersComCusto: 0, containersNoPeriodo: 0, horasSemValor: 0 };
-  for (const d of dados.dias) {
-    if (!ids.has(d.grupoId)) continue;
-    somarEm(r.estadia, d.estadia);
-    somarEm(r.demurrage, d.demurrage);
-    r.estadiaHoras += d.estadiaHoras;
-    r.diarias += d.diarias;
-  }
+  // Totais em dinheiro = soma dos containers (cada um igual à sua ficha) — não da série diária,
+  // que é só para os gráficos (somar dias arredondados dava 1 centavo de diferença; v3.4.1).
   for (const c of dados.containers) {
     if (!ids.has(c.grupoId)) continue;
+    if (c.estadiaValor) somarEm(r.estadia, { [c.estadiaMoeda]: c.estadiaValor });
+    if (c.demurrageValor) somarEm(r.demurrage, { [c.demurrageMoeda]: c.demurrageValor });
+    r.estadiaHoras += c.estadiaHoras;
+    r.diarias += c.diarias;
     r.containersComCusto++;
     if (c.semCustoHora) r.horasSemValor += c.estadiaHoras;
   }

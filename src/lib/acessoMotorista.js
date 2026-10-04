@@ -19,6 +19,9 @@ export const SESSAO_DIAS = 60;
 // para o login dos motoristas dos outros. O total da plataforma vira só alarme de custo (log).
 export const MAX_CODIGOS_POR_HORA_CLIENTE = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA_CLIENTE) || 100;
 export const ALARME_CODIGOS_POR_HORA = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA) || 500;
+// Por etiqueta (v3.5): quem tem uma etiqueta não esgota sozinho o teto do cliente. Os dois tetos
+// contam só celulares NOVOS — motorista já vinculado ao cliente segue entrando (limite por celular).
+export const MAX_CODIGOS_POR_HORA_ETIQUETA = Number(process.env.MOTORISTA_MAX_CODIGOS_HORA_ETIQUETA) || 20;
 let ultimoAlarme = 0;
 export const COOKIE_MOTORISTA = "cc_motorista";
 const MIN = 60 * 1000;
@@ -48,7 +51,7 @@ export function celularValido(valor) {
 // Identificação do motorista nos registros (log, leituras, etapas, etiqueta).
 export const identidadeMotorista = (m) => `${m.nome} (motorista · ${m.transportadora?.nome ?? "transportadora"})`;
 
-export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), texto = null, conferirBloqueio = true, organizacaoId = null }) {
+export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), texto = null, conferirBloqueio = true, organizacaoId = null, etiquetaId = null }) {
   const celular = celularValido(bruto);
   const recentes = await prisma.codigoAcessoMotorista.findMany({
     where: { celular, criadoEm: { gte: new Date(agora.getTime() - 60 * MIN) } }, orderBy: { criadoEm: "desc" }, select: { criadoEm: true },
@@ -56,10 +59,21 @@ export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), text
   if (recentes[0] && agora - recentes[0].criadoEm < MIN) throw erroHttp(429, "Aguarde 1 minuto para pedir outro código.");
   if (recentes.length >= 5) throw erroHttp(429, "Muitos códigos pedidos para este celular. Tente de novo em 1 hora.");
   const umaHora = new Date(agora.getTime() - 60 * MIN);
-  if (organizacaoId) {
-    const doCliente = await prisma.codigoAcessoMotorista.count({ where: { organizacaoId, criadoEm: { gte: umaHora } } });
-    if (doCliente >= MAX_CODIGOS_POR_HORA_CLIENTE) {
-      console.error(`Acesso do motorista: teto de ${MAX_CODIGOS_POR_HORA_CLIENTE} códigos/hora do cliente ${organizacaoId} atingido — possível abuso.`);
+  const motorista = await prisma.motorista.findUnique({ where: { celular }, select: { id: true, bloqueado: true } });
+  // Celular de motorista já vinculado ao cliente: não consome os tetos de números novos.
+  const vinculo = organizacaoId && motorista
+    ? await prisma.motoristaOrganizacao.findUnique({ where: { motoristaId_organizacaoId: { motoristaId: motorista.id, organizacaoId } }, select: { bloqueado: true } })
+    : null;
+  const conhecido = Boolean(vinculo);
+  if (conferirBloqueio && vinculo?.bloqueado) throw erroHttp(403, "Seu acesso às cargas deste cliente foi bloqueado. Fale com o responsável.");
+  if (organizacaoId && !conhecido) {
+    const novos = { conhecido: false, criadoEm: { gte: umaHora } };
+    const [doCliente, daEtiqueta] = await Promise.all([
+      prisma.codigoAcessoMotorista.count({ where: { ...novos, organizacaoId } }),
+      etiquetaId ? prisma.codigoAcessoMotorista.count({ where: { ...novos, etiquetaId } }) : 0,
+    ]);
+    if (doCliente >= MAX_CODIGOS_POR_HORA_CLIENTE || daEtiqueta >= MAX_CODIGOS_POR_HORA_ETIQUETA) {
+      console.error(`Acesso do motorista: teto de códigos/hora atingido (cliente ${organizacaoId}: ${doCliente}; etiqueta ${etiquetaId}: ${daEtiqueta}) — possível abuso.`);
       throw erroHttp(429, "Muitos pedidos de código no momento. Tente de novo em alguns minutos.");
     }
   }
@@ -69,17 +83,14 @@ export async function pedirCodigo({ celular: bruto, ip, agora = new Date(), text
     ultimoAlarme = agora.getTime();
     console.error(`ALARME de custo: ${total} códigos SMS de motorista na última hora (alarme: ${ALARME_CODIGOS_POR_HORA}).`);
   }
-  if (conferirBloqueio) {
-    const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
-    if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
-  }
+  if (conferirBloqueio && motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado. Fale com o responsável.");
 
   const codigo = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
   await prisma.$transaction([
     // Pedido novo encerra os anteriores ainda válidos deste celular.
     prisma.codigoAcessoMotorista.updateMany({ where: { celular, encerradoEm: null }, data: { encerradoEm: agora } }),
     prisma.codigoAcessoMotorista.create({
-      data: { celular, codigoHash: hashCodigo(celular, codigo), criadoEm: agora, expiraEm: new Date(agora.getTime() + VALIDADE_CODIGO_MIN * MIN), ip: ip ?? null, organizacaoId },
+      data: { celular, codigoHash: hashCodigo(celular, codigo), criadoEm: agora, expiraEm: new Date(agora.getTime() + VALIDADE_CODIGO_MIN * MIN), ip: ip ?? null, organizacaoId, etiquetaId, conhecido },
     }),
   ]);
   const r = await enviarSms({ para: celular, texto: texto ? texto(codigo) : `CCS: seu codigo de acesso e ${codigo}. Vale por ${VALIDADE_CODIGO_MIN} min. Nao compartilhe.` });
@@ -109,7 +120,7 @@ export async function verificarCodigo({ celular: bruto, codigo, agora = new Date
   await consumirCodigo(celular, codigo, agora);
 
   const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
-  if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
+  if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado. Fale com o responsável.");
   if (motorista && motorista.consentimentoEm && motorista.transportadora.ativo) return { motorista };
   // Primeiro acesso (ou importado pelo gestor e ainda sem o termo aceito): completa o cadastro.
   const comprovante = jwt.sign({ tipo: "cadastro-motorista", celular }, segredoComprovante(), { expiresIn: `${COMPROVANTE_MIN}m`, audience: "cadastro-motorista" });
@@ -169,7 +180,7 @@ export async function concluirCadastro({ comprovante, dados: b, agora = new Date
   const transp = await prisma.transportadora.findUnique({ where: { id: dados.transportadoraId } });
   if (!transp?.ativo) throw erroHttp(400, "Transportadora não encontrada ou inativa.");
   const existente = await prisma.motorista.findUnique({ where: { celular } });
-  if (existente?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.");
+  if (existente?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado. Fale com o responsável.");
   const motorista = existente
     ? await prisma.motorista.update({ where: { id: existente.id }, data: { ...dados, consentimentoEm: agora }, include: { transportadora: true } })
     : await prisma.motorista.create({ data: { ...dados, celular, consentimentoEm: agora }, include: { transportadora: true } }).catch(async (err) => {
@@ -262,7 +273,7 @@ export async function carregarMotorista(req, res, next) {
     // Bloqueado (o bloqueio também encerra as sessões): mensagem clara, não "sessão terminou".
     if (s && (s.motorista.bloqueado || !s.motorista.transportadora.ativo)) {
       limparCookieMotorista(res);
-      return res.status(403).json({ erro: "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.", codigo: "MOTORISTA_BLOQUEADO" });
+      return res.status(403).json({ erro: "Seu acesso foi bloqueado. Fale com o responsável.", codigo: "MOTORISTA_BLOQUEADO" });
     }
     if (!s || s.revogadaEm || s.expiraEm < agora) {
       limparCookieMotorista(res);
@@ -271,7 +282,7 @@ export async function carregarMotorista(req, res, next) {
     const m = s.motorista;
     if (m.bloqueado || !m.transportadora.ativo || !m.consentimentoEm) {
       limparCookieMotorista(res);
-      return res.status(403).json({ erro: "Seu acesso foi bloqueado pela transportadora. Fale com o responsável.", codigo: "MOTORISTA_BLOQUEADO" });
+      return res.status(403).json({ erro: "Seu acesso foi bloqueado. Fale com o responsável.", codigo: "MOTORISTA_BLOQUEADO" });
     }
     // Último uso: grava no máximo a cada 10 min (evita uma escrita por requisição).
     if (!s.ultimoUsoEm || agora - s.ultimoUsoEm > 10 * MIN) {
