@@ -113,24 +113,34 @@ async function consumirCodigo(celular, codigo, agora) {
   // Uso único: a condição no WHERE impede usar o mesmo código duas vezes ao mesmo tempo.
   const r = await prisma.codigoAcessoMotorista.updateMany({ where: { id: pendente.id, encerradoEm: null }, data: { encerradoEm: agora } });
   if (r.count !== 1) throw erroHttp(400, "Este código já foi usado. Peça um novo código.");
+  return pendente;
 }
+
+// Transportadoras que quem está se cadastrando pode escolher (v3.9): só as vinculadas ao cliente da
+// etiqueta lida (mais a que já está no cadastro dele, se foi pré-cadastrado por outro cliente).
+// Antes era a lista da plataforma inteira: um desconhecido com um celular via as transportadoras
+// de todos os clientes e, ao registrar uma leitura, o cliente passava a ver nome e CNPJ da transportadora
+// de outro cliente.
+const transportadorasPermitidas = (organizacaoId, motorista) => ({
+  ativo: true,
+  OR: [{ organizacoes: { some: { organizacaoId } } }, ...(motorista ? [{ id: motorista.transportadoraId }] : [])],
+});
 
 export async function verificarCodigo({ celular: bruto, codigo, agora = new Date() }) {
   const celular = celularValido(bruto);
-  await consumirCodigo(celular, codigo, agora);
+  const { organizacaoId } = await consumirCodigo(celular, codigo, agora);
 
   const motorista = await prisma.motorista.findUnique({ where: { celular }, include: { transportadora: true } });
   if (motorista?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado. Fale com o responsável.");
   if (motorista && motorista.consentimentoEm && motorista.transportadora.ativo) return { motorista };
   // Primeiro acesso (ou importado pelo gestor e ainda sem o termo aceito): completa o cadastro.
-  const comprovante = jwt.sign({ tipo: "cadastro-motorista", celular }, segredoComprovante(), { expiresIn: `${COMPROVANTE_MIN}m`, audience: "cadastro-motorista" });
-  const lista = await prisma.transportadora.findMany({ where: { ativo: true }, orderBy: { nome: "asc" }, select: { id: true, nome: true, cnpj: true } });
-  // Nomes iguais (empresas diferentes, v3.4): mostra o final do CNPJ (ou o código) para diferenciar.
+  const comprovante = jwt.sign({ tipo: "cadastro-motorista", celular, org: organizacaoId ?? null }, segredoComprovante(), { expiresIn: `${COMPROVANTE_MIN}m`, audience: "cadastro-motorista" });
+  const lista = organizacaoId
+    ? await prisma.transportadora.findMany({ where: transportadorasPermitidas(organizacaoId, motorista), orderBy: { nome: "asc" }, select: { id: true, nome: true } })
+    : [];
+  // Nomes iguais (empresas diferentes, v3.4): mostra o código para diferenciar (nunca o CNPJ).
   const repetidos = new Set(lista.map((t) => t.nome.toLowerCase()).filter((n, i, a) => a.indexOf(n) !== i));
-  const transportadoras = lista.map((t) => ({
-    id: t.id,
-    nome: repetidos.has(t.nome.toLowerCase()) ? `${t.nome} · ${t.cnpj ? `CNPJ final ${t.cnpj.slice(-6)}` : `cód. ${t.id}`}` : t.nome,
-  }));
+  const transportadoras = lista.map((t) => ({ id: t.id, nome: repetidos.has(t.nome.toLowerCase()) ? `${t.nome} · cód. ${t.id}` : t.nome }));
   return {
     precisaCadastro: true,
     comprovante,
@@ -143,7 +153,7 @@ function lerComprovante(comprovante) {
   try {
     const p = jwt.verify(String(comprovante ?? ""), segredoComprovante(), { audience: "cadastro-motorista" });
     if (p.tipo !== "cadastro-motorista" || !p.celular) throw new Error();
-    return p.celular;
+    return { celular: p.celular, organizacaoId: p.org ?? null };
   } catch {
     throw erroHttp(401, "A confirmação do celular expirou. Peça um novo código.");
   }
@@ -174,12 +184,15 @@ export function validarDadosMotorista(b, { exigirTransportadora = true } = {}) {
 
 /** Conclui o cadastro (ou aceita o termo de quem foi importado) e abre a sessão. */
 export async function concluirCadastro({ comprovante, dados: b, agora = new Date() }) {
-  const celular = lerComprovante(comprovante);
+  const { celular, organizacaoId } = lerComprovante(comprovante);
   if (b.aceite !== true) throw erroHttp(400, "É preciso aceitar o termo de uso dos dados para continuar.");
   const dados = validarDadosMotorista(b);
-  const transp = await prisma.transportadora.findUnique({ where: { id: dados.transportadoraId } });
-  if (!transp?.ativo) throw erroHttp(400, "Transportadora não encontrada ou inativa.");
   const existente = await prisma.motorista.findUnique({ where: { celular } });
+  // Só as transportadoras do cliente da etiqueta (v3.9): escolher a de outro cliente é recusado.
+  const transp = organizacaoId
+    ? await prisma.transportadora.findFirst({ where: { id: dados.transportadoraId, ...transportadorasPermitidas(organizacaoId, existente) } })
+    : null;
+  if (!transp?.ativo) throw erroHttp(400, "Transportadora não encontrada ou inativa. Escolha uma da lista; se a sua não aparece, peça ao responsável pelo cliente para cadastrá-la.");
   if (existente?.bloqueado) throw erroHttp(403, "Seu acesso foi bloqueado. Fale com o responsável.");
   const motorista = existente
     ? await prisma.motorista.update({ where: { id: existente.id }, data: { ...dados, consentimentoEm: agora }, include: { transportadora: true } })

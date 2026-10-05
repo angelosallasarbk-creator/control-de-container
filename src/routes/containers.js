@@ -4,7 +4,7 @@ import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao, tem } from "../lib/permissoes.js";
 import { registrarLog } from "../lib/auditoria.js";
 import { lerConfiguracao } from "../lib/configuracao.js";
-import { sincronizarAlertas } from "../lib/alertas.js";
+import { sincronizarAlertas, sincronizarTodos } from "../lib/alertas.js";
 import { montarContainer, serializarLeitura, CONTAGEM_QR } from "../lib/containerView.js";
 import { validarNumeroContainer } from "../lib/iso6346.js";
 import { ehReefer, controlaTemperatura, STATUS_ENCERRADOS, PRODUTO_COM_TEMPERATURA } from "../lib/prazos.js";
@@ -256,10 +256,8 @@ containersRouter.post(
       for (const numero of r.recusados) linhaDe.get(numero).erro = "Já está ativo no sistema (cadastrado enquanto a planilha era conferida).";
       // Distâncias do lote de uma vez (pares repetidos só uma vez) e alertas com a mesma configuração.
       await garantirDistancias(r.criados.flatMap(paresDoContainer)).catch((err) => console.error("Importação: distâncias do lote:", err.message));
-      const config = await lerConfiguracao();
-      for (const id of criados) {
-        await sincronizarAlertas(id, { config }).catch((err) => console.error(`Importação: alertas do container ${id}:`, err.message));
-      }
+      // Alertas e plano dos criados em LOTE (v3.9): antes era um container por vez (900 linhas ≈ 70 s).
+      if (criados.length) await sincronizarTodos(new Date(), { ids: criados }).catch((err) => console.error("Importação: alertas do lote:", err.message));
       const comErro = linhas.filter((x) => x.erro).length;
       await registrarLog({
         usuarioEmail: email, acao: "IMPORTAR", entidade: "Container",

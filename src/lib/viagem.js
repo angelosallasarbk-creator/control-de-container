@@ -25,6 +25,14 @@ export function participacaoAtiva(containerId, cliente = prisma) {
   });
 }
 
+/** Participações ativas de vários containers numa consulta só (varredura em lote): Map containerId → participação. */
+export async function participacoesAtivas(containerIds, cliente = prisma) {
+  const lista = containerIds.length
+    ? await cliente.viagemContainer.findMany({ where: { containerId: { in: containerIds }, saiuEm: null, viagem: { encerradaEm: null } }, include: { viagem: true } })
+    : [];
+  return new Map(lista.map((p) => [p.containerId, p]));
+}
+
 /** Ids dos outros containers da viagem ativa deste (mesmo responsável pelo rastreamento). */
 export async function companheirosDeViagem(containerId) {
   const p = await participacaoAtiva(containerId);
@@ -113,8 +121,9 @@ export async function juntarNaViagem({ containerIds, req, agora = new Date() }) 
  * Mantém a viagem coerente com o container (chamado a cada sincronização): sai quem chegou a um
  * ponto, foi encerrado ou mudou de responsável; viagem com menos de 2 containers termina.
  */
-export async function sincronizarViagem(container, agora = new Date()) {
-  const p = await participacaoAtiva(container.id);
+export async function sincronizarViagem(container, agora = new Date(), { participacao } = {}) {
+  // participacao: já carregada pela varredura em lote (null = não está em viagem) — sem consulta por container.
+  const p = participacao === undefined ? await participacaoAtiva(container.id) : participacao;
   if (!p) return;
   const v = p.viagem;
   const trocouResponsavel = (v.motoristaId ?? null) !== (container.rastreioMotoristaId ?? null) || (v.usuarioId ?? null) !== (container.rastreioResponsavelId ?? null);

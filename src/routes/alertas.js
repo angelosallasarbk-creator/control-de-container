@@ -29,17 +29,20 @@ alertasRouter.get("/", asyncHandler(async (req, res) => {
 }));
 
 // Consultado pela tela a cada poucos segundos para o sino e o aviso de novos alertas críticos.
+// v3.9: só o que o sino precisa (contagens e os ids/tipos dos críticos não reconhecidos), sem
+// carregar o container de cada alerta. Com 380 alertas abertos a resposta passou de 365 KB para ~1 KB —
+// e esta rota é consultada por todo navegador aberto, a cada poucos segundos.
 alertasRouter.get("/resumo", asyncHandler(async (_req, res) => {
   const abertos = await prisma.alerta.findMany({
     where: { chaveAberta: { not: null } },
-    include: INCLUDE_CONTAINER,
+    select: { id: true, containerId: true, tipo: true, nivel: true, reconhecidoEm: true },
     orderBy: { abertoEm: "desc" },
   });
   res.json({
     total: abertos.length,
     criticos: abertos.filter((a) => a.nivel === "CRITICO").length,
     naoReconhecidos: abertos.filter((a) => !a.reconhecidoEm).length,
-    criticosNaoReconhecidos: abertos.filter((a) => a.nivel === "CRITICO" && !a.reconhecidoEm),
+    criticosNaoReconhecidos: abertos.filter((a) => a.nivel === "CRITICO" && !a.reconhecidoEm).map(({ reconhecidoEm: _r, ...a }) => a),
   });
 }));
 

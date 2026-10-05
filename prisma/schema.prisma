@@ -786,7 +786,7 @@ model MensagemSms {
 model Transportadora {
   id                Int                         @id @default(autoincrement())
   nome              String // único só dentro de cada cliente (v3.4) — conferido na rota
-  cnpj              String?                     @unique // mesmo CNPJ = mesma empresa (cadastro reaproveitado)
+  cnpj              String? // único dentro do cliente dono (v3.9): outro cliente com o mesmo CNPJ tem cadastro próprio
   organizacaoDonaId Int? // cliente que criou o cadastro: só ele edita (v3.5); os outros vinculados só usam
   ativo             Boolean                     @default(true)
   criadoEm          DateTime                    @default(now())
@@ -794,6 +794,7 @@ model Transportadora {
   gestores          Usuario[]
   organizacoes      TransportadoraOrganizacao[]
 
+  @@unique([organizacaoDonaId, cnpj])
   @@index([nome])
 }
 

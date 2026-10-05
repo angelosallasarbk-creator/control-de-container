@@ -3016,7 +3016,7 @@ test("v3.4 referência cruzada: cliente B não consegue apontar para cadastros d
   assert.equal(cruzados[0].n, 0, "nenhum container no banco aponta para cadastro de outro cliente");
 });
 
-test("v3.4 transportadora: nome único só no cliente; mesmo CNPJ reaproveita o cadastro (item 9)", async () => {
+test("v3.4 transportadora: nome único só no cliente; CNPJ único só no cliente (v3.9: sem reaproveitar o cadastro de outro cliente)", async () => {
   const b = await logar("admin@ref34.local");
   const a = agentes.ADMIN;
   // Mesmo nome, sem CNPJ, em clientes diferentes: cadastros separados (podem ser empresas diferentes).
@@ -3025,19 +3025,19 @@ test("v3.4 transportadora: nome único só no cliente; mesmo CNPJ reaproveita o 
   assert.deepEqual([ra.status, rb.status], [201, 201], JSON.stringify([ra.body, rb.body]));
   assert.notEqual(ra.body.id, rb.body.id);
   assert.equal((await a.post("/api/transportadoras").send({ nome: "RODO HOMÔNIMA" })).status, 409, "no mesmo cliente o nome é único");
-  // Mesmo CNPJ = mesma empresa: o segundo cliente só ganha o vínculo.
+  // v3.9: o mesmo CNPJ em outro cliente é OUTRO cadastro (o CNPJ é público: reaproveitar deixava quem
+  // cadastrasse primeiro, com um nome falso, dono do cadastro da empresa verdadeira).
   const ca = await a.post("/api/transportadoras").send({ nome: "Transp CNPJ", cnpj: "11.222.333/0001-81" });
   assert.equal(ca.status, 201);
   const cb = await b.post("/api/transportadoras").send({ nome: "Transp CNPJ (filial)", cnpj: "11222333000181" });
   assert.equal(cb.status, 201, JSON.stringify(cb.body));
-  assert.equal(cb.body.id, ca.body.id, "cadastro reaproveitado");
-  assert.ok((await b.get("/api/transportadoras")).body.some((t) => t.id === ca.body.id), "B passa a ver");
-  assert.equal((await b.post("/api/transportadoras").send({ nome: "De novo", cnpj: "11222333000181" })).status, 409, "já está no cadastro da B");
-  // Compartilhada: nenhum dos dois altera sozinho; CNPJ de outra empresa na edição → 409.
-  assert.equal((await b.patch(`/api/transportadoras/${ca.body.id}`).send({ nome: "Renomeada" })).status, 409);
-  assert.equal((await a.patch(`/api/transportadoras/${ra.body.id}`).send({ cnpj: "11222333000181" })).status, 409);
-  const log = (await b.get(`/api/logs?entidade=Transportadora&entidadeId=${ca.body.id}`)).body;
-  assert.ok(log.some((l) => /vinculado.*mesmo CNPJ/.test(l.descricao)));
+  assert.notEqual(cb.body.id, ca.body.id, "cadastro separado");
+  assert.equal(cb.body.nome, "Transp CNPJ (filial)", "cada cliente com o nome que digitou");
+  assert.ok(!(await b.get("/api/transportadoras")).body.some((t) => t.id === ca.body.id), "B não passa a ver o cadastro da A");
+  assert.ok(!(await a.get("/api/transportadoras")).body.some((t) => t.id === cb.body.id), "nem A o da B");
+  assert.equal((await b.patch(`/api/transportadoras/${cb.body.id}`).send({ nome: "Transp CNPJ Filial Corrigida" })).status, 200, "B edita o próprio cadastro");
+  assert.equal((await b.post("/api/transportadoras").send({ nome: "De novo", cnpj: "11222333000181" })).status, 409, "no mesmo cliente o CNPJ é único");
+  assert.equal((await a.patch(`/api/transportadoras/${ra.body.id}`).send({ cnpj: "11222333000181" })).status, 409, "CNPJ já usado por outro cadastro da própria A");
 });
 
 test("v3.4.1: desfazer entrega com outro ativo de mesmo número → 409; total de Custos = soma das fichas; 413 em português", async () => {
@@ -3139,16 +3139,16 @@ test("v3.5 revisão: bloqueio do gestor por cliente, anonimização sem homônim
     + (await prisma.container.count({ where: { criadoPor: identidade1 } })) + (await prisma.etiquetaQR.count({ where: { vinculadaPor: identidade1 } }));
   assert.equal(restos, 0, "identidade anonimizada some das colunas de autoria");
 
-  // ---- Item 3: CNPJ com dígito verificador; dono edita, outro vinculado não ----
+  // ---- Item 3: CNPJ com dígito verificador; dono edita (v3.9: cada cliente tem o seu cadastro) ----
   assert.equal((await a.post("/api/transportadoras").send({ nome: "CNPJ Ruim", cnpj: "12345678000100" })).status, 400);
   const dono = await a.post("/api/transportadoras").send({ nome: "Transp Dona 3.5", cnpj: "47.960.950/0001-21" });
   assert.equal(dono.status, 201, JSON.stringify(dono.body));
   const td = dono.body;
   const cnpjDono = "47960950000121";
-  const vinc = await b.post("/api/transportadoras").send({ nome: "Outro nome", cnpj: cnpjDono });
-  assert.deepEqual([vinc.status, vinc.body.id], [201, td.id], "B vinculado ao mesmo cadastro");
-  assert.equal((await a.patch(`/api/transportadoras/${td.id}`).send({ nome: "Transp Dona 3.5 Renomeada" })).status, 200, "dono edita mesmo compartilhado");
-  assert.equal((await b.patch(`/api/transportadoras/${td.id}`).send({ nome: "Tomada" })).status, 409, "quem não é dono só usa");
+  const outro = await b.post("/api/transportadoras").send({ nome: "Outro nome", cnpj: cnpjDono });
+  assert.deepEqual([outro.status, outro.body.id === td.id], [201, false], "B tem cadastro próprio, não o da A");
+  assert.equal((await a.patch(`/api/transportadoras/${td.id}`).send({ nome: "Transp Dona 3.5 Renomeada" })).status, 200, "dono edita");
+  assert.equal((await b.patch(`/api/transportadoras/${td.id}`).send({ nome: "Tomada" })).status, 404, "B nem enxerga o cadastro da A");
 
   // ---- Item 5: acompanhamento termina por inatividade (6 h) e prazo máximo (72 h) ----
   const u = await a.post("/api/usuarios").send({ email: "acomp35@teste.local", nome: "Acomp 3.5", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11966669035" });
@@ -3359,4 +3359,91 @@ test("v3.8 viagem: 2 containers no mesmo caminhão — pergunta no QR, 1 SMS, po
 
   await a.put("/api/configuracao").send(cfg);
   for (const v of [v1, v2, v4, v5]) await a.post(`/api/containers/${v.id}/cancelar`).send({ motivo: "fim do teste 3.8" });
+});
+
+test("v3.9 reauditoria: transportadora do motorista só do cliente da etiqueta, CNPJ por cliente, lote da portaria atômico, resumo de alertas enxuto, varredura em lote", async () => {
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const { cnpjValido } = await import("./routes/cadastros.js");
+  const { sincronizarTodos } = await import("./lib/alertas.js");
+  const a = agentes.ADMIN;
+  const b = await logar("admin@ref34.local");
+  const codigoDe = (tel) => /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
+  const cnpjNovo = (semente) => {
+    const d = Array.from({ length: 12 }, (_, i) => (semente * (i + 3) + i * 7) % 10);
+    const dv = (arr) => { const p = arr.length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; const r = arr.reduce((s, x, k) => s + x * p[k], 0) % 11; return r < 2 ? 0 : 11 - r; };
+    d.push(dv(d)); d.push(dv(d));
+    const c = d.join("");
+    assert.ok(cnpjValido(c), `CNPJ de teste válido: ${c}`);
+    return c;
+  };
+
+  // ---- Lista de transportadoras do cadastro do motorista: só as do cliente da etiqueta ----
+  const trA = await a.post("/api/transportadoras").send({ nome: "Transp So Da A 3.9", cnpj: cnpjNovo(3) });
+  const trB = await b.post("/api/transportadoras").send({ nome: "Transp So Da B 3.9", cnpj: cnpjNovo(5) });
+  assert.deepEqual([trA.status, trB.status], [201, 201], JSON.stringify([trA.body, trB.body]));
+  const [etqB] = (await b.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const XFF = { "X-Forwarded-For": "198.51.100.93" };
+  const TEL = "+5511955550393";
+  const m = request.agent(app);
+  assert.equal((await m.post("/api/motorista/codigo").set(XFF).send({ celular: TEL, etiqueta: etqB.token })).status, 200);
+  const v = await m.post("/api/motorista/verificar").set(XFF).send({ celular: TEL, codigo: codigoDe(TEL) });
+  assert.equal(v.status, 200, JSON.stringify(v.body));
+  const nomes = v.body.transportadoras.map((t) => t.nome);
+  assert.ok(nomes.includes("Transp So Da B 3.9"), "vê a do cliente da etiqueta");
+  assert.ok(!nomes.includes("Transp So Da A 3.9"), "não vê a de outro cliente");
+  assert.ok(v.body.transportadoras.every((t) => Object.keys(t).sort().join() === "id,nome"), "só id e nome (nada de CNPJ)");
+  const cadastro = (transportadoraId) => m.post("/api/motorista/cadastro").set(XFF).send({ comprovante: v.body.comprovante, nome: "Motorista Atento", transportadoraId, aceite: true });
+  assert.equal((await cadastro(trA.body.id)).status, 400, "escolher a transportadora de outro cliente é recusado");
+  assert.equal((await cadastro(trB.body.id)).status, 201);
+  // O cliente A não passa a enxergar nada da B (nem o motorista, nem a transportadora).
+  assert.ok(!(await a.get("/api/transportadoras")).body.some((t) => t.id === trB.body.id));
+  assert.ok(!(await a.get("/api/motoristas")).body.some((x) => x.nome === "Motorista Atento"));
+
+  // ---- CNPJ: quem cadastra primeiro não vira dono do cadastro da empresa verdadeira ----
+  const cnpj = cnpjNovo(7);
+  const falso = await a.post("/api/transportadoras").send({ nome: "Nome Falso 3.9", cnpj });
+  const real = await b.post("/api/transportadoras").send({ nome: "Empresa Verdadeira 3.9", cnpj });
+  assert.deepEqual([falso.status, real.status], [201, 201], JSON.stringify([falso.body, real.body]));
+  assert.notEqual(real.body.id, falso.body.id);
+  assert.equal(real.body.nome, "Empresa Verdadeira 3.9");
+  assert.equal((await b.patch(`/api/transportadoras/${real.body.id}`).send({ nome: "Empresa Verdadeira Ltda 3.9" })).status, 200, "a empresa verdadeira corrige o próprio cadastro");
+  assert.equal((await a.post("/api/transportadoras").send({ nome: "Outra", cnpj })).status, 409, "no mesmo cliente o CNPJ continua único");
+
+  // ---- Portaria: lote tudo-ou-nada ----
+  const tr = await logar("transportador@teste.local");
+  const po = await logar("portaria@teste.local");
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const trajeto = { portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos };
+  const criar = async (numero) => { const r = await a.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad, ...trajeto }); assert.equal(r.status, 201, JSON.stringify(r.body)); return r.body; };
+  const etiqueta = async () => (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas[0];
+  const coletar = async (e, numero) => { const r = await tr.post(`/api/qr/${e.token}/coleta`).send({ numero, portoRetiradaId: ids.santos }); assert.equal(r.status, 201, JSON.stringify(r.body)); };
+  const [c1, c2, c3] = [await criar("ATMU3900008"), await criar("ATMU3900014"), await criar("ATMU3900020")];
+  const [e1, e2, e3] = [await etiqueta(), await etiqueta(), await etiqueta()];
+  await coletar(e1, c1.numero); await coletar(e2, c2.numero); await coletar(e3, c3.numero);
+  assert.equal((await tr.post(`/api/qr/${e2.token}/viagem`).send({ comContainerId: c1.id })).status, 200);
+  assert.equal((await tr.post(`/api/qr/${e3.token}/viagem`).send({ comContainerId: c1.id })).status, 200);
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "ENTRADA", placa: "ATM1A23" })).status, 201);
+  const status = async (...cs) => (await prisma.container.findMany({ where: { id: { in: cs.map((c) => c.id) } }, orderBy: { id: "asc" }, select: { status: true } })).map((x) => x.status);
+  const falha = await po.post(`/api/qr/${e1.token}/portaria/ficam`).send({ containerIds: [c2.id, 999999999, c3.id] });
+  assert.equal(falha.status, 409, JSON.stringify(falha.body));
+  assert.deepEqual(await status(c2, c3), ["COLETADO", "COLETADO"], "nenhum foi registrado");
+  const ok = await po.post(`/api/qr/${e1.token}/portaria/ficam`).send({ containerIds: [c2.id, c3.id] });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.deepEqual(await status(c2, c3), ["NA_FABRICA", "NA_FABRICA"], "repetir só com os válidos funciona");
+
+  // ---- Resumo de alertas: só o que o sino usa ----
+  const lista = (await a.get("/api/alertas")).body;
+  const resumo = (await a.get("/api/alertas/resumo")).body;
+  assert.equal(resumo.total, lista.length);
+  assert.equal(resumo.naoReconhecidos, lista.filter((x) => !x.reconhecidoEm).length);
+  for (const item of resumo.criticosNaoReconhecidos) assert.deepEqual(Object.keys(item).sort(), ["containerId", "id", "nivel", "tipo"], "sem o container dentro de cada alerta");
+
+  // ---- Varredura em lote restrita a ids (usada pela importação) e sem consulta de viagem por container ----
+  const so = await naOrg(sincronizarTodos)(new Date(), { ids: [c1.id] });
+  assert.equal(so.containers, 1);
+  const todos = await naOrg(sincronizarTodos)();
+  assert.ok(todos.containers >= 1);
+
+  for (const c of [c1, c2, c3]) await a.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.9" });
 });

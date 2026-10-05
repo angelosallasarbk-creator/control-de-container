@@ -114,6 +114,9 @@ const concluir = () => executar(async () => {
             <option value="" disabled>Escolha…</option>
             <option v-for="t in transportadoras" :key="t.id" :value="t.id">{{ t.nome }}</option>
           </select>
+          <p v-if="!transportadoras.length" style="margin: 6px 0 0; font-size: 0.85rem; color: #b4232c">
+            Nenhuma transportadora cadastrada para este cliente. Peça ao responsável para cadastrar a sua.
+          </p>
         </div>
         <div class="campo">
           <label for="placa-motorista">Placa do caminhão</label>

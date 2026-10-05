@@ -4,6 +4,40 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.9.0 (reauditoria da 3.8.0: teste de estresse com 3 empresas e correções)
+
+Teste: 3 empresas usando o app inteiro por HTTP (todos os perfis, planilhas, QR, motorista por SMS, viagem,
+rastreamento, custos, redefinição de senha) mais 276 ataques cruzados com ids de outra empresa, no sistema
+em modo produção (RLS ligado). Resultado de isolamento: 0 vazamentos e 0 ataques aceitos, **exceto o item 1**.
+
+- **Transportadora do motorista só do cliente da etiqueta (vazamento entre clientes):** no primeiro acesso, a
+  lista de transportadoras era a da plataforma inteira. Um desconhecido com um celular via os nomes das
+  transportadoras de todos os clientes e, escolhendo a de outro cliente e registrando uma leitura no QR, o
+  cliente passava a ver o **nome e o CNPJ completo** dela (e podia criar gestor para ela). Agora a lista traz só as
+  transportadoras do cliente da etiqueta (mais a que o motorista já tem, se foi pré-cadastrado por outro
+  cliente), sem CNPJ, e o cadastro recusa (400) uma transportadora fora dela.
+- **CNPJ único só dentro do cliente:** como o CNPJ é público, quem cadastrava primeiro um CNPJ com um nome falso
+  virava dono do cadastro e a empresa verdadeira recebia esse cadastro sem poder corrigir. Agora cada cliente tem
+  o seu cadastro (nome e CNPJ únicos só dentro dele). Migração `20261013100000_cnpj_por_cliente` (troca o
+  índice único do CNPJ por `(organizacaoDonaId, cnpj)`; não apaga nada).
+- **Portaria, containers que ficam junto (`/portaria/ficam`):** agora tudo ou nada. Antes cada container era gravado
+  na sua vez: um inválido no meio deixava os anteriores registrados com a resposta de erro e repetir o pedido
+  falhava nos que já tinham entrado.
+- **Desempenho (medido no teste, 3 empresas, Alfa com ~1.300 containers ativos):**
+  - A varredura de alertas fazia uma consulta de viagem por container (regressão da 3.8.0 sobre o lote da 3.4).
+    Agora a participação em viagem vem em lote: salvar Configurações com 1.283 ativos passou de **20,5 s para 1,0 s**
+    (383 ativos: de 6,3 s para 0,3 a 1,2 s). A varredura periódica ganha o mesmo.
+  - A importação grava os alertas e o plano dos containers criados em lote: 900 linhas de **70 s para 16,6 s**.
+  - `GET /api/alertas/resumo` (consultado por todo navegador aberto, a cada poucos segundos) devolvia o container
+    de cada alerta: de 365 KB para ~35 KB e de 110 ms para 34 ms.
+  - Pico de memória do servidor no teste de carga: de 697 MB para 486 MB.
+- **Decisão sobre a anonimização com homônimos:** não alterado. A autoria é texto livre ("Nome (motorista ·
+  Transportadora)"); com nome e transportadora iguais não há como distinguir, e o direito de exclusão tem
+  prioridade. Resolver de vez exige gravar o `motoristaId` em cada tabela de autoria (mudança maior, fica anotada).
+- **Ainda de pé (recomendado para a próxima versão):** `GET /api/containers` e `/api/painel` devolvem tudo de uma vez
+  (6 MB e 1 MB com 1.286 ativos; 0,9 s e 0,7 s com um usuário, e a vazão cai a ~5 a 10 requisições/s com
+  vários usuários por causa do custo de montar e serializar). Pede paginação ou lista resumida, com mudança na tela.
+
 ## 3.8.0 — 04/10/2026 (tag `v3.8.0`)
 
 - **Viagem com vários containers (mesmo caminhão):** antes cada container era tratado como uma viagem —

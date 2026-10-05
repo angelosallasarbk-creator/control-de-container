@@ -139,26 +139,28 @@ const CADASTROS = {
   // Transportadoras: agrupam os motoristas (acesso pelo celular) e os gestores de cada uma.
   transportadoras: {
     modelo: "transportadora",
-    // Cadastro único na plataforma: o cliente vê as vinculadas a ele e só altera/exclui as que
-    // são exclusivamente dele (compartilhadas com outro cliente ficam protegidas).
-    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", dono: "organizacaoDonaId", erroNome: "Não foi possível usar esse CNPJ. Confira o número ou fale com o suporte." },
-    // v3.4 (item 9): nome único só dentro do cliente; CNPJ igual = mesma empresa → reaproveita o
-    // cadastro (cria só o vínculo). Sem CNPJ ou com CNPJ diferente, é outro cadastro.
+    // Tabela da plataforma: o cliente vê as vinculadas a ele (as que criou e as dos motoristas que
+    // registraram pelo QR dele) e só altera/exclui as que são exclusivamente dele.
+    global: { vinculo: "organizacoes", tabelaVinculo: "transportadoraOrganizacao", chave: "transportadoraId", dono: "organizacaoDonaId", erroNome: "Já existe uma transportadora com esse CNPJ no seu cadastro." },
+    // Nome e CNPJ únicos só dentro do cliente (v3.9). Antes (v3.4) o mesmo CNPJ em outro cliente
+    // reaproveitava o cadastro do primeiro: como o CNPJ é público, quem cadastrava primeiro com um
+    // nome falso virava dono e a empresa verdadeira recebia esse cadastro sem poder corrigi-lo.
+    // Agora cada cliente tem o seu cadastro (o CNPJ repetido em outro cliente é outro registro).
     reaproveitar: async (tx, dados, req, antes = null) => {
       const org = req.usuario.organizacaoId;
+      const outroId = antes ? { id: { not: antes.id } } : {};
       if (dados.nome !== undefined) {
         const homonima = await tx.transportadora.findFirst({
-          where: { nome: { equals: dados.nome, mode: "insensitive" }, organizacoes: { some: { organizacaoId: org } }, ...(antes ? { id: { not: antes.id } } : {}) },
+          where: { nome: { equals: dados.nome, mode: "insensitive" }, organizacoes: { some: { organizacaoId: org } }, ...outroId },
           select: { id: true },
         });
         if (homonima) throw erroHttp(409, "Já existe uma transportadora com esse nome no seu cadastro.");
       }
-      if (antes || !dados.cnpj) return null;
-      const mesma = await tx.transportadora.findUnique({ where: { cnpj: dados.cnpj }, select: { id: true, organizacoes: { where: { organizacaoId: org }, select: { organizacaoId: true } } } });
-      if (!mesma) return null;
-      if (mesma.organizacoes.length) throw erroHttp(409, "Essa transportadora (mesmo CNPJ) já está no seu cadastro.");
-      await tx.transportadoraOrganizacao.create({ data: { transportadoraId: mesma.id, organizacaoId: org } });
-      return mesma.id;
+      if (dados.cnpj) {
+        const mesmoCnpj = await tx.transportadora.findFirst({ where: { cnpj: dados.cnpj, organizacoes: { some: { organizacaoId: org } }, ...outroId }, select: { id: true } });
+        if (mesmoCnpj) throw erroHttp(409, "Já existe uma transportadora com esse CNPJ no seu cadastro.");
+      }
+      return null;
     },
     entidade: "Transportadora",
     uso: "motoristas",
