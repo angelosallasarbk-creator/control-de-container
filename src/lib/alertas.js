@@ -6,6 +6,7 @@ import { estimarCiclo } from "./estimativa.js";
 import { montarContextos, configRodagem } from "./previsao.js";
 import { congelarPlanoSeFaltar, completarPlanoSeFaltar } from "./planejamento.js";
 import { sincronizarViagem, participacoesAtivas } from "./viagem.js";
+import { construirResumo, resumoMudou } from "./resumoContainer.js";
 
 // Leituras suficientes para achar o início de uma sequência fora da faixa sem carregar o histórico todo.
 const LEITURAS_AVALIADAS = 200;
@@ -25,7 +26,7 @@ export async function leiturasRecentes(containerId, cliente = prisma) {
 
 // Últimas leituras de vários containers numa consulta só (varredura em lote, v3.4 item 12): as
 // LEITURAS_AVALIADAS mais recentes de cada um, pelo índice (containerId, lidaEm). Em ordem cronológica.
-async function leiturasDeVarios(ids) {
+export async function leiturasDeVarios(ids) {
   const porContainer = new Map(ids.map((id) => [id, []]));
   if (!ids.length) return porContainer;
   const linhas = await prisma.$queryRaw`
@@ -53,6 +54,15 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
   return aplicarAlertas(container, { leituras, contexto: contextos.get(containerId), abertos, cfg, agora });
 }
 
+// Grava o resumo do container (lib/resumoContainer.js) só se mudou: sem escrita à toa na varredura.
+async function gravarResumo(container, leituras, previsao, cfg, agora) {
+  const novo = construirResumo(container, leituras, previsao, agora, cfg);
+  if (!resumoMudou(container, novo)) return false;
+  // Pelo JSON puro: datas viram texto ISO, como o banco vai devolver.
+  await prisma.container.updateMany({ where: { id: container.id }, data: { ...novo, resumo: JSON.parse(JSON.stringify(novo.resumo)), resumoEm: agora } });
+  return true;
+}
+
 // Núcleo da sincronização com os dados já carregados (um container ou a varredura em lote):
 // só grava quando algo muda (plano a congelar, alerta a abrir/encerrar, mensagem a atualizar).
 async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, agora, participacao }) {
@@ -68,6 +78,8 @@ async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, ago
   await congelarPlanoSeFaltar(container, previsaoPlano, agora);
   await completarPlanoSeFaltar(container, previsao, agora);
   const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao, cfg.atrasoColetaCriticoHoras);
+  // Resumo para as listas (v3.10): grava quando mudou (a previsão e a temperatura vêm daqui).
+  await gravarResumo(container, leituras, previsao, cfg, agora);
   const desejados = alertasDesejados(container, situacao);
   const chavesDesejadas = new Set(desejados.map((a) => chaveAlerta(containerId, a.tipo, a.nivel)));
 

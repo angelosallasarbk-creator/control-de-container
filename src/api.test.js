@@ -3447,3 +3447,215 @@ test("v3.9 reauditoria: transportadora do motorista só do cliente da etiqueta, 
 
   for (const c of [c1, c2, c3]) await a.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.9" });
 });
+
+test("v3.10 lista paginada e painel enxuto: equivalem à lista antiga, filtram/ordenam no banco, respeitam o isolamento", async () => {
+  const { criarOrganizacao } = await import("./lib/organizacoes.js");
+  const { prisma: bruto, Prisma } = await import("./lib/prisma.js");
+  const { sincronizarTodos: varrer } = await import("./lib/alertas.js");
+  const { org } = await criarOrganizacao({ nome: "Cliente Lista 3.10", admin: { email: "admin@lista310.local", nome: "Admin Lista", senha: "senha-teste-123" }, criadoPor: "teste" });
+  const a = await logar("admin@lista310.local");
+  const naNova = (fn) => comOrganizacao(org.id, fn);
+  const H = 3600e3;
+
+  // ---- Cadastros (2 regiões, 3 pontos de carregamento, 2 armadores, produto de temperatura, 2 locais com coordenadas) ----
+  const tipos = (await a.get("/api/tipos-local")).body;
+  const porto = (await a.post("/api/locais").send({ nome: "Porto L310", tipoId: tipos.find((t) => t.funcao === "RETIRADA_ENTREGA").id, latitude: -23.96, longitude: -46.33 })).body;
+  const fabrica = (await a.post("/api/locais").send({ nome: "Fabrica L310", tipoId: tipos.find((t) => t.funcao === "CARREGAMENTO").id, latitude: -23.55, longitude: -46.63 })).body;
+  const [r1, r2] = [(await a.post("/api/regioes").send({ nome: "Regiao Um 310" })).body, (await a.post("/api/regioes").send({ nome: "Regiao Dois 310" })).body];
+  const gA = (await a.post("/api/grupos").send({ cliente: "Cli Alfa 310", fabrica: "Fab Um", metaEstadiaHoras: 24, custoEstadiaPorHora: 10, regiaoId: r1.id, localId: fabrica.id })).body;
+  const gB = (await a.post("/api/grupos").send({ cliente: "Cli Beta 310", fabrica: "Fab Dois", metaEstadiaHoras: 12, regiaoId: r2.id })).body;
+  const gC = (await a.post("/api/grupos").send({ cliente: "Cli Gama 310", fabrica: "Fab Tres", metaEstadiaHoras: 48 })).body;
+  const armA = (await a.post("/api/armadores").send({ nome: "Armador Aaa", freeTimeDias: 3, valorDiaria: 100 })).body;
+  const armB = (await a.post("/api/armadores").send({ nome: "Armador Bbb", freeTimeDias: 8, valorDiaria: 50 })).body;
+  const prod = (await a.post("/api/produtos").send({ nome: "Carne L310", categoria: "CONGELADO", setpoint: -18, tempMin: -20, tempMax: -15, toleranciaMinutos: 30 })).body;
+  assert.ok(porto.id && fabrica.id && gA.id && gB.id && gC.id && armA.id && armB.id && prod.id, "cadastros criados");
+
+  // ---- 26 containers variados ----
+  const criados = [];
+  const criar = async (n, extra = {}) => {
+    const r = await a.post("/api/containers").send({ numero: `LSTU${String(3100000 + n * 7).slice(1)}0`, confirmarDigito: true, tipo: "DRY_40", grupoId: gA.id, armadorId: armA.id, ...extra });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    criados.push(r.body);
+    return r.body;
+  };
+  const trajeto = { portoRetiradaId: porto.id, localCarregamentoId: fabrica.id, portoEntregaId: porto.id };
+  for (let i = 0; i < 8; i++) {
+    await criar(i, {
+      grupoId: [gA.id, gB.id, gC.id][i % 3], armadorId: i % 2 ? armA.id : armB.id, booking: `BKL${i}`, navio: i % 2 ? "NAVIO ZETA" : "NAVIO OMEGA", placa: `LST${i}A${10 + i}`,
+      deadline: i % 3 === 0 ? undefined : new Date(Date.now() + (i * 20 - 40) * H).toISOString(),
+      coletaProgramadaEm: new Date(Date.now() - (i % 4) * 3 * H).toISOString(), ...(i < 5 ? trajeto : {}),
+    });
+  }
+  const reefers = [];
+  for (let i = 8; i < 18; i++) {
+    const r = await criar(i, { tipo: "REEFER_40", produtoId: prod.id, grupoId: [gA.id, gB.id, gC.id][i % 3], armadorId: i % 2 ? armA.id : armB.id, ...(i % 4 ? trajeto : {}) });
+    reefers.push(r);
+  }
+  // avanços: até COLETADO (3), NA_FABRICA (3), EM_OPERACAO (2), SAIU_FABRICA (2) e ENTREGUE_PORTO (2) entre os reefers/secos
+  const avancar = async (c, n) => { for (let i = 0; i < n; i++) assert.equal((await a.post(`/api/containers/${c.id}/avancar`).send({})).status, 200); };
+  const passos = [1, 1, 1, 2, 2, 2, 3, 3, 5, 5, 6, 6];
+  for (const [i, n] of passos.entries()) await avancar(criados[8 + (i % 10)] ?? criados[i], n).catch(() => {});
+  for (const c of reefers) {
+    await a.post(`/api/containers/${c.id}/leituras`).send({ temperatura: -18 });
+    if (c.id % 3 === 0) await a.post(`/api/containers/${c.id}/leituras`).send({ temperatura: -12.5 });
+  }
+  const cancelado = await criar(18);
+  assert.equal((await a.post(`/api/containers/${cancelado.id}/cancelar`).send({ motivo: "teste lista" })).status, 200);
+  // QR vinculado em 5 containers
+  const etqs = (await a.post("/api/etiquetas/lotes").send({ quantidade: 5 })).body.etiquetas;
+  for (const [i, e] of etqs.entries()) {
+    const alvo = criados[i * 2];
+    const ativo = (await a.get(`/api/containers/${alvo.id}`)).body;
+    await a.post(`/api/qr/${e.token}/vincular`).send({ numero: ativo.numero, temperatura: ativo.reefer ? -18 : undefined });
+  }
+  await naNova(() => varrer());
+
+  const FLUXO = ["PROGRAMADO", "COLETADO", "NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA", "ENTREGUE_PORTO", "CANCELADO"];
+  const legado = (await a.get("/api/containers?situacao=todos")).body;
+  const lista = async (q = "") => { const r = await a.get(`/api/containers/lista?${q}`); assert.equal(r.status, 200, `${q} → ${JSON.stringify(r.body)}`); return r.body; };
+  const tudo = await lista("situacao=todos&limite=100");
+  assert.equal(legado.length, 19);
+  assert.equal(tudo.total, 19);
+  assert.equal("resumoEm" in legado[0] || "semaforoNivel" in legado[0] || "resumo" in legado[0], false, "a lista antiga não expõe as colunas internas do resumo");
+
+  // ---- 1. Equivalência com a lista antiga (mesma situação, mesmos rótulos, mesmo QR) ----
+  const porId = new Map(tudo.itens.map((i) => [i.id, i]));
+  const recorte = (c) => ({
+    status: c.status, semaforo: c.semaforo, qrVinculado: c.qrVinculado, rotulosEtapa: c.rotulosEtapa, reefer: c.reefer, grupoId: c.grupoId, regiaoId: c.grupo.regiaoId, armador: c.armador.nome,
+    estadia: c.situacao.estadia && { situacao: c.situacao.estadia.situacao, metaHoras: c.situacao.estadia.metaHoras, encerrada: c.situacao.estadia.encerrada },
+    demurrage: c.situacao.demurrage && { situacao: c.situacao.demurrage.situacao, diasRestantes: c.situacao.demurrage.diasRestantes, diasExcedidos: c.situacao.demurrage.diasExcedidos, custo: c.situacao.demurrage.custo },
+    deadline: c.situacao.deadline?.situacao, atrasoColeta: c.situacao.atrasoColeta?.situacao, entregaADefinir: c.situacao.entregaADefinir?.situacao,
+    temperatura: c.situacao.temperatura && { foraDaFaixa: c.situacao.temperatura.foraDaFaixa, semLeitura: c.situacao.temperatura.semLeitura, ultima: c.situacao.temperatura.ultima?.temperatura, nivel: c.situacao.temperatura.nivelTemperatura },
+    previsao: c.situacao.previsao && { disponivel: c.situacao.previsao.disponivel, parcial: c.situacao.previsao.parcial, risco: c.situacao.previsao.riscoDemurrage, riscoDeadline: c.situacao.previsao.riscoDeadline, dias: c.situacao.previsao.diasDemurragePrevistos },
+  });
+  for (const antigo of legado) assert.deepEqual(recorte(porId.get(antigo.id)), recorte(antigo), `container ${antigo.numero}`);
+  const cores = new Set(legado.map((c) => c.semaforo));
+  assert.ok(cores.has("VERMELHO") && cores.has("VERDE"), `o cenário cobre cores diferentes: ${[...cores]}`);
+
+  // ---- 2. Paginação: páginas disjuntas, completas, com teto e limites ----
+  const vistos = [];
+  const p1 = await lista("situacao=todos&limite=7&pagina=1");
+  assert.deepEqual([p1.total, p1.totalPaginas, p1.limite, p1.pagina, p1.itens.length], [19, 3, 7, 1, 7]);
+  for (let p = 1; p <= 3; p++) vistos.push(...(await lista(`situacao=todos&limite=7&pagina=${p}`)).itens.map((i) => i.id));
+  assert.equal(new Set(vistos).size, 19, "sem repetir nem faltar");
+  assert.deepEqual([...vistos].sort((x, y) => x - y), legado.map((c) => c.id).sort((x, y) => x - y));
+  assert.equal((await lista("situacao=todos&limite=7&pagina=99")).pagina, 3, "página além do fim vale a última");
+  assert.equal((await lista("situacao=todos&pagina=-4")).pagina, 1);
+  assert.equal((await lista("situacao=todos&limite=100000")).limite, 100, "teto de 100 por página");
+  assert.equal((await lista("situacao=todos&limite=abc")).limite, 20);
+  const GRAV = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
+  const padrao = vistos.map((id) => GRAV[porId.get(id).semaforo]);
+  assert.deepEqual(padrao, [...padrao].sort((x, y) => x - y), "ordem padrão: crítico primeiro");
+
+  // ---- 3. Ordenação no banco (nulos sempre no fim) ----
+  const monotona = (itens, valor, dir, rotulo) => {
+    const v = itens.map(valor);
+    const nulos = v.map((x, i) => (x === null || x === undefined ? i : -1)).filter((i) => i >= 0);
+    assert.deepEqual(nulos, nulos.length ? Array.from({ length: nulos.length }, (_, i) => v.length - nulos.length + i) : [], `${rotulo} ${dir}: nulos no fim`);
+    const cheios = v.filter((x) => x !== null && x !== undefined);
+    for (let i = 1; i < cheios.length; i++) assert.ok(dir === "asc" ? cheios[i - 1] <= cheios[i] : cheios[i - 1] >= cheios[i], `${rotulo} ${dir}: ${cheios[i - 1]} / ${cheios[i]}`);
+  };
+  const TIPOS = ["DRY_20", "DRY_40", "HC_40", "REEFER_20", "REEFER_40"];
+  const EXTRATORES = {
+    numero: (c) => c.numero, tipo: (c) => TIPOS.indexOf(c.tipo), etapa: (c) => FLUXO.indexOf(c.status), recente: (c) => new Date(c.criadoEm).getTime(),
+    grupo: (c) => `${c.grupo.cliente} / ${c.grupo.fabrica}`, armador: (c) => c.armador.nome, deadline: (c) => (c.deadline ? new Date(c.deadline).getTime() : null),
+    estadia: (c) => (c.situacao.estadia && !c.situacao.estadia.encerrada ? c.situacao.estadia.horasRestantes : null),
+    demurrage: (c) => { const d = c.situacao.demurrage; return d && !d.encerrada ? (d.diasExcedidos > 0 ? -d.diasExcedidos : d.diasRestantes) : null; },
+    temperatura: (c) => c.situacao.temperatura?.ultima?.temperatura ?? null,
+    previsao: (c) => (c.situacao.previsao?.disponivel && !c.situacao.previsao.parcial ? Math.round(c.situacao.previsao.folgaHoras * 10) / 10 : null),
+    semaforo: (c) => GRAV[c.semaforo],
+  };
+  for (const [ordem, valor] of Object.entries(EXTRATORES)) {
+    for (const dir of ["asc", "desc"]) monotona((await lista(`situacao=todos&limite=100&ordem=${ordem}&dir=${dir}`)).itens, valor, dir, ordem);
+  }
+  assert.ok(EXTRATORES.estadia && (await lista("situacao=todos&limite=100&ordem=estadia")).itens.some((c) => EXTRATORES.estadia(c) !== null), "há containers com estadia correndo no cenário");
+  assert.equal((await a.get("/api/containers/lista?ordem=nome;DROP TABLE")).status, 400, "ordenação só por chaves da lista");
+
+  // ---- 4. Filtros no banco ----
+  assert.deepEqual((await lista("situacao=encerrados&limite=100")).itens.map((c) => c.status).sort(), legado.filter((c) => ["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)).map((c) => c.status).sort());
+  const ativos = await lista("limite=100");
+  assert.ok(ativos.itens.every((c) => !["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)), "padrão = ativos");
+  const idsDe = (r) => r.itens.map((c) => c.id).sort((x, y) => x - y);
+  const esperado = (fn) => legado.filter(fn).map((c) => c.id).sort((x, y) => x - y);
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&status=COLETADO")), esperado((c) => c.status === "COLETADO"));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&grupos=${gA.id},${gB.id}`)), esperado((c) => [gA.id, gB.id].includes(c.grupoId)));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&regioes=${r1.id}`)), esperado((c) => c.grupo.regiaoId === r1.id));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&regioes=sem`)), esperado((c) => c.grupo.regiaoId === null));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&regioes=sem,${r2.id}`)), esperado((c) => c.grupo.regiaoId === null || c.grupo.regiaoId === r2.id));
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&semQr=1")), esperado((c) => !c.qrVinculado));
+  assert.ok(esperado((c) => c.qrVinculado).length >= 3, "o cenário tem containers com QR");
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=NAVIO ZETA")), esperado((c) => c.navio === "NAVIO ZETA"));
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=bkl3")), esperado((c) => c.booking === "BKL3"));
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=lst2a12")), esperado((c) => c.placa === "LST2A12"));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&busca=${legado[4].numero.slice(2, 8)}`)).includes(legado[4].id), true, "busca por parte do número");
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=Porto L310")), esperado((c) => c.portoRetirada?.nome === "Porto L310" || c.localCarregamento?.nome === "Porto L310" || c.portoEntrega?.nome === "Porto L310"), "busca pelo nome do local");
+  assert.deepEqual(idsDe(await lista(`situacao=ativos&limite=100&status=COLETADO&grupos=${gB.id}&semQr=1`)), esperado((c) => c.status === "COLETADO" && c.grupoId === gB.id && !c.qrVinculado), "filtros combinados");
+  for (const ruim of ["situacao=x", "status=FOO", "grupos=abc", "grupos=0", "regioes=a1"]) assert.equal((await a.get(`/api/containers/lista?${ruim}`)).status, 400, ruim);
+
+  // ---- 5. "Localizar": a página em que o container aberto está (ordem padrão) ----
+  const pg2 = await lista("situacao=todos&limite=5&pagina=2");
+  const alvo = pg2.itens[2];
+  const achada = await lista(`situacao=todos&limite=5&localizar=${alvo.id}`);
+  assert.equal(achada.pagina, 2);
+  assert.ok(achada.itens.some((c) => c.id === alvo.id));
+
+  // ---- 6. Atualização imediata: a mudança aparece na lista sem esperar a varredura ----
+  const reefer = reefers.find((c) => c.id % 3 !== 0 && ["COLETADO", "NA_FABRICA", "EM_OPERACAO", "PROGRAMADO", "LIBERADO"].includes(legado.find((x) => x.id === c.id).status));
+  const antes = (await lista("situacao=todos&limite=100")).itens.find((c) => c.id === reefer.id);
+  assert.equal(antes.situacao.temperatura.foraDaFaixa, false);
+  assert.equal((await a.post(`/api/containers/${reefer.id}/leituras`).send({ temperatura: -5 })).status, 201);
+  const depois = (await lista("situacao=todos&limite=100")).itens.find((c) => c.id === reefer.id);
+  assert.deepEqual([depois.situacao.temperatura.foraDaFaixa, depois.situacao.temperatura.ultima.temperatura], [true, -5]);
+  assert.notEqual(depois.semaforo, "VERDE");
+
+  // ---- 7. Resumo ausente (anterior à v3.10): a lista sincroniza na hora e não quebra; a varredura não regrava à toa ----
+  const alvos = criados.slice(0, 3).map((c) => c.id);
+  await naNova(() => bruto.container.updateMany({ where: { id: { in: alvos } }, data: { resumo: Prisma.DbNull, semaforoNivel: null, resumoEm: null } }));
+  const apos = await lista("situacao=todos&limite=100");
+  assert.equal(apos.itens.length, 19);
+  for (const id of alvos) assert.deepEqual(recorte(apos.itens.find((c) => c.id === id)), recorte(legado.find((c) => c.id === id)));
+  assert.equal((await naNova(() => bruto.container.count({ where: { id: { in: alvos }, resumoEm: { not: null }, semaforoNivel: { not: null } } }))), 3, "resumo recomposto");
+  const sem = criados.find((c) => c.numero && !legado.find((x) => x.id === c.id)?.portoRetiradaId && legado.find((x) => x.id === c.id)?.status === "PROGRAMADO");
+  await naNova(() => varrer());
+  const t1 = (await naNova(() => bruto.container.findUnique({ where: { id: sem.id }, select: { resumoEm: true } }))).resumoEm;
+  await new Promise((r) => setTimeout(r, 30));
+  await naNova(() => varrer());
+  assert.equal((await naNova(() => bruto.container.findUnique({ where: { id: sem.id }, select: { resumoEm: true } }))).resumoEm.getTime(), t1.getTime(), "varredura sem mudança não regrava o resumo");
+
+  // ---- 8. Painel: números de todos os containers, cards só do escopo, no máximo N por grupo e fase ----
+  const painel = (await a.get("/api/painel")).body;
+  // (relido: a leitura do passo 6 mudou a situação de um container desde a primeira foto da lista antiga)
+  const ativosLegado = (await a.get("/api/containers?situacao=todos")).body.filter((c) => !["ENTREGUE_PORTO", "CANCELADO"].includes(c.status));
+  assert.equal(painel.totais.ativos, ativosLegado.length);
+  for (const g of painel.grupos.filter((x) => [gA.id, gB.id, gC.id].includes(x.id))) {
+    const meus = ativosLegado.filter((c) => c.grupoId === g.id);
+    assert.equal(g.total, meus.length, `total do grupo ${g.cliente}`);
+    assert.deepEqual(g.semaforo, { VERDE: meus.filter((c) => c.semaforo === "VERDE").length, AMARELO: meus.filter((c) => c.semaforo === "AMARELO").length, VERMELHO: meus.filter((c) => c.semaforo === "VERMELHO").length });
+    assert.equal(g.containers.length, meus.length, "escopo padrão (todas): todos os cards, abaixo do limite");
+    assert.equal(Object.values(g.fases).reduce((s, x) => s + x, 0), meus.length);
+  }
+  const daRegiao = (await a.get(`/api/painel?regiao=${r1.id}`)).body;
+  assert.ok(daRegiao.grupos.find((g) => g.id === gB.id).total > 0, "os números dos outros grupos continuam");
+  assert.equal(daRegiao.grupos.find((g) => g.id === gB.id).containers.length, 0, "mas sem cards fora da região");
+  assert.ok(daRegiao.grupos.find((g) => g.id === gA.id).containers.length > 0);
+  assert.equal((await a.get(`/api/painel?regiao=sem`)).body.grupos.find((g) => g.id === gC.id).containers.length, ativosLegado.filter((c) => c.grupoId === gC.id).length);
+  const problemas = (await a.get("/api/painel?soProblemas=1")).body;
+  assert.ok(problemas.grupos.every((g) => g.containers.every((c) => c.semaforo !== "VERDE")), "só atenção/crítico");
+  assert.equal(problemas.totais.ativos, painel.totais.ativos, "os números não mudam com o filtro");
+  const curto = (await a.get("/api/painel?porFase=2")).body;
+  const limitados = curto.grupos.filter((g) => Object.values(g.ocultos).some((n) => n > 0));
+  assert.ok(limitados.length, "com 2 por fase alguém passa do limite");
+  for (const g of curto.grupos) for (const f of ["chegando", "fabrica", "porto"]) assert.equal(g.containers.filter((c) => (f === "fabrica" ? ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"].includes(c.status) : f === "porto" ? c.status === "SAIU_FABRICA" || (c.temOperacao === false) : ["PROGRAMADO", "COLETADO"].includes(c.status) && c.temOperacao !== false)).length + g.ocultos[f], g.fases[f]);
+  for (const ruim of ["regiao=abc", "grupoId=x", "grupoId=-1"]) assert.equal((await a.get(`/api/painel?${ruim}`)).status, 400, ruim);
+
+  // ---- 9. Isolamento: outro cliente não vê nada daqui, nem pelos filtros nem pelo "localizar" ----
+  const b = await logar("admin@ref34.local");
+  const deB = (await b.get(`/api/containers/lista?situacao=todos&limite=100&grupos=${gA.id}&localizar=${alvo.id}&busca=LSTU`)).body;
+  assert.deepEqual([deB.total, deB.itens.length], [0, 0]);
+  assert.equal(JSON.stringify((await b.get("/api/containers/lista?situacao=todos&limite=100")).body).includes("LSTU"), false);
+  assert.equal(JSON.stringify((await b.get("/api/painel")).body).includes("Cli Alfa 310"), false);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/containers/lista")).status, 200, "quem só consulta também lista");
+  assert.equal((await logar("portaria@teste.local").then((p) => p.get("/api/containers/lista"))).status, 403, "portaria não usa a lista (só o pátio)");
+
+  for (const c of criados) if (!["ENTREGUE_PORTO", "CANCELADO"].includes((await a.get(`/api/containers/${c.id}`)).body.status)) await a.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.10" });
+});

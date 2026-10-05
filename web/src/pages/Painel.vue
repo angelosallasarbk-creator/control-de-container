@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api } from "../api.js";
 import { fmtMoeda, fmtDataHora } from "../formato.js";
 import TileContainer from "../components/TileContainer.vue";
+import { filtroContainers } from "../filtroContainers.js";
 
 const route = useRoute();
 const router = useRouter();
@@ -24,12 +25,18 @@ const FASES = [
   { chave: "porto", titulo: "A caminho da entrega", pertence: (c) => c.status === "SAIU_FABRICA" || (c.temOperacao === false && ["PROGRAMADO", "COLETADO"].includes(c.status)) },
 ];
 
+// v3.10: os números cobrem todos os containers ativos, mas os cards vêm só da aba, do ponto de
+// carregamento e do filtro escolhidos (e no máximo 60 por fase). Mudou a escolha: busca de novo.
+let sequencia = 0;
 async function carregar() {
+  const minha = ++sequencia; // descarta resposta antiga (cliques seguidos nas abas)
   try {
-    dados.value = await api.painel();
+    const r = await api.painel({ regiao: abaAtual.value, grupoId: filtroGrupo.value, soProblemas: soProblemas.value ? "1" : "" });
+    if (minha !== sequencia) return;
+    dados.value = r;
     erro.value = null;
   } catch (e) {
-    erro.value = e.message;
+    if (minha === sequencia) erro.value = e.message;
   }
 }
 
@@ -38,6 +45,14 @@ onMounted(() => {
   timer = setInterval(carregar, ATUALIZAR_MS);
 });
 onBeforeUnmount(() => clearInterval(timer));
+
+// "+N fora desta tela": abre a lista de containers já filtrada pelo ponto de carregamento.
+function verNaLista(g) {
+  filtroContainers.regioes = [];
+  filtroContainers.semQr = false;
+  filtroContainers.grupos = [g.id];
+  router.push("/containers");
+}
 
 // ---------- Abas por região ----------
 // "todas" + uma aba por região + "sem" (fábricas ainda sem região, para nada sumir do pátio).
@@ -53,7 +68,7 @@ const abas = computed(() => {
   const resumo = (chave) => {
     const grupos = dados.value.grupos.filter((g) => chave === "todas" || chaveRegiao(g) === chave);
     return {
-      ativos: grupos.reduce((s, g) => s + g.containers.length, 0),
+      ativos: grupos.reduce((s, g) => s + g.total, 0),
       vermelhos: grupos.reduce((s, g) => s + g.semaforo.VERMELHO, 0),
       amarelos: grupos.reduce((s, g) => s + g.semaforo.AMARELO, 0),
     };
@@ -81,7 +96,11 @@ function selecionarAba(chave) {
   }
   router.replace({ query: { ...route.query, regiao: chave } });
 }
-watch(abaAtual, () => (filtroGrupo.value = ""));
+watch(abaAtual, () => {
+  filtroGrupo.value = "";
+  carregar();
+});
+watch([filtroGrupo, soProblemas], carregar);
 
 const gruposDaAba = computed(() =>
   (dados.value?.grupos ?? []).filter((g) => abaAtual.value === "todas" || chaveRegiao(g) === abaAtual.value)
@@ -89,7 +108,7 @@ const gruposDaAba = computed(() =>
 
 // Só os pontos de carregamento com demanda (container ativo: programado, em trânsito ou no local)
 // aparecem nos cards e na lista de filtro — os sem container não ocupam a Home.
-const gruposComDemanda = computed(() => gruposDaAba.value.filter((g) => g.containers.length));
+const gruposComDemanda = computed(() => gruposDaAba.value.filter((g) => g.total));
 
 // ---------- Indicadores da aba ----------
 const somarMoedas = (lista) => {
@@ -103,7 +122,7 @@ const indicadores = computed(() => {
   const gs = gruposDaAba.value;
   const soma = (fn) => gs.reduce((s, g) => s + fn(g), 0);
   return {
-    ativos: soma((g) => g.containers.length),
+    ativos: soma((g) => g.total),
     naFabrica: soma((g) => STATUS_NA_FABRICA.reduce((s, st) => s + (g.porStatus[st] ?? 0), 0)),
     vermelhos: soma((g) => g.semaforo.VERMELHO),
     amarelos: soma((g) => g.semaforo.AMARELO),
@@ -120,7 +139,7 @@ const grupos = computed(() =>
       const visiveis = g.containers.filter((c) => !soProblemas.value || c.semaforo !== "VERDE");
       return {
         ...g,
-        fases: FASES.map((f) => ({ ...f, containers: visiveis.filter(f.pertence) })).filter((f) => f.containers.length),
+        fases: FASES.map((f) => ({ ...f, containers: visiveis.filter(f.pertence), ocultos: g.ocultos?.[f.chave] ?? 0 })).filter((f) => f.containers.length),
       };
     })
     .filter((g) => !soProblemas.value || g.fases.length)
@@ -190,7 +209,7 @@ const grupos = computed(() =>
           <div class="grupo-titulo">{{ g.cliente }} / {{ g.fabrica }}</div>
           <div class="mudo pequeno">
             <template v-if="abaAtual === 'todas'">{{ g.regiao?.nome ?? "Sem região" }} · </template>
-            Meta de estadia: {{ g.metaEstadiaHoras }}h · {{ g.containers.length }} container(s) ativo(s)
+            Meta de estadia: {{ g.metaEstadiaHoras }}h · {{ g.total }} container(s) ativo(s)
           </div>
         </div>
         <div class="contadores">
@@ -202,9 +221,13 @@ const grupos = computed(() =>
       </div>
       <div v-if="!g.fases.length" class="mudo pequeno">Sem containers ativos neste grupo.</div>
       <div v-for="f in g.fases" :key="f.chave" style="margin-top: 10px">
-        <h3>{{ f.titulo }} <span class="mudo">({{ f.containers.length }})</span></h3>
+        <h3>{{ f.titulo }} <span class="mudo">({{ f.containers.length + f.ocultos }})</span></h3>
         <div class="tiles">
           <TileContainer v-for="c in f.containers" :key="c.id" :c="c" />
+        </div>
+        <div v-if="f.ocultos" class="mudo pequeno" style="margin-top: 6px">
+          +{{ f.ocultos }} {{ soProblemas ? "" : "menos críticos " }}fora desta tela (mostrando os {{ f.containers.length }} mais críticos).
+          <a href="#" @click.prevent="verNaLista(g)">Ver todos na lista</a>
         </div>
       </div>
     </section>

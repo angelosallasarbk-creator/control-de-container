@@ -1,16 +1,16 @@
 <script setup>
 // Lista da esquerda da visão "lista + detalhe": ativos por padrão, filtro de status e busca
 // por container, navio ou rota. Clicar abre o container à direita (mesma URL /containers/:id).
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth.js";
 import { api } from "../api.js";
 import { FLUXO, ROTULO_STATUS, ROTULO_TIPO, rotuloEtapa } from "../formato.js";
-import { filtroContainers, passaFiltroContainers } from "../filtroContainers.js";
+import { filtroContainers } from "../filtroContainers.js";
 import Icone from "./Icone.vue";
 import MarcaQr from "./MarcaQr.vue";
 import Paginacao from "./Paginacao.vue";
-import { usePaginacao } from "../composables/usePaginacao.js";
+import { usePaginacaoServidor } from "../composables/usePaginacaoServidor.js";
 
 const props = defineProps({ selecionado: { type: [Number, String], default: null } });
 const emit = defineEmits(["carregada", "filtrada", "novo", "upload"]);
@@ -40,63 +40,80 @@ function parametros(f) {
   return { situacao: "todos", status: f };
 }
 
-async function carregar() {
+// Lista paginada no servidor (v3.10): busca, status, filtros do cabeçalho e página rodam no banco; só a
+// página chega ao navegador. Ordem: crítico primeiro, mais recente primeiro (a ordem do servidor).
+// `localizar` faz o servidor devolver a página onde está o container aberto (link, tabela, filtro).
+let sequencia = 0;
+async function carregar({ localizar = false } = {}) {
+  const minha = ++sequencia; // descarta resposta de consulta mais antiga (digitação rápida, cliques seguidos)
   carregando.value = true;
   try {
-    lista.value = await api.containers(parametros(filtro.value));
+    const r = await api.listaContainers({
+      ...parametros(filtro.value), busca: busca.value.trim(),
+      regioes: filtroContainers.regioes.join(","), grupos: filtroContainers.grupos.join(","), semQr: filtroContainers.semQr ? "1" : "",
+      ordem: "semaforo", dir: "asc", pagina: pag.pagina.value, limite: pag.porPagina.value,
+      localizar: localizar && props.selecionado ? String(props.selecionado) : "",
+    });
+    if (minha !== sequencia) return null;
+    lista.value = r.itens;
+    pag.aplicar(r);
     erro.value = null;
-    emit("carregada", visiveis.value);
     rolarAteSelecionado();
+    return r.itens;
   } catch (e) {
-    erro.value = e.message;
+    if (minha === sequencia) erro.value = e.message;
+    return null;
   } finally {
-    carregando.value = false;
+    if (minha === sequencia) carregando.value = false;
   }
 }
-onMounted(carregar);
+// Filtro, busca ou status mudou: primeira página (ou a do container aberto, se ele continua na lista).
+async function refazer() {
+  pag.voltarAoInicio();
+  return carregar({ localizar: true });
+}
+const pag = usePaginacaoServidor("lista-lateral", () => carregar());
+
+onMounted(async () => {
+  const itens = await refazer();
+  if (itens) emit("carregada", itens);
+});
 watch(filtro, (f) => {
   try {
     localStorage.setItem(CHAVE_FILTRO, f);
   } catch {
     // sem armazenamento: só não lembra o filtro
   }
-  carregar();
+  refazer();
 });
-defineExpose({ carregar });
+let atraso = null;
+watch(busca, () => {
+  clearTimeout(atraso);
+  atraso = setTimeout(refazer, 350);
+});
+onBeforeUnmount(() => clearTimeout(atraso));
+// Mudou o filtro do cabeçalho: a ficha decide se troca o container aberto.
+watch(() => [filtroContainers.regioes, filtroContainers.grupos, filtroContainers.semQr], async () => {
+  const itens = await refazer();
+  if (itens) emit("filtrada", itens);
+}, { deep: true });
+// Depois de uma ação na ficha (avançar etapa etc.): recarrega a página atual sem pular de página.
+defineExpose({ carregar: () => carregar() });
 
 // Mantém o container aberto visível na lista (ex.: veio da tabela ou de um link).
 async function rolarAteSelecionado() {
   await nextTick();
   refItens.value?.querySelector(".item.ativo")?.scrollIntoView({ block: "nearest" });
 }
-watch(() => props.selecionado, rolarAteSelecionado);
+// Container aberto que não está na página atual (link, tabela): o servidor acha a página dele.
+watch(() => props.selecionado, (id) => {
+  if (id && !lista.value.some((c) => String(c.id) === String(id))) carregar({ localizar: true });
+  else rolarAteSelecionado();
+});
 
 const rota = (c) => [c.portoRetirada?.nome, c.localCarregamento?.nome, c.portoEntrega?.nome].filter(Boolean).join(" → ");
-// Mais crítico primeiro: vermelho, amarelo, verde; na mesma cor, mantém a ordem da API
-// (mais recentes primeiro). O primeiro da lista é o que o Grid abre ao entrar na tela.
-const CRITICIDADE = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
-// Filtros do cabeçalho (Região / Ponto de Carregamento) + busca da própria lista.
-const visiveis = computed(() => {
-  const t = busca.value.trim().toLowerCase();
-  return lista.value
-    .map((c, i) => ({ c, i }))
-    .filter(({ c }) => passaFiltroContainers(c) && (!t || `${c.numero} ${c.navio ?? ""} ${c.booking ?? ""} ${rota(c)}`.toLowerCase().includes(t)))
-    .sort((a, b) => (CRITICIDADE[a.c.semaforo] ?? 3) - (CRITICIDADE[b.c.semaforo] ?? 3) || a.i - b.i)
-    .map(({ c }) => c);
-});
-// Mudou o filtro do cabeçalho: a ficha decide se troca o container aberto.
-watch(() => [filtroContainers.regioes, filtroContainers.grupos, filtroContainers.semQr], () => emit("filtrada", visiveis.value), { deep: true });
 const filtrando = computed(() => filtroContainers.regioes.length || filtroContainers.grupos.length || filtroContainers.semQr);
 const abrir = (c) => router.push(`/containers/${c.id}`);
-
-// Paginação da lista (10/20/50 por página, lembrado neste navegador).
-const pag = usePaginacao(() => visiveis.value, "lista-lateral");
-// Container aberto fora da página atual (link, tabela, filtro): vai para a página dele.
-watch([() => props.selecionado, visiveis, pag.porPagina], () => {
-  const i = visiveis.value.findIndex((c) => String(c.id) === String(props.selecionado));
-  if (i >= 0) pag.irPara(Math.floor(i / pag.porPagina.value) + 1);
-  rolarAteSelecionado();
-});
 </script>
 
 <template>
@@ -126,7 +143,7 @@ watch([() => props.selecionado, visiveis, pag.porPagina], () => {
         <div v-for="i in 4" :key="i" class="esqueleto"><span></span><span></span></div>
       </template>
       <button
-        v-for="c in pag.itens.value" :key="c.id" type="button" class="item" :class="{ ativo: String(c.id) === String(selecionado) }"
+        v-for="c in lista" :key="c.id" type="button" class="item" :class="{ ativo: String(c.id) === String(selecionado) }"
         :aria-current="String(c.id) === String(selecionado) ? 'page' : undefined" @click="abrir(c)"
       >
         <span class="linha-entre" style="gap: 8px">
@@ -139,7 +156,7 @@ watch([() => props.selecionado, visiveis, pag.porPagina], () => {
         <span class="mudo">{{ ROTULO_TIPO[c.tipo] }}</span>
         <span v-if="rota(c)" class="rota">{{ rota(c) }}</span>
       </button>
-      <div v-if="!carregando && !visiveis.length" class="vazio pequeno">
+      <div v-if="!carregando && !lista.length" class="vazio pequeno">
         Nenhum container encontrado{{ filtrando ? " com os filtros do cabeçalho" : "" }}.
       </div>
     </div>

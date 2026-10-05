@@ -19,6 +19,7 @@ import { SELECT_PARADA, serializarParadas, validarTrajeto, gravarTrajeto, regist
 import { etapasDoContainer, regrasDeLocal, fluxoDoTipo, motivoLocalForaDaRegra, SELECT_TIPO_OPERACAO } from "../lib/fluxo.js";
 import { Prisma } from "@prisma/client";
 import { viagemDoContainer } from "../lib/viagem.js";
+import { listarContainers } from "../lib/listaContainers.js";
 
 export const containersRouter = Router();
 
@@ -189,6 +190,13 @@ containersRouter.get("/", asyncHandler(async (req, res) => {
   const agora = new Date();
   const contextos = await montarContextos(containers, config);
   res.json(containers.map((c) => montarContainer(c, [...c.leituras].reverse(), agora, config, contextos.get(c.id))));
+}));
+
+// Lista paginada (v3.10): filtro, ordenação e página no banco; cada linha vem do resumo gravado pela
+// sincronização (sem leituras nem contexto de rota). É a que as telas usam; a rota acima fica por
+// compatibilidade. Parâmetros: situacao, status, grupos, regioes, semQr, busca, ordem, dir, pagina, limite, localizar.
+containersRouter.get("/lista", asyncHandler(async (req, res) => {
+  res.json(await listarContainers(req.query));
 }));
 
 // ---------- Cadastro em lote por planilha (Baixar modelo / Upload) ----------

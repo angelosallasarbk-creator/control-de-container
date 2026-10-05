@@ -4,6 +4,47 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.10.0 (listas e painel por página: resumo gravado, filtro e ordem no banco)
+
+Resolve o item "ainda de pé" da 3.9.0: `GET /api/containers` e `/api/painel` devolviam tudo (3,7 a 6 MB e 0,6 a 0,9 s
+com ~1.300 ativos) e o custo crescia com o número de containers e de leituras.
+
+- **Resumo gravado pela sincronização (`Container.resumo`, JSON):** o que é caro de calcular e só muda quando
+  algo acontece (a última leitura de temperatura, desde quando está fora da faixa, a previsão de rota) é calculado
+  uma vez, na varredura/ao salvar, e gravado. Tudo que depende do relógio (estadia, demurrage, deadline, atraso de
+  coleta, minutos fora da faixa, "sem leitura", custos) continua calculado na hora, com as MESMAS funções da ficha,
+  a partir de datas absolutas; por isso não fica velho entre uma varredura e outra. Só a previsão de rota vale "até a
+  última sincronização" (já era assim na varredura). Só grava quando mudou (comparação canônica: o `jsonb` reordena
+  chaves) e a varredura de configuração não reescreve o que não mudou.
+- **Equivalência provada, não suposta:** `avaliarTemperatura` e `montarContainer` foram divididos em duas partes
+  (resumir + avaliar) e 6.000 casos aleatórios (`resumoContainer.test.js`) mostram resultado idêntico ao cálculo
+  direto, incluindo semáforo. O teste de API compara a lista nova com a antiga linha a linha.
+- **`GET /api/containers/lista` (nova):** página, total, filtros (situação, etapa, pontos de carregamento, regiões
+  incluindo "sem região", sem QR, busca em número/booking/placa/navio/locais) e ordenação por 12 chaves feitos no
+  banco, com índices `Container_lista_*`. Limite de 100 por página (padrão 20), chaves de ordenação em lista
+  fixa (nunca texto livre), desempate estável (`criadoEm desc, id desc`), nulos por último. `localizar=<id>` devolve a
+  página do container aberto. Containers anteriores à 3.10 ganham o resumo na subida (varredura inicial) ou na
+  primeira consulta. A rota antiga `GET /api/containers` continua igual (a ficha e a exportação usam).
+- **Painel:** os números (totais, semáforo, custos, contagem por fase) cobrem todos os ativos, mas os cards só vêm
+  da aba/ponto/filtro pedidos e no máximo 60 por fase (os mais críticos primeiro; a tela mostra "+N" com atalho para
+  a lista). Parâmetros: `regiao`, `grupoId`, `soProblemas`, `porFase` (máx. 200).
+- **Telas:** Containers (tabela) e a lista lateral da ficha buscam só a página, com busca com atraso de 350 ms,
+  resposta antiga descartada e a página do container aberto localizada pelo servidor; o Painel busca por aba.
+- **Isolamento mantido:** as consultas novas passam pelo mesmo filtro/RLS por cliente (teste cruzado entre
+  clientes e de permissão no teste de API).
+- **Medido** (Postgres local, 1.285 ativos, mesmo notebook gerando a carga): lista antiga 3,7 MB / 650 ms → página de
+  20 linhas 27 KB / 60 ms; painel 533 KB / 260 ms (todas as regiões) e 267 KB / 190 ms (uma região). Com 26 mil ativos
+  em uma única organização: lista 24 KB / 130 ms, e `EXPLAIN ANALYZE` mostra índice na ordem padrão (0,5 ms),
+  na página 500 (20 ms) e por etapa (0,3 ms); contagem, outras ordens e busca por texto leem a organização
+  inteira (22 a 41 ms). O painel segue lendo todos os ativos para os totais (3,5 s com 26 mil, o que é muito além
+  de uma operação real).
+- **Limites conhecidos:** paginação por deslocamento (offset): cadastro novo no meio da navegação pode repetir ou
+  pular uma linha entre páginas; a ordenação por Estadia e Demurrage é pela data de vencimento (encerrados por
+  último); a busca por texto parcial lê a organização inteira (índice `pg_trgm` se uma organização passar de
+  dezenas de milhares de containers); sem resposta 304 de propósito (campos que dependem do relógio ficariam
+  congelados).
+- Migração `20261014100000_resumo_containers`: só adiciona colunas e índices, não apaga nada.
+
 ## 3.9.0 (reauditoria da 3.8.0: teste de estresse com 3 empresas e correções)
 
 Teste: 3 empresas usando o app inteiro por HTTP (todos os perfis, planilhas, QR, motorista por SMS, viagem,

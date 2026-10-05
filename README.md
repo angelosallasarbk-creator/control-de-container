@@ -342,6 +342,8 @@ cliente nova que aponte para outra, declare a relação composta do mesmo jeito.
 
 **Índice parcial (v3.2):** a migração `20261006100000_seguranca_3_2` cria `Container_numero_ativo_unico` (um container ativo por número em cada organização) direto em SQL, porque o Prisma 5 não representa índice com `WHERE`. Ao criar migrações novas com `prisma migrate dev`, confira o SQL gerado: se aparecer `DROP INDEX "Container_numero_ativo_unico"`, **apague essa linha** antes de aplicar.
 
+**Lista paginada e resumo (v3.10):** `Container.resumo` (e as colunas `semaforoNivel`, `estadiaLimiteEm`, `demurrageVenceEm`, `ultimaTemperatura`, `previsaoFolgaHoras`) são gravados pela sincronização (`lib/alertas.js`, `lib/resumoContainer.js`) e usados por `GET /api/containers/lista` e `/api/painel`. Se mudar uma regra de prazo ou de temperatura, o resumo se corrige na próxima varredura (ou salvando Configurações). Ao criar uma coluna usada na ordenação da lista, inclua-a em `ORDENS` (`lib/listaContainers.js`) e no índice, se for a ordem padrão. Os índices `Container_lista_*` estão no `schema.prisma` (o `migrate dev` os conhece).
+
 Logins do seed (senha `demo12345`): `admin@demo.local`, `supervisor@demo.local`, `operador@demo.local`, `visualizacao@demo.local`.
 
 ⚠ A porta 3000 é a mesma do McCain local. Não rode os dois ao mesmo tempo, ou mude `PORT`.

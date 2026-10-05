@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
@@ -9,10 +9,10 @@ import ImportarContainers from "../components/ImportarContainers.vue";
 import Icone from "../components/Icone.vue";
 import MarcaQr from "../components/MarcaQr.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
-import { useOrdenacao } from "../composables/useOrdenacao.js";
-import { passaFiltroContainers } from "../filtroContainers.js";
+import { useOrdenacaoServidor } from "../composables/useOrdenacaoServidor.js";
+import { filtroContainers } from "../filtroContainers.js";
 import Paginacao from "../components/Paginacao.vue";
-import { usePaginacao } from "../composables/usePaginacao.js";
+import { usePaginacaoServidor } from "../composables/usePaginacaoServidor.js";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -23,24 +23,44 @@ const novoAberto = ref(false);
 const uploadAberto = ref(false);
 const filtro = reactive({ situacao: "ativos", status: "", busca: "" });
 
+// Lista paginada no servidor (v3.10): busca, filtros, ordenação e página rodam no banco e só a página
+// pedida chega ao navegador (antes baixava todos os containers, 6 MB com ~1.300 ativos).
+let sequencia = 0;
 async function carregar() {
+  const minha = ++sequencia; // descarta a resposta de uma consulta mais antiga (digitação rápida, cliques seguidos)
   carregando.value = true;
   try {
-    lista.value = await api.containers(filtro);
+    const r = await api.listaContainers({
+      situacao: filtro.situacao, status: filtro.status, busca: filtro.busca.trim(),
+      regioes: filtroContainers.regioes.join(","), grupos: filtroContainers.grupos.join(","), semQr: filtroContainers.semQr ? "1" : "",
+      ...ordem.parametros(), pagina: pag.pagina.value, limite: pag.porPagina.value,
+    });
+    if (minha !== sequencia) return;
+    lista.value = r.itens;
+    pag.aplicar(r);
     erro.value = null;
   } catch (e) {
-    erro.value = e.message;
+    if (minha === sequencia) erro.value = e.message;
   } finally {
-    carregando.value = false;
+    if (minha === sequencia) carregando.value = false;
   }
 }
+// Filtro, busca ou ordem mudou: volta à primeira página e busca de novo.
+function refazer() {
+  pag.voltarAoInicio();
+  carregar();
+}
+const pag = usePaginacaoServidor("containers", carregar);
+const ordem = useOrdenacaoServidor(refazer);
 
 onMounted(carregar);
+// Região / Ponto de Carregamento / Sem QR (cabeçalho): valem também no servidor.
+watch(() => [filtroContainers.regioes, filtroContainers.grupos, filtroContainers.semQr], refazer, { deep: true });
 
 let atraso = null;
 function buscarComAtraso() {
   clearTimeout(atraso);
-  atraso = setTimeout(carregar, 350);
+  atraso = setTimeout(refazer, 350);
 }
 
 function criado(c) {
@@ -48,36 +68,13 @@ function criado(c) {
   router.push(`/containers/${c.id}`);
 }
 
-// Colunas de situação e prazo: crescente = mais urgente primeiro.
-const GRAVIDADE = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
-const ordem = useOrdenacao({
-  semaforo: (c) => GRAVIDADE[c.semaforo],
-  numero: (c) => c.numero,
-  tipo: (c) => ROTULO_TIPO[c.tipo],
-  grupo: (c) => `${c.grupo.cliente} / ${c.grupo.fabrica}`,
-  armador: (c) => c.armador.nome,
-  etapa: (c) => (c.status === "CANCELADO" ? FLUXO.length : FLUXO.indexOf(c.status)),
-  estadia: (c) => c.situacao.estadia?.horasRestantes ?? null,
-  demurrage: (c) => {
-    const d = c.situacao.demurrage;
-    if (!d) return null;
-    return d.diasExcedidos > 0 ? -d.diasExcedidos : d.diasRestantes;
-  },
-  temperatura: (c) => c.situacao.temperatura?.ultima?.temperatura ?? null,
-  deadline: (c) => (c.deadline ? new Date(c.deadline) : null),
-  previsao: (c) => (c.situacao.previsao?.disponivel && !c.situacao.previsao.parcial ? c.situacao.previsao.folgaHoras : null),
-});
-// Região / Ponto de Carregamento: filtros do cabeçalho (múltipla escolha, valem também no Grid).
-const linhas = computed(() => ordem.ordenar(lista.value.filter(passaFiltroContainers)));
+// A ordenação das colunas é feita no servidor (useOrdenacaoServidor): crescente = mais urgente primeiro.
 
 function textoDemurrage(d) {
   if (!d) return "—";
   if (d.diasExcedidos > 0) return `+${d.diasExcedidos}d · ${fmtMoeda(d.custo, d.moeda)}`;
   return d.encerrada ? "no prazo" : `${d.diasRestantes}d livres`;
 }
-
-// Paginação da lista (10/20/50 por página, lembrado neste navegador).
-const pag = usePaginacao(() => linhas.value, "containers");
 </script>
 
 <template>
@@ -132,7 +129,7 @@ const pag = usePaginacao(() => linhas.value, "containers");
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in pag.itens.value" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
+        <tr v-for="c in lista" :key="c.id" class="clicavel" @click="router.push(`/containers/${c.id}`)">
           <td><span class="ponto" :class="c.semaforo" :title="c.semaforo"></span></td>
           <td class="mono negrito" style="white-space: nowrap"><MarcaQr v-if="c.qrVinculado" /> {{ c.numero }}<div v-if="c.booking" class="mudo pequeno">BK {{ c.booking }}</div></td>
           <td>{{ ROTULO_TIPO[c.tipo] }}</td>
@@ -165,6 +162,7 @@ const pag = usePaginacao(() => linhas.value, "containers");
           </td>
         </tr>
         <tr v-if="!lista.length && !carregando"><td colspan="12" class="vazio">Nenhum container encontrado.</td></tr>
+        <tr v-else-if="!lista.length"><td colspan="12" class="vazio">Carregando…</td></tr>
       </tbody>
     </table>
       <Paginacao :p="pag" />
