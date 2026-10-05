@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.10.0 (listas e painel por página: resumo gravado, filtro e ordem no banco)
+## 3.10.0 — 05/10/2026 (tag `v3.10.0`) — listas e painel por página: resumo gravado, filtro e ordem no banco
 
 Resolve o item "ainda de pé" da 3.9.0: `GET /api/containers` e `/api/painel` devolviam tudo (3,7 a 6 MB e 0,6 a 0,9 s
 com ~1.300 ativos) e o custo crescia com o número de containers e de leituras.
@@ -45,7 +45,7 @@ com ~1.300 ativos) e o custo crescia com o número de containers e de leituras.
   congelados).
 - Migração `20261014100000_resumo_containers`: só adiciona colunas e índices, não apaga nada.
 
-## 3.9.0 (reauditoria da 3.8.0: teste de estresse com 3 empresas e correções)
+## 3.9.0 — 05/10/2026 (tag `v3.9.0`, publicada junto com a 3.10.0) — reauditoria da 3.8.0: teste de estresse com 3 empresas e correções
 
 Teste: 3 empresas usando o app inteiro por HTTP (todos os perfis, planilhas, QR, motorista por SMS, viagem,
 rastreamento, custos, redefinição de senha) mais 276 ataques cruzados com ids de outra empresa, no sistema
