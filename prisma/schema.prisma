@@ -466,6 +466,19 @@ model Container {
   criadoPor    String
   atualizadoEm DateTime @updatedAt
 
+  // Resumo gravado pela sincronização (v3.10, read model das listas): o que NÃO dá para calcular só
+  // com as colunas do container (última leitura/início do fora-da-faixa e a previsão de rota) mais
+  // chaves de ordenação/filtro. Atualizado por lib/alertas.js sempre que o container é sincronizado
+  // (toda mudança e a varredura periódica); só grava quando algo muda. Tudo que depende do relógio
+  // (horas restantes, custos, "sem leitura há…") é calculado na leitura a partir de datas absolutas.
+  resumo             Json?
+  resumoEm           DateTime? // quando o resumo mudou pela última vez
+  semaforoNivel      Int? // 0 vermelho, 1 amarelo, 2 verde (ordenar/filtrar a lista no banco)
+  estadiaLimiteEm    DateTime? // meta de estadia vence em (só com estadia em andamento)
+  demurrageVenceEm   DateTime? // fim do free time (só com demurrage em andamento)
+  ultimaTemperatura  Decimal? @db.Decimal(5, 1)
+  previsaoFolgaHoras Decimal? @db.Decimal(8, 1)
+
   eventos         EventoContainer[]
   leituras        LeituraTemperatura[]
   alertas         Alerta[]
@@ -520,6 +533,11 @@ model Container {
   @@index([grupoId])
   @@index([localCarregamentoId])
   @@index([organizacaoId])
+  // Listas (v3.10): ordem padrão "mais crítico primeiro, mais recente primeiro" por cliente, e o
+  // filtro por etapa / por ponto de carregamento com a mesma ordem.
+  @@index([organizacaoId, semaforoNivel, criadoEm(sort: Desc), id(sort: Desc)], map: "Container_lista_semaforo_idx")
+  @@index([organizacaoId, status, criadoEm(sort: Desc), id(sort: Desc)], map: "Container_lista_status_idx")
+  @@index([organizacaoId, grupoId, status], map: "Container_lista_grupo_idx")
 }
 
 model EventoContainer {
@@ -786,7 +804,7 @@ model MensagemSms {
 model Transportadora {
   id                Int                         @id @default(autoincrement())
   nome              String // único só dentro de cada cliente (v3.4) — conferido na rota
-  cnpj              String?                     @unique // mesmo CNPJ = mesma empresa (cadastro reaproveitado)
+  cnpj              String? // único dentro do cliente dono (v3.9): outro cliente com o mesmo CNPJ tem cadastro próprio
   organizacaoDonaId Int? // cliente que criou o cadastro: só ele edita (v3.5); os outros vinculados só usam
   ativo             Boolean                     @default(true)
   criadoEm          DateTime                    @default(now())
@@ -794,6 +812,7 @@ model Transportadora {
   gestores          Usuario[]
   organizacoes      TransportadoraOrganizacao[]
 
+  @@unique([organizacaoDonaId, cnpj])
   @@index([nome])
 }
 

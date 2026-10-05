@@ -73,9 +73,12 @@ export const api = {
   enviarRedefinicao: (id) => request(`/usuarios/${id}/enviar-redefinicao`, { method: "POST" }),
   me: () => request("/auth/me"),
 
-  painel: () => request("/painel"),
+  // Painel (v3.10): os números vêm de todos os containers; os cards só do escopo pedido (regiao, grupoId, soProblemas).
+  painel: (params) => request(`/painel${qs(params)}`),
 
   containers: (params) => request(`/containers${qs(params)}`),
+  // Lista paginada no servidor (v3.10): { itens, total, pagina, limite, totalPaginas }.
+  listaContainers: (params) => request(`/containers/lista${qs(params)}`),
   container: (id) => request(`/containers/${id}`),
   criarContainer: (dados) => request("/containers", { method: "POST", body: dados }),
   editarContainer: (id, dados) => request(`/containers/${id}`, { method: "PATCH", body: dados }),

@@ -35,7 +35,14 @@ export const CONTAGEM_QR = { _count: { select: { etiquetas: { where: { status: "
 export function montarContainer(c, leiturasAsc, agora, config, ctxPrevisao = null) {
   const previsao = ctxPrevisao ? estimarCiclo(c, ctxPrevisao, agora, configRodagem(config)) : null;
   const situacao = calcularSituacao(c, leiturasAsc, agora, config.intervaloLeituraMinutos, previsao, config.atrasoColetaCriticoHoras);
-  const { leituras: _l, _count, ...resto } = c;
+  return montarContainerComSituacao(c, situacao, config);
+}
+
+// Mesma montagem, com a situação já calculada por quem chama: as listas (v3.10) usam a situação do
+// resumo gravado (lib/resumoContainer.js) e não carregam leituras nem contexto de rota.
+export function montarContainerComSituacao(c, situacao, config) {
+  // As colunas do resumo (read model) são internas: não vão na resposta.
+  const { leituras: _l, _count, resumo: _r, resumoEm: _e, semaforoNivel: _n, estadiaLimiteEm: _a, demurrageVenceEm: _d, ultimaTemperatura: _t, previsaoFolgaHoras: _f, ...resto } = c;
   return {
     ...decimaisParaNumero(resto),
     // "reefer" = controla temperatura (reefer com produto Congelado/Refrigerado); Carga Seca não.

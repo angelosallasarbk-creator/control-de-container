@@ -551,8 +551,11 @@ qrRouter.post("/:token/portaria/ficam", requirePermissao("qr.registrar"), asyncH
   const companheiros = new Set((await prisma.viagemContainer.findMany({ where: { viagemId: { in: viagensDoPrincipal }, containerId: { in: ids } }, select: { containerId: true } })).map((v) => v.containerId));
   const chegada = principal.chegadaFabricaEm;
   const temperaturas = b.temperaturas ?? {};
-  const registrados = [];
-  for (const id of ids) {
+  // Tudo ou nada (v3.9): primeiro valida CADA container; só então grava todos numa transação única.
+  // Antes cada um era gravado na sua vez — um inválido no meio deixava os anteriores registrados e a
+  // resposta de erro, e repetir o pedido falhava nos que já tinham entrado.
+  const plano = [];
+  for (const id of new Set(ids)) {
     if (!companheiros.has(id)) throw erroHttp(409, "Só containers que vieram no mesmo caminhão podem ser registrados aqui.");
     const c = await prisma.container.findUnique({ where: { id }, include: SELECT_LOCAIS_ETAPAS });
     const fluxo = etapasDoContainer(c);
@@ -561,14 +564,16 @@ qrRouter.post("/:token/portaria/ficam", requirePermissao("qr.registrar"), asyncH
     }
     const reefer = controlaTemperatura(c);
     const temperatura = reefer ? decimal(temperaturas[id], `Temperatura do ${c.numero}`, { obrigatorio: true, min: -60, max: 60 }) : null;
-    const etapas = fluxo.slice(fluxo.indexOf(c.status) + 1, fluxo.indexOf("NA_FABRICA") + 1);
-    const nome = (s) => rotulosDasEtapas(c)[s] ?? ROTULO_ETAPA[s];
-    await prisma.$transaction(async (tx) => {
+    plano.push({ c, reefer, temperatura, etapas: fluxo.slice(fluxo.indexOf(c.status) + 1, fluxo.indexOf("NA_FABRICA") + 1) });
+  }
+  await prisma.$transaction(async (tx) => {
+    for (const { c, reefer, temperatura, etapas } of plano) {
+      const nome = (s) => rotulosDasEtapas(c)[s] ?? ROTULO_ETAPA[s];
       const r = await tx.container.updateMany({
         where: { id: c.id, status: c.status },
         data: { status: "NA_FABRICA", placa: principal.placa, ...Object.fromEntries(etapas.map((s) => [CAMPO_DATA[s], chegada])) },
       });
-      if (r.count !== 1) throw erroHttp(409, `O container ${c.numero} acabou de mudar de etapa. Atualize a tela.`);
+      if (r.count !== 1) throw erroHttp(409, `O container ${c.numero} acabou de mudar de etapa. Atualize a tela (nenhum foi registrado).`);
       let de = c.status;
       for (const s of etapas) {
         await tx.eventoContainer.create({
@@ -578,7 +583,10 @@ qrRouter.post("/:token/portaria/ficam", requirePermissao("qr.registrar"), asyncH
       }
       await registrarLog({ usuarioEmail: email, acao: "AVANCAR", entidade: "Container", entidadeId: c.id, descricao: `Container ${c.numero}: ${nome("NA_FABRICA")} pela portaria junto com o ${principal.numero} (mesmo caminhão)` }, tx);
       if (reefer) await registrarLeitura({ container: { ...c, status: "NA_FABRICA" }, temperatura, lidaEm: new Date(), origem: "MANUAL", usuarioEmail: email }, tx);
-    });
+    }
+  });
+  const registrados = [];
+  for (const { c } of plano) {
     await sincronizarAlertas(c.id);
     registrados.push(c.numero);
   }

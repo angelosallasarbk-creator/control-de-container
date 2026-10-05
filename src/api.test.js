@@ -3016,7 +3016,7 @@ test("v3.4 referência cruzada: cliente B não consegue apontar para cadastros d
   assert.equal(cruzados[0].n, 0, "nenhum container no banco aponta para cadastro de outro cliente");
 });
 
-test("v3.4 transportadora: nome único só no cliente; mesmo CNPJ reaproveita o cadastro (item 9)", async () => {
+test("v3.4 transportadora: nome único só no cliente; CNPJ único só no cliente (v3.9: sem reaproveitar o cadastro de outro cliente)", async () => {
   const b = await logar("admin@ref34.local");
   const a = agentes.ADMIN;
   // Mesmo nome, sem CNPJ, em clientes diferentes: cadastros separados (podem ser empresas diferentes).
@@ -3025,19 +3025,19 @@ test("v3.4 transportadora: nome único só no cliente; mesmo CNPJ reaproveita o 
   assert.deepEqual([ra.status, rb.status], [201, 201], JSON.stringify([ra.body, rb.body]));
   assert.notEqual(ra.body.id, rb.body.id);
   assert.equal((await a.post("/api/transportadoras").send({ nome: "RODO HOMÔNIMA" })).status, 409, "no mesmo cliente o nome é único");
-  // Mesmo CNPJ = mesma empresa: o segundo cliente só ganha o vínculo.
+  // v3.9: o mesmo CNPJ em outro cliente é OUTRO cadastro (o CNPJ é público: reaproveitar deixava quem
+  // cadastrasse primeiro, com um nome falso, dono do cadastro da empresa verdadeira).
   const ca = await a.post("/api/transportadoras").send({ nome: "Transp CNPJ", cnpj: "11.222.333/0001-81" });
   assert.equal(ca.status, 201);
   const cb = await b.post("/api/transportadoras").send({ nome: "Transp CNPJ (filial)", cnpj: "11222333000181" });
   assert.equal(cb.status, 201, JSON.stringify(cb.body));
-  assert.equal(cb.body.id, ca.body.id, "cadastro reaproveitado");
-  assert.ok((await b.get("/api/transportadoras")).body.some((t) => t.id === ca.body.id), "B passa a ver");
-  assert.equal((await b.post("/api/transportadoras").send({ nome: "De novo", cnpj: "11222333000181" })).status, 409, "já está no cadastro da B");
-  // Compartilhada: nenhum dos dois altera sozinho; CNPJ de outra empresa na edição → 409.
-  assert.equal((await b.patch(`/api/transportadoras/${ca.body.id}`).send({ nome: "Renomeada" })).status, 409);
-  assert.equal((await a.patch(`/api/transportadoras/${ra.body.id}`).send({ cnpj: "11222333000181" })).status, 409);
-  const log = (await b.get(`/api/logs?entidade=Transportadora&entidadeId=${ca.body.id}`)).body;
-  assert.ok(log.some((l) => /vinculado.*mesmo CNPJ/.test(l.descricao)));
+  assert.notEqual(cb.body.id, ca.body.id, "cadastro separado");
+  assert.equal(cb.body.nome, "Transp CNPJ (filial)", "cada cliente com o nome que digitou");
+  assert.ok(!(await b.get("/api/transportadoras")).body.some((t) => t.id === ca.body.id), "B não passa a ver o cadastro da A");
+  assert.ok(!(await a.get("/api/transportadoras")).body.some((t) => t.id === cb.body.id), "nem A o da B");
+  assert.equal((await b.patch(`/api/transportadoras/${cb.body.id}`).send({ nome: "Transp CNPJ Filial Corrigida" })).status, 200, "B edita o próprio cadastro");
+  assert.equal((await b.post("/api/transportadoras").send({ nome: "De novo", cnpj: "11222333000181" })).status, 409, "no mesmo cliente o CNPJ é único");
+  assert.equal((await a.patch(`/api/transportadoras/${ra.body.id}`).send({ cnpj: "11222333000181" })).status, 409, "CNPJ já usado por outro cadastro da própria A");
 });
 
 test("v3.4.1: desfazer entrega com outro ativo de mesmo número → 409; total de Custos = soma das fichas; 413 em português", async () => {
@@ -3139,16 +3139,16 @@ test("v3.5 revisão: bloqueio do gestor por cliente, anonimização sem homônim
     + (await prisma.container.count({ where: { criadoPor: identidade1 } })) + (await prisma.etiquetaQR.count({ where: { vinculadaPor: identidade1 } }));
   assert.equal(restos, 0, "identidade anonimizada some das colunas de autoria");
 
-  // ---- Item 3: CNPJ com dígito verificador; dono edita, outro vinculado não ----
+  // ---- Item 3: CNPJ com dígito verificador; dono edita (v3.9: cada cliente tem o seu cadastro) ----
   assert.equal((await a.post("/api/transportadoras").send({ nome: "CNPJ Ruim", cnpj: "12345678000100" })).status, 400);
   const dono = await a.post("/api/transportadoras").send({ nome: "Transp Dona 3.5", cnpj: "47.960.950/0001-21" });
   assert.equal(dono.status, 201, JSON.stringify(dono.body));
   const td = dono.body;
   const cnpjDono = "47960950000121";
-  const vinc = await b.post("/api/transportadoras").send({ nome: "Outro nome", cnpj: cnpjDono });
-  assert.deepEqual([vinc.status, vinc.body.id], [201, td.id], "B vinculado ao mesmo cadastro");
-  assert.equal((await a.patch(`/api/transportadoras/${td.id}`).send({ nome: "Transp Dona 3.5 Renomeada" })).status, 200, "dono edita mesmo compartilhado");
-  assert.equal((await b.patch(`/api/transportadoras/${td.id}`).send({ nome: "Tomada" })).status, 409, "quem não é dono só usa");
+  const outro = await b.post("/api/transportadoras").send({ nome: "Outro nome", cnpj: cnpjDono });
+  assert.deepEqual([outro.status, outro.body.id === td.id], [201, false], "B tem cadastro próprio, não o da A");
+  assert.equal((await a.patch(`/api/transportadoras/${td.id}`).send({ nome: "Transp Dona 3.5 Renomeada" })).status, 200, "dono edita");
+  assert.equal((await b.patch(`/api/transportadoras/${td.id}`).send({ nome: "Tomada" })).status, 404, "B nem enxerga o cadastro da A");
 
   // ---- Item 5: acompanhamento termina por inatividade (6 h) e prazo máximo (72 h) ----
   const u = await a.post("/api/usuarios").send({ email: "acomp35@teste.local", nome: "Acomp 3.5", perfil: "OPERADOR", senha: "senha-teste-123", celular: "11966669035" });
@@ -3359,4 +3359,303 @@ test("v3.8 viagem: 2 containers no mesmo caminhão — pergunta no QR, 1 SMS, po
 
   await a.put("/api/configuracao").send(cfg);
   for (const v of [v1, v2, v4, v5]) await a.post(`/api/containers/${v.id}/cancelar`).send({ motivo: "fim do teste 3.8" });
+});
+
+test("v3.9 reauditoria: transportadora do motorista só do cliente da etiqueta, CNPJ por cliente, lote da portaria atômico, resumo de alertas enxuto, varredura em lote", async () => {
+  const { caixaDeSaidaSms } = await import("./lib/sms.js");
+  const { cnpjValido } = await import("./routes/cadastros.js");
+  const { sincronizarTodos } = await import("./lib/alertas.js");
+  const a = agentes.ADMIN;
+  const b = await logar("admin@ref34.local");
+  const codigoDe = (tel) => /codigo de acesso e (\d{6})/.exec(caixaDeSaidaSms.filter((s) => s.para === tel).at(-1)?.texto ?? "")?.[1];
+  const cnpjNovo = (semente) => {
+    const d = Array.from({ length: 12 }, (_, i) => (semente * (i + 3) + i * 7) % 10);
+    const dv = (arr) => { const p = arr.length === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; const r = arr.reduce((s, x, k) => s + x * p[k], 0) % 11; return r < 2 ? 0 : 11 - r; };
+    d.push(dv(d)); d.push(dv(d));
+    const c = d.join("");
+    assert.ok(cnpjValido(c), `CNPJ de teste válido: ${c}`);
+    return c;
+  };
+
+  // ---- Lista de transportadoras do cadastro do motorista: só as do cliente da etiqueta ----
+  const trA = await a.post("/api/transportadoras").send({ nome: "Transp So Da A 3.9", cnpj: cnpjNovo(3) });
+  const trB = await b.post("/api/transportadoras").send({ nome: "Transp So Da B 3.9", cnpj: cnpjNovo(5) });
+  assert.deepEqual([trA.status, trB.status], [201, 201], JSON.stringify([trA.body, trB.body]));
+  const [etqB] = (await b.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas;
+  const XFF = { "X-Forwarded-For": "198.51.100.93" };
+  const TEL = "+5511955550393";
+  const m = request.agent(app);
+  assert.equal((await m.post("/api/motorista/codigo").set(XFF).send({ celular: TEL, etiqueta: etqB.token })).status, 200);
+  const v = await m.post("/api/motorista/verificar").set(XFF).send({ celular: TEL, codigo: codigoDe(TEL) });
+  assert.equal(v.status, 200, JSON.stringify(v.body));
+  const nomes = v.body.transportadoras.map((t) => t.nome);
+  assert.ok(nomes.includes("Transp So Da B 3.9"), "vê a do cliente da etiqueta");
+  assert.ok(!nomes.includes("Transp So Da A 3.9"), "não vê a de outro cliente");
+  assert.ok(v.body.transportadoras.every((t) => Object.keys(t).sort().join() === "id,nome"), "só id e nome (nada de CNPJ)");
+  const cadastro = (transportadoraId) => m.post("/api/motorista/cadastro").set(XFF).send({ comprovante: v.body.comprovante, nome: "Motorista Atento", transportadoraId, aceite: true });
+  assert.equal((await cadastro(trA.body.id)).status, 400, "escolher a transportadora de outro cliente é recusado");
+  assert.equal((await cadastro(trB.body.id)).status, 201);
+  // O cliente A não passa a enxergar nada da B (nem o motorista, nem a transportadora).
+  assert.ok(!(await a.get("/api/transportadoras")).body.some((t) => t.id === trB.body.id));
+  assert.ok(!(await a.get("/api/motoristas")).body.some((x) => x.nome === "Motorista Atento"));
+
+  // ---- CNPJ: quem cadastra primeiro não vira dono do cadastro da empresa verdadeira ----
+  const cnpj = cnpjNovo(7);
+  const falso = await a.post("/api/transportadoras").send({ nome: "Nome Falso 3.9", cnpj });
+  const real = await b.post("/api/transportadoras").send({ nome: "Empresa Verdadeira 3.9", cnpj });
+  assert.deepEqual([falso.status, real.status], [201, 201], JSON.stringify([falso.body, real.body]));
+  assert.notEqual(real.body.id, falso.body.id);
+  assert.equal(real.body.nome, "Empresa Verdadeira 3.9");
+  assert.equal((await b.patch(`/api/transportadoras/${real.body.id}`).send({ nome: "Empresa Verdadeira Ltda 3.9" })).status, 200, "a empresa verdadeira corrige o próprio cadastro");
+  assert.equal((await a.post("/api/transportadoras").send({ nome: "Outra", cnpj })).status, 409, "no mesmo cliente o CNPJ continua único");
+
+  // ---- Portaria: lote tudo-ou-nada ----
+  const tr = await logar("transportador@teste.local");
+  const po = await logar("portaria@teste.local");
+  const ativo = async (rec) => (await a.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { grupoId: await ativo("grupos"), armadorId: await ativo("armadores") };
+  const trajeto = { portoRetiradaId: ids.santos, localCarregamentoId: ids.cubatao, portoEntregaId: ids.santos };
+  const criar = async (numero) => { const r = await a.post("/api/containers").send({ numero, confirmarDigito: true, tipo: "DRY_40", ...cad, ...trajeto }); assert.equal(r.status, 201, JSON.stringify(r.body)); return r.body; };
+  const etiqueta = async () => (await agentes.SUPERVISOR.post("/api/etiquetas/lotes").send({ quantidade: 1 })).body.etiquetas[0];
+  const coletar = async (e, numero) => { const r = await tr.post(`/api/qr/${e.token}/coleta`).send({ numero, portoRetiradaId: ids.santos }); assert.equal(r.status, 201, JSON.stringify(r.body)); };
+  const [c1, c2, c3] = [await criar("ATMU3900008"), await criar("ATMU3900014"), await criar("ATMU3900020")];
+  const [e1, e2, e3] = [await etiqueta(), await etiqueta(), await etiqueta()];
+  await coletar(e1, c1.numero); await coletar(e2, c2.numero); await coletar(e3, c3.numero);
+  assert.equal((await tr.post(`/api/qr/${e2.token}/viagem`).send({ comContainerId: c1.id })).status, 200);
+  assert.equal((await tr.post(`/api/qr/${e3.token}/viagem`).send({ comContainerId: c1.id })).status, 200);
+  assert.equal((await po.post(`/api/qr/${e1.token}/portaria`).send({ movimento: "ENTRADA", placa: "ATM1A23" })).status, 201);
+  const status = async (...cs) => (await prisma.container.findMany({ where: { id: { in: cs.map((c) => c.id) } }, orderBy: { id: "asc" }, select: { status: true } })).map((x) => x.status);
+  const falha = await po.post(`/api/qr/${e1.token}/portaria/ficam`).send({ containerIds: [c2.id, 999999999, c3.id] });
+  assert.equal(falha.status, 409, JSON.stringify(falha.body));
+  assert.deepEqual(await status(c2, c3), ["COLETADO", "COLETADO"], "nenhum foi registrado");
+  const ok = await po.post(`/api/qr/${e1.token}/portaria/ficam`).send({ containerIds: [c2.id, c3.id] });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.deepEqual(await status(c2, c3), ["NA_FABRICA", "NA_FABRICA"], "repetir só com os válidos funciona");
+
+  // ---- Resumo de alertas: só o que o sino usa ----
+  const lista = (await a.get("/api/alertas")).body;
+  const resumo = (await a.get("/api/alertas/resumo")).body;
+  assert.equal(resumo.total, lista.length);
+  assert.equal(resumo.naoReconhecidos, lista.filter((x) => !x.reconhecidoEm).length);
+  for (const item of resumo.criticosNaoReconhecidos) assert.deepEqual(Object.keys(item).sort(), ["containerId", "id", "nivel", "tipo"], "sem o container dentro de cada alerta");
+
+  // ---- Varredura em lote restrita a ids (usada pela importação) e sem consulta de viagem por container ----
+  const so = await naOrg(sincronizarTodos)(new Date(), { ids: [c1.id] });
+  assert.equal(so.containers, 1);
+  const todos = await naOrg(sincronizarTodos)();
+  assert.ok(todos.containers >= 1);
+
+  for (const c of [c1, c2, c3]) await a.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.9" });
+});
+
+test("v3.10 lista paginada e painel enxuto: equivalem à lista antiga, filtram/ordenam no banco, respeitam o isolamento", async () => {
+  const { criarOrganizacao } = await import("./lib/organizacoes.js");
+  const { prisma: bruto, Prisma } = await import("./lib/prisma.js");
+  const { sincronizarTodos: varrer } = await import("./lib/alertas.js");
+  const { org } = await criarOrganizacao({ nome: "Cliente Lista 3.10", admin: { email: "admin@lista310.local", nome: "Admin Lista", senha: "senha-teste-123" }, criadoPor: "teste" });
+  const a = await logar("admin@lista310.local");
+  const naNova = (fn) => comOrganizacao(org.id, fn);
+  const H = 3600e3;
+
+  // ---- Cadastros (2 regiões, 3 pontos de carregamento, 2 armadores, produto de temperatura, 2 locais com coordenadas) ----
+  const tipos = (await a.get("/api/tipos-local")).body;
+  const porto = (await a.post("/api/locais").send({ nome: "Porto L310", tipoId: tipos.find((t) => t.funcao === "RETIRADA_ENTREGA").id, latitude: -23.96, longitude: -46.33 })).body;
+  const fabrica = (await a.post("/api/locais").send({ nome: "Fabrica L310", tipoId: tipos.find((t) => t.funcao === "CARREGAMENTO").id, latitude: -23.55, longitude: -46.63 })).body;
+  const [r1, r2] = [(await a.post("/api/regioes").send({ nome: "Regiao Um 310" })).body, (await a.post("/api/regioes").send({ nome: "Regiao Dois 310" })).body];
+  const gA = (await a.post("/api/grupos").send({ cliente: "Cli Alfa 310", fabrica: "Fab Um", metaEstadiaHoras: 24, custoEstadiaPorHora: 10, regiaoId: r1.id, localId: fabrica.id })).body;
+  const gB = (await a.post("/api/grupos").send({ cliente: "Cli Beta 310", fabrica: "Fab Dois", metaEstadiaHoras: 12, regiaoId: r2.id })).body;
+  const gC = (await a.post("/api/grupos").send({ cliente: "Cli Gama 310", fabrica: "Fab Tres", metaEstadiaHoras: 48 })).body;
+  const armA = (await a.post("/api/armadores").send({ nome: "Armador Aaa", freeTimeDias: 3, valorDiaria: 100 })).body;
+  const armB = (await a.post("/api/armadores").send({ nome: "Armador Bbb", freeTimeDias: 8, valorDiaria: 50 })).body;
+  const prod = (await a.post("/api/produtos").send({ nome: "Carne L310", categoria: "CONGELADO", setpoint: -18, tempMin: -20, tempMax: -15, toleranciaMinutos: 30 })).body;
+  assert.ok(porto.id && fabrica.id && gA.id && gB.id && gC.id && armA.id && armB.id && prod.id, "cadastros criados");
+
+  // ---- 26 containers variados ----
+  const criados = [];
+  const criar = async (n, extra = {}) => {
+    const r = await a.post("/api/containers").send({ numero: `LSTU${String(3100000 + n * 7).slice(1)}0`, confirmarDigito: true, tipo: "DRY_40", grupoId: gA.id, armadorId: armA.id, ...extra });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    criados.push(r.body);
+    return r.body;
+  };
+  const trajeto = { portoRetiradaId: porto.id, localCarregamentoId: fabrica.id, portoEntregaId: porto.id };
+  for (let i = 0; i < 8; i++) {
+    await criar(i, {
+      grupoId: [gA.id, gB.id, gC.id][i % 3], armadorId: i % 2 ? armA.id : armB.id, booking: `BKL${i}`, navio: i % 2 ? "NAVIO ZETA" : "NAVIO OMEGA", placa: `LST${i}A${10 + i}`,
+      deadline: i % 3 === 0 ? undefined : new Date(Date.now() + (i * 20 - 40) * H).toISOString(),
+      coletaProgramadaEm: new Date(Date.now() - (i % 4) * 3 * H).toISOString(), ...(i < 5 ? trajeto : {}),
+    });
+  }
+  const reefers = [];
+  for (let i = 8; i < 18; i++) {
+    const r = await criar(i, { tipo: "REEFER_40", produtoId: prod.id, grupoId: [gA.id, gB.id, gC.id][i % 3], armadorId: i % 2 ? armA.id : armB.id, ...(i % 4 ? trajeto : {}) });
+    reefers.push(r);
+  }
+  // avanços: até COLETADO (3), NA_FABRICA (3), EM_OPERACAO (2), SAIU_FABRICA (2) e ENTREGUE_PORTO (2) entre os reefers/secos
+  const avancar = async (c, n) => { for (let i = 0; i < n; i++) assert.equal((await a.post(`/api/containers/${c.id}/avancar`).send({})).status, 200); };
+  const passos = [1, 1, 1, 2, 2, 2, 3, 3, 5, 5, 6, 6];
+  for (const [i, n] of passos.entries()) await avancar(criados[8 + (i % 10)] ?? criados[i], n).catch(() => {});
+  for (const c of reefers) {
+    await a.post(`/api/containers/${c.id}/leituras`).send({ temperatura: -18 });
+    if (c.id % 3 === 0) await a.post(`/api/containers/${c.id}/leituras`).send({ temperatura: -12.5 });
+  }
+  const cancelado = await criar(18);
+  assert.equal((await a.post(`/api/containers/${cancelado.id}/cancelar`).send({ motivo: "teste lista" })).status, 200);
+  // QR vinculado em 5 containers
+  const etqs = (await a.post("/api/etiquetas/lotes").send({ quantidade: 5 })).body.etiquetas;
+  for (const [i, e] of etqs.entries()) {
+    const alvo = criados[i * 2];
+    const ativo = (await a.get(`/api/containers/${alvo.id}`)).body;
+    await a.post(`/api/qr/${e.token}/vincular`).send({ numero: ativo.numero, temperatura: ativo.reefer ? -18 : undefined });
+  }
+  await naNova(() => varrer());
+
+  const FLUXO = ["PROGRAMADO", "COLETADO", "NA_FABRICA", "EM_OPERACAO", "LIBERADO", "SAIU_FABRICA", "ENTREGUE_PORTO", "CANCELADO"];
+  const legado = (await a.get("/api/containers?situacao=todos")).body;
+  const lista = async (q = "") => { const r = await a.get(`/api/containers/lista?${q}`); assert.equal(r.status, 200, `${q} → ${JSON.stringify(r.body)}`); return r.body; };
+  const tudo = await lista("situacao=todos&limite=100");
+  assert.equal(legado.length, 19);
+  assert.equal(tudo.total, 19);
+  assert.equal("resumoEm" in legado[0] || "semaforoNivel" in legado[0] || "resumo" in legado[0], false, "a lista antiga não expõe as colunas internas do resumo");
+
+  // ---- 1. Equivalência com a lista antiga (mesma situação, mesmos rótulos, mesmo QR) ----
+  const porId = new Map(tudo.itens.map((i) => [i.id, i]));
+  const recorte = (c) => ({
+    status: c.status, semaforo: c.semaforo, qrVinculado: c.qrVinculado, rotulosEtapa: c.rotulosEtapa, reefer: c.reefer, grupoId: c.grupoId, regiaoId: c.grupo.regiaoId, armador: c.armador.nome,
+    estadia: c.situacao.estadia && { situacao: c.situacao.estadia.situacao, metaHoras: c.situacao.estadia.metaHoras, encerrada: c.situacao.estadia.encerrada },
+    demurrage: c.situacao.demurrage && { situacao: c.situacao.demurrage.situacao, diasRestantes: c.situacao.demurrage.diasRestantes, diasExcedidos: c.situacao.demurrage.diasExcedidos, custo: c.situacao.demurrage.custo },
+    deadline: c.situacao.deadline?.situacao, atrasoColeta: c.situacao.atrasoColeta?.situacao, entregaADefinir: c.situacao.entregaADefinir?.situacao,
+    temperatura: c.situacao.temperatura && { foraDaFaixa: c.situacao.temperatura.foraDaFaixa, semLeitura: c.situacao.temperatura.semLeitura, ultima: c.situacao.temperatura.ultima?.temperatura, nivel: c.situacao.temperatura.nivelTemperatura },
+    previsao: c.situacao.previsao && { disponivel: c.situacao.previsao.disponivel, parcial: c.situacao.previsao.parcial, risco: c.situacao.previsao.riscoDemurrage, riscoDeadline: c.situacao.previsao.riscoDeadline, dias: c.situacao.previsao.diasDemurragePrevistos },
+  });
+  for (const antigo of legado) assert.deepEqual(recorte(porId.get(antigo.id)), recorte(antigo), `container ${antigo.numero}`);
+  const cores = new Set(legado.map((c) => c.semaforo));
+  assert.ok(cores.has("VERMELHO") && cores.has("VERDE"), `o cenário cobre cores diferentes: ${[...cores]}`);
+
+  // ---- 2. Paginação: páginas disjuntas, completas, com teto e limites ----
+  const vistos = [];
+  const p1 = await lista("situacao=todos&limite=7&pagina=1");
+  assert.deepEqual([p1.total, p1.totalPaginas, p1.limite, p1.pagina, p1.itens.length], [19, 3, 7, 1, 7]);
+  for (let p = 1; p <= 3; p++) vistos.push(...(await lista(`situacao=todos&limite=7&pagina=${p}`)).itens.map((i) => i.id));
+  assert.equal(new Set(vistos).size, 19, "sem repetir nem faltar");
+  assert.deepEqual([...vistos].sort((x, y) => x - y), legado.map((c) => c.id).sort((x, y) => x - y));
+  assert.equal((await lista("situacao=todos&limite=7&pagina=99")).pagina, 3, "página além do fim vale a última");
+  assert.equal((await lista("situacao=todos&pagina=-4")).pagina, 1);
+  assert.equal((await lista("situacao=todos&limite=100000")).limite, 100, "teto de 100 por página");
+  assert.equal((await lista("situacao=todos&limite=abc")).limite, 20);
+  const GRAV = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
+  const padrao = vistos.map((id) => GRAV[porId.get(id).semaforo]);
+  assert.deepEqual(padrao, [...padrao].sort((x, y) => x - y), "ordem padrão: crítico primeiro");
+
+  // ---- 3. Ordenação no banco (nulos sempre no fim) ----
+  const monotona = (itens, valor, dir, rotulo) => {
+    const v = itens.map(valor);
+    const nulos = v.map((x, i) => (x === null || x === undefined ? i : -1)).filter((i) => i >= 0);
+    assert.deepEqual(nulos, nulos.length ? Array.from({ length: nulos.length }, (_, i) => v.length - nulos.length + i) : [], `${rotulo} ${dir}: nulos no fim`);
+    const cheios = v.filter((x) => x !== null && x !== undefined);
+    for (let i = 1; i < cheios.length; i++) assert.ok(dir === "asc" ? cheios[i - 1] <= cheios[i] : cheios[i - 1] >= cheios[i], `${rotulo} ${dir}: ${cheios[i - 1]} / ${cheios[i]}`);
+  };
+  const TIPOS = ["DRY_20", "DRY_40", "HC_40", "REEFER_20", "REEFER_40"];
+  const EXTRATORES = {
+    numero: (c) => c.numero, tipo: (c) => TIPOS.indexOf(c.tipo), etapa: (c) => FLUXO.indexOf(c.status), recente: (c) => new Date(c.criadoEm).getTime(),
+    grupo: (c) => `${c.grupo.cliente} / ${c.grupo.fabrica}`, armador: (c) => c.armador.nome, deadline: (c) => (c.deadline ? new Date(c.deadline).getTime() : null),
+    estadia: (c) => (c.situacao.estadia && !c.situacao.estadia.encerrada ? c.situacao.estadia.horasRestantes : null),
+    demurrage: (c) => { const d = c.situacao.demurrage; return d && !d.encerrada ? (d.diasExcedidos > 0 ? -d.diasExcedidos : d.diasRestantes) : null; },
+    temperatura: (c) => c.situacao.temperatura?.ultima?.temperatura ?? null,
+    previsao: (c) => (c.situacao.previsao?.disponivel && !c.situacao.previsao.parcial ? Math.round(c.situacao.previsao.folgaHoras * 10) / 10 : null),
+    semaforo: (c) => GRAV[c.semaforo],
+  };
+  for (const [ordem, valor] of Object.entries(EXTRATORES)) {
+    for (const dir of ["asc", "desc"]) monotona((await lista(`situacao=todos&limite=100&ordem=${ordem}&dir=${dir}`)).itens, valor, dir, ordem);
+  }
+  assert.ok(EXTRATORES.estadia && (await lista("situacao=todos&limite=100&ordem=estadia")).itens.some((c) => EXTRATORES.estadia(c) !== null), "há containers com estadia correndo no cenário");
+  assert.equal((await a.get("/api/containers/lista?ordem=nome;DROP TABLE")).status, 400, "ordenação só por chaves da lista");
+
+  // ---- 4. Filtros no banco ----
+  assert.deepEqual((await lista("situacao=encerrados&limite=100")).itens.map((c) => c.status).sort(), legado.filter((c) => ["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)).map((c) => c.status).sort());
+  const ativos = await lista("limite=100");
+  assert.ok(ativos.itens.every((c) => !["ENTREGUE_PORTO", "CANCELADO"].includes(c.status)), "padrão = ativos");
+  const idsDe = (r) => r.itens.map((c) => c.id).sort((x, y) => x - y);
+  const esperado = (fn) => legado.filter(fn).map((c) => c.id).sort((x, y) => x - y);
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&status=COLETADO")), esperado((c) => c.status === "COLETADO"));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&grupos=${gA.id},${gB.id}`)), esperado((c) => [gA.id, gB.id].includes(c.grupoId)));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&regioes=${r1.id}`)), esperado((c) => c.grupo.regiaoId === r1.id));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&regioes=sem`)), esperado((c) => c.grupo.regiaoId === null));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&regioes=sem,${r2.id}`)), esperado((c) => c.grupo.regiaoId === null || c.grupo.regiaoId === r2.id));
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&semQr=1")), esperado((c) => !c.qrVinculado));
+  assert.ok(esperado((c) => c.qrVinculado).length >= 3, "o cenário tem containers com QR");
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=NAVIO ZETA")), esperado((c) => c.navio === "NAVIO ZETA"));
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=bkl3")), esperado((c) => c.booking === "BKL3"));
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=lst2a12")), esperado((c) => c.placa === "LST2A12"));
+  assert.deepEqual(idsDe(await lista(`situacao=todos&limite=100&busca=${legado[4].numero.slice(2, 8)}`)).includes(legado[4].id), true, "busca por parte do número");
+  assert.deepEqual(idsDe(await lista("situacao=todos&limite=100&busca=Porto L310")), esperado((c) => c.portoRetirada?.nome === "Porto L310" || c.localCarregamento?.nome === "Porto L310" || c.portoEntrega?.nome === "Porto L310"), "busca pelo nome do local");
+  assert.deepEqual(idsDe(await lista(`situacao=ativos&limite=100&status=COLETADO&grupos=${gB.id}&semQr=1`)), esperado((c) => c.status === "COLETADO" && c.grupoId === gB.id && !c.qrVinculado), "filtros combinados");
+  for (const ruim of ["situacao=x", "status=FOO", "grupos=abc", "grupos=0", "regioes=a1"]) assert.equal((await a.get(`/api/containers/lista?${ruim}`)).status, 400, ruim);
+
+  // ---- 5. "Localizar": a página em que o container aberto está (ordem padrão) ----
+  const pg2 = await lista("situacao=todos&limite=5&pagina=2");
+  const alvo = pg2.itens[2];
+  const achada = await lista(`situacao=todos&limite=5&localizar=${alvo.id}`);
+  assert.equal(achada.pagina, 2);
+  assert.ok(achada.itens.some((c) => c.id === alvo.id));
+
+  // ---- 6. Atualização imediata: a mudança aparece na lista sem esperar a varredura ----
+  const reefer = reefers.find((c) => c.id % 3 !== 0 && ["COLETADO", "NA_FABRICA", "EM_OPERACAO", "PROGRAMADO", "LIBERADO"].includes(legado.find((x) => x.id === c.id).status));
+  const antes = (await lista("situacao=todos&limite=100")).itens.find((c) => c.id === reefer.id);
+  assert.equal(antes.situacao.temperatura.foraDaFaixa, false);
+  assert.equal((await a.post(`/api/containers/${reefer.id}/leituras`).send({ temperatura: -5 })).status, 201);
+  const depois = (await lista("situacao=todos&limite=100")).itens.find((c) => c.id === reefer.id);
+  assert.deepEqual([depois.situacao.temperatura.foraDaFaixa, depois.situacao.temperatura.ultima.temperatura], [true, -5]);
+  assert.notEqual(depois.semaforo, "VERDE");
+
+  // ---- 7. Resumo ausente (anterior à v3.10): a lista sincroniza na hora e não quebra; a varredura não regrava à toa ----
+  const alvos = criados.slice(0, 3).map((c) => c.id);
+  await naNova(() => bruto.container.updateMany({ where: { id: { in: alvos } }, data: { resumo: Prisma.DbNull, semaforoNivel: null, resumoEm: null } }));
+  const apos = await lista("situacao=todos&limite=100");
+  assert.equal(apos.itens.length, 19);
+  for (const id of alvos) assert.deepEqual(recorte(apos.itens.find((c) => c.id === id)), recorte(legado.find((c) => c.id === id)));
+  assert.equal((await naNova(() => bruto.container.count({ where: { id: { in: alvos }, resumoEm: { not: null }, semaforoNivel: { not: null } } }))), 3, "resumo recomposto");
+  const sem = criados.find((c) => c.numero && !legado.find((x) => x.id === c.id)?.portoRetiradaId && legado.find((x) => x.id === c.id)?.status === "PROGRAMADO");
+  await naNova(() => varrer());
+  const t1 = (await naNova(() => bruto.container.findUnique({ where: { id: sem.id }, select: { resumoEm: true } }))).resumoEm;
+  await new Promise((r) => setTimeout(r, 30));
+  await naNova(() => varrer());
+  assert.equal((await naNova(() => bruto.container.findUnique({ where: { id: sem.id }, select: { resumoEm: true } }))).resumoEm.getTime(), t1.getTime(), "varredura sem mudança não regrava o resumo");
+
+  // ---- 8. Painel: números de todos os containers, cards só do escopo, no máximo N por grupo e fase ----
+  const painel = (await a.get("/api/painel")).body;
+  // (relido: a leitura do passo 6 mudou a situação de um container desde a primeira foto da lista antiga)
+  const ativosLegado = (await a.get("/api/containers?situacao=todos")).body.filter((c) => !["ENTREGUE_PORTO", "CANCELADO"].includes(c.status));
+  assert.equal(painel.totais.ativos, ativosLegado.length);
+  for (const g of painel.grupos.filter((x) => [gA.id, gB.id, gC.id].includes(x.id))) {
+    const meus = ativosLegado.filter((c) => c.grupoId === g.id);
+    assert.equal(g.total, meus.length, `total do grupo ${g.cliente}`);
+    assert.deepEqual(g.semaforo, { VERDE: meus.filter((c) => c.semaforo === "VERDE").length, AMARELO: meus.filter((c) => c.semaforo === "AMARELO").length, VERMELHO: meus.filter((c) => c.semaforo === "VERMELHO").length });
+    assert.equal(g.containers.length, meus.length, "escopo padrão (todas): todos os cards, abaixo do limite");
+    assert.equal(Object.values(g.fases).reduce((s, x) => s + x, 0), meus.length);
+  }
+  const daRegiao = (await a.get(`/api/painel?regiao=${r1.id}`)).body;
+  assert.ok(daRegiao.grupos.find((g) => g.id === gB.id).total > 0, "os números dos outros grupos continuam");
+  assert.equal(daRegiao.grupos.find((g) => g.id === gB.id).containers.length, 0, "mas sem cards fora da região");
+  assert.ok(daRegiao.grupos.find((g) => g.id === gA.id).containers.length > 0);
+  assert.equal((await a.get(`/api/painel?regiao=sem`)).body.grupos.find((g) => g.id === gC.id).containers.length, ativosLegado.filter((c) => c.grupoId === gC.id).length);
+  const problemas = (await a.get("/api/painel?soProblemas=1")).body;
+  assert.ok(problemas.grupos.every((g) => g.containers.every((c) => c.semaforo !== "VERDE")), "só atenção/crítico");
+  assert.equal(problemas.totais.ativos, painel.totais.ativos, "os números não mudam com o filtro");
+  const curto = (await a.get("/api/painel?porFase=2")).body;
+  const limitados = curto.grupos.filter((g) => Object.values(g.ocultos).some((n) => n > 0));
+  assert.ok(limitados.length, "com 2 por fase alguém passa do limite");
+  for (const g of curto.grupos) for (const f of ["chegando", "fabrica", "porto"]) assert.equal(g.containers.filter((c) => (f === "fabrica" ? ["NA_FABRICA", "EM_OPERACAO", "LIBERADO"].includes(c.status) : f === "porto" ? c.status === "SAIU_FABRICA" || (c.temOperacao === false) : ["PROGRAMADO", "COLETADO"].includes(c.status) && c.temOperacao !== false)).length + g.ocultos[f], g.fases[f]);
+  for (const ruim of ["regiao=abc", "grupoId=x", "grupoId=-1"]) assert.equal((await a.get(`/api/painel?${ruim}`)).status, 400, ruim);
+
+  // ---- 9. Isolamento: outro cliente não vê nada daqui, nem pelos filtros nem pelo "localizar" ----
+  const b = await logar("admin@ref34.local");
+  const deB = (await b.get(`/api/containers/lista?situacao=todos&limite=100&grupos=${gA.id}&localizar=${alvo.id}&busca=LSTU`)).body;
+  assert.deepEqual([deB.total, deB.itens.length], [0, 0]);
+  assert.equal(JSON.stringify((await b.get("/api/containers/lista?situacao=todos&limite=100")).body).includes("LSTU"), false);
+  assert.equal(JSON.stringify((await b.get("/api/painel")).body).includes("Cli Alfa 310"), false);
+  assert.equal((await agentes.VISUALIZACAO.get("/api/containers/lista")).status, 200, "quem só consulta também lista");
+  assert.equal((await logar("portaria@teste.local").then((p) => p.get("/api/containers/lista"))).status, 403, "portaria não usa a lista (só o pátio)");
+
+  for (const c of criados) if (!["ENTREGUE_PORTO", "CANCELADO"].includes((await a.get(`/api/containers/${c.id}`)).body.status)) await a.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.10" });
 });

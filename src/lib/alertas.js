@@ -5,7 +5,8 @@ import { calcularSituacao, alertasDesejados, STATUS_ENCERRADOS } from "./prazos.
 import { estimarCiclo } from "./estimativa.js";
 import { montarContextos, configRodagem } from "./previsao.js";
 import { congelarPlanoSeFaltar, completarPlanoSeFaltar } from "./planejamento.js";
-import { sincronizarViagem } from "./viagem.js";
+import { sincronizarViagem, participacoesAtivas } from "./viagem.js";
+import { construirResumo, resumoMudou } from "./resumoContainer.js";
 
 // Leituras suficientes para achar o início de uma sequência fora da faixa sem carregar o histórico todo.
 const LEITURAS_AVALIADAS = 200;
@@ -25,7 +26,7 @@ export async function leiturasRecentes(containerId, cliente = prisma) {
 
 // Últimas leituras de vários containers numa consulta só (varredura em lote, v3.4 item 12): as
 // LEITURAS_AVALIADAS mais recentes de cada um, pelo índice (containerId, lidaEm). Em ordem cronológica.
-async function leiturasDeVarios(ids) {
+export async function leiturasDeVarios(ids) {
   const porContainer = new Map(ids.map((id) => [id, []]));
   if (!ids.length) return porContainer;
   const linhas = await prisma.$queryRaw`
@@ -53,12 +54,22 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
   return aplicarAlertas(container, { leituras, contexto: contextos.get(containerId), abertos, cfg, agora });
 }
 
+// Grava o resumo do container (lib/resumoContainer.js) só se mudou: sem escrita à toa na varredura.
+async function gravarResumo(container, leituras, previsao, cfg, agora) {
+  const novo = construirResumo(container, leituras, previsao, agora, cfg);
+  if (!resumoMudou(container, novo)) return false;
+  // Pelo JSON puro: datas viram texto ISO, como o banco vai devolver.
+  await prisma.container.updateMany({ where: { id: container.id }, data: { ...novo, resumo: JSON.parse(JSON.stringify(novo.resumo)), resumoEm: agora } });
+  return true;
+}
+
 // Núcleo da sincronização com os dados já carregados (um container ou a varredura em lote):
 // só grava quando algo muda (plano a congelar, alerta a abrir/encerrar, mensagem a atualizar).
-async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, agora }) {
+async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, agora, participacao }) {
   const containerId = container.id;
-  // Viagem (v3.8): quem chegou a um ponto, encerrou ou mudou de responsável sai dela.
-  await sincronizarViagem(container, agora);
+  // Viagem (v3.8): quem chegou a um ponto, encerrou ou mudou de responsável sai dela. Na varredura em
+  // lote a participação já vem carregada (v3.9): sem uma consulta por container.
+  await sincronizarViagem(container, agora, { participacao });
   const previsao = estimarCiclo(container, contexto, agora, configRodagem(cfg));
   // O plano parte da coleta programada mesmo que ela já tenha passado (a previsão "ao vivo" não
   // simula no passado): assim coleta, chegada, saída e entrega planejadas ficam coerentes entre si.
@@ -67,6 +78,8 @@ async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, ago
   await congelarPlanoSeFaltar(container, previsaoPlano, agora);
   await completarPlanoSeFaltar(container, previsao, agora);
   const situacao = calcularSituacao(container, leituras, agora, cfg.intervaloLeituraMinutos, previsao, cfg.atrasoColetaCriticoHoras);
+  // Resumo para as listas (v3.10): grava quando mudou (a previsão e a temperatura vêm daqui).
+  await gravarResumo(container, leituras, previsao, cfg, agora);
   const desejados = alertasDesejados(container, situacao);
   const chavesDesejadas = new Set(desejados.map((a) => chaveAlerta(containerId, a.tipo, a.nivel)));
 
@@ -105,18 +118,20 @@ async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, ago
 // Varredura periódica: todo container ativo + qualquer container que ainda tenha alerta aberto.
 // Em LOTE (v3.4, item 12): containers, leituras, contexto de rota e alertas abertos de todos de
 // uma vez (4 consultas) — antes eram ~4 consultas por container, uma de cada vez.
-export async function sincronizarTodos(agora = new Date()) {
+export async function sincronizarTodos(agora = new Date(), { ids: soEstes } = {}) {
   const config = await lerConfiguracao();
+  // soEstes: restringe a varredura a estes containers (ex.: os que a importação acabou de criar).
   const alvos = await prisma.container.findMany({
-    where: {
-      OR: [{ status: { notIn: STATUS_ENCERRADOS } }, { alertas: { some: { chaveAberta: { not: null } } } }],
-    },
+    where: soEstes
+      ? { id: { in: soEstes } }
+      : { OR: [{ status: { notIn: STATUS_ENCERRADOS } }, { alertas: { some: { chaveAberta: { not: null } } } }] },
   });
   const ids = alvos.map((c) => c.id);
-  const [leituras, contextos, todosAbertos] = await Promise.all([
+  const [leituras, contextos, todosAbertos, participacoes] = await Promise.all([
     leiturasDeVarios(ids),
     montarContextos(alvos, config),
     ids.length ? prisma.alerta.findMany({ where: { containerId: { in: ids }, chaveAberta: { not: null } } }) : [],
+    participacoesAtivas(ids),
   ]);
   const abertosPor = new Map(ids.map((id) => [id, []]));
   for (const a of todosAbertos) abertosPor.get(a.containerId).push(a);
@@ -124,7 +139,7 @@ export async function sincronizarTodos(agora = new Date()) {
   let encerrados = 0;
   for (const c of alvos) {
     try {
-      const r = await aplicarAlertas(c, { leituras: leituras.get(c.id), contexto: contextos.get(c.id), abertos: abertosPor.get(c.id), cfg: config, agora });
+      const r = await aplicarAlertas(c, { leituras: leituras.get(c.id), contexto: contextos.get(c.id), abertos: abertosPor.get(c.id), cfg: config, agora, participacao: participacoes.get(c.id) ?? null });
       abertos += r.abertos;
       encerrados += r.encerrados;
     } catch (err) {

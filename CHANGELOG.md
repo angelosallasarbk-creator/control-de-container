@@ -4,6 +4,81 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.10.0 — 05/10/2026 (tag `v3.10.0`) — listas e painel por página: resumo gravado, filtro e ordem no banco
+
+Resolve o item "ainda de pé" da 3.9.0: `GET /api/containers` e `/api/painel` devolviam tudo (3,7 a 6 MB e 0,6 a 0,9 s
+com ~1.300 ativos) e o custo crescia com o número de containers e de leituras.
+
+- **Resumo gravado pela sincronização (`Container.resumo`, JSON):** o que é caro de calcular e só muda quando
+  algo acontece (a última leitura de temperatura, desde quando está fora da faixa, a previsão de rota) é calculado
+  uma vez, na varredura/ao salvar, e gravado. Tudo que depende do relógio (estadia, demurrage, deadline, atraso de
+  coleta, minutos fora da faixa, "sem leitura", custos) continua calculado na hora, com as MESMAS funções da ficha,
+  a partir de datas absolutas; por isso não fica velho entre uma varredura e outra. Só a previsão de rota vale "até a
+  última sincronização" (já era assim na varredura). Só grava quando mudou (comparação canônica: o `jsonb` reordena
+  chaves) e a varredura de configuração não reescreve o que não mudou.
+- **Equivalência provada, não suposta:** `avaliarTemperatura` e `montarContainer` foram divididos em duas partes
+  (resumir + avaliar) e 6.000 casos aleatórios (`resumoContainer.test.js`) mostram resultado idêntico ao cálculo
+  direto, incluindo semáforo. O teste de API compara a lista nova com a antiga linha a linha.
+- **`GET /api/containers/lista` (nova):** página, total, filtros (situação, etapa, pontos de carregamento, regiões
+  incluindo "sem região", sem QR, busca em número/booking/placa/navio/locais) e ordenação por 12 chaves feitos no
+  banco, com índices `Container_lista_*`. Limite de 100 por página (padrão 20), chaves de ordenação em lista
+  fixa (nunca texto livre), desempate estável (`criadoEm desc, id desc`), nulos por último. `localizar=<id>` devolve a
+  página do container aberto. Containers anteriores à 3.10 ganham o resumo na subida (varredura inicial) ou na
+  primeira consulta. A rota antiga `GET /api/containers` continua igual (a ficha e a exportação usam).
+- **Painel:** os números (totais, semáforo, custos, contagem por fase) cobrem todos os ativos, mas os cards só vêm
+  da aba/ponto/filtro pedidos e no máximo 60 por fase (os mais críticos primeiro; a tela mostra "+N" com atalho para
+  a lista). Parâmetros: `regiao`, `grupoId`, `soProblemas`, `porFase` (máx. 200).
+- **Telas:** Containers (tabela) e a lista lateral da ficha buscam só a página, com busca com atraso de 350 ms,
+  resposta antiga descartada e a página do container aberto localizada pelo servidor; o Painel busca por aba.
+- **Isolamento mantido:** as consultas novas passam pelo mesmo filtro/RLS por cliente (teste cruzado entre
+  clientes e de permissão no teste de API).
+- **Medido** (Postgres local, 1.285 ativos, mesmo notebook gerando a carga): lista antiga 3,7 MB / 650 ms → página de
+  20 linhas 27 KB / 60 ms; painel 533 KB / 260 ms (todas as regiões) e 267 KB / 190 ms (uma região). Com 26 mil ativos
+  em uma única organização: lista 24 KB / 130 ms, e `EXPLAIN ANALYZE` mostra índice na ordem padrão (0,5 ms),
+  na página 500 (20 ms) e por etapa (0,3 ms); contagem, outras ordens e busca por texto leem a organização
+  inteira (22 a 41 ms). O painel segue lendo todos os ativos para os totais (3,5 s com 26 mil, o que é muito além
+  de uma operação real).
+- **Limites conhecidos:** paginação por deslocamento (offset): cadastro novo no meio da navegação pode repetir ou
+  pular uma linha entre páginas; a ordenação por Estadia e Demurrage é pela data de vencimento (encerrados por
+  último); a busca por texto parcial lê a organização inteira (índice `pg_trgm` se uma organização passar de
+  dezenas de milhares de containers); sem resposta 304 de propósito (campos que dependem do relógio ficariam
+  congelados).
+- Migração `20261014100000_resumo_containers`: só adiciona colunas e índices, não apaga nada.
+
+## 3.9.0 — 05/10/2026 (tag `v3.9.0`, publicada junto com a 3.10.0) — reauditoria da 3.8.0: teste de estresse com 3 empresas e correções
+
+Teste: 3 empresas usando o app inteiro por HTTP (todos os perfis, planilhas, QR, motorista por SMS, viagem,
+rastreamento, custos, redefinição de senha) mais 276 ataques cruzados com ids de outra empresa, no sistema
+em modo produção (RLS ligado). Resultado de isolamento: 0 vazamentos e 0 ataques aceitos, **exceto o item 1**.
+
+- **Transportadora do motorista só do cliente da etiqueta (vazamento entre clientes):** no primeiro acesso, a
+  lista de transportadoras era a da plataforma inteira. Um desconhecido com um celular via os nomes das
+  transportadoras de todos os clientes e, escolhendo a de outro cliente e registrando uma leitura no QR, o
+  cliente passava a ver o **nome e o CNPJ completo** dela (e podia criar gestor para ela). Agora a lista traz só as
+  transportadoras do cliente da etiqueta (mais a que o motorista já tem, se foi pré-cadastrado por outro
+  cliente), sem CNPJ, e o cadastro recusa (400) uma transportadora fora dela.
+- **CNPJ único só dentro do cliente:** como o CNPJ é público, quem cadastrava primeiro um CNPJ com um nome falso
+  virava dono do cadastro e a empresa verdadeira recebia esse cadastro sem poder corrigir. Agora cada cliente tem
+  o seu cadastro (nome e CNPJ únicos só dentro dele). Migração `20261013100000_cnpj_por_cliente` (troca o
+  índice único do CNPJ por `(organizacaoDonaId, cnpj)`; não apaga nada).
+- **Portaria, containers que ficam junto (`/portaria/ficam`):** agora tudo ou nada. Antes cada container era gravado
+  na sua vez: um inválido no meio deixava os anteriores registrados com a resposta de erro e repetir o pedido
+  falhava nos que já tinham entrado.
+- **Desempenho (medido no teste, 3 empresas, Alfa com ~1.300 containers ativos):**
+  - A varredura de alertas fazia uma consulta de viagem por container (regressão da 3.8.0 sobre o lote da 3.4).
+    Agora a participação em viagem vem em lote: salvar Configurações com 1.283 ativos passou de **20,5 s para 1,0 s**
+    (383 ativos: de 6,3 s para 0,3 a 1,2 s). A varredura periódica ganha o mesmo.
+  - A importação grava os alertas e o plano dos containers criados em lote: 900 linhas de **70 s para 16,6 s**.
+  - `GET /api/alertas/resumo` (consultado por todo navegador aberto, a cada poucos segundos) devolvia o container
+    de cada alerta: de 365 KB para ~35 KB e de 110 ms para 34 ms.
+  - Pico de memória do servidor no teste de carga: de 697 MB para 486 MB.
+- **Decisão sobre a anonimização com homônimos:** não alterado. A autoria é texto livre ("Nome (motorista ·
+  Transportadora)"); com nome e transportadora iguais não há como distinguir, e o direito de exclusão tem
+  prioridade. Resolver de vez exige gravar o `motoristaId` em cada tabela de autoria (mudança maior, fica anotada).
+- **Ainda de pé (recomendado para a próxima versão):** `GET /api/containers` e `/api/painel` devolvem tudo de uma vez
+  (6 MB e 1 MB com 1.286 ativos; 0,9 s e 0,7 s com um usuário, e a vazão cai a ~5 a 10 requisições/s com
+  vários usuários por causa do custo de montar e serializar). Pede paginação ou lista resumida, com mudança na tela.
+
 ## 3.8.0 — 04/10/2026 (tag `v3.8.0`)
 
 - **Viagem com vários containers (mesmo caminhão):** antes cada container era tratado como uma viagem —

@@ -135,22 +135,50 @@ export function calcularAtrasoColeta(c, agora, criticoHoras = ATRASO_COLETA_CRIT
   return { programadaEm, atrasada: true, horasAtraso: arred(horasAtraso, 1), situacao: horasAtraso >= criticoHoras ? "VENCIDO" : "ATENCAO" };
 }
 
+const temFaixa = (c) => ehReefer(c.tipo) && c.tempMin !== null && c.tempMin !== undefined && c.tempMax !== null && c.tempMax !== undefined;
+
+// O que a avaliação de temperatura precisa do histórico: a última leitura e quando começou a
+// sequência contínua fora da faixa que termina nela (v3.10). É o que o resumo do container guarda:
+// com isso a avaliação roda sem carregar as leituras. null = container sem controle de temperatura.
 // leituras: ordenadas da mais antiga para a mais recente.
-export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) {
-  if (!ehReefer(c.tipo) || c.tempMin === null || c.tempMin === undefined || c.tempMax === null || c.tempMax === undefined) {
-    return null;
-  }
+export function resumirLeituras(c, leituras) {
+  if (!temFaixa(c)) return null;
   const min = num(c.tempMin);
   const max = num(c.tempMax);
   const fora = (l) => num(l.temperatura) < min || num(l.temperatura) > max;
   const ultima = leituras.length ? leituras[leituras.length - 1] : null;
+  let foraDesde = null;
+  if (ultima && fora(ultima)) {
+    // Início da sequência contínua de leituras fora da faixa que termina na última leitura.
+    let i = leituras.length - 1;
+    while (i > 0 && fora(leituras[i - 1])) i--;
+    foraDesde = new Date(leituras[i].lidaEm);
+  }
+  return {
+    ultima: ultima ? { temperatura: num(ultima.temperatura), lidaEm: new Date(ultima.lidaEm), origem: ultima.origem } : null,
+    foraDesde,
+  };
+}
+
+// leituras: ordenadas da mais antiga para a mais recente.
+export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) {
+  const resumo = resumirLeituras(c, leituras);
+  return resumo ? avaliarTemperaturaResumida(c, resumo, agora, intervaloLeituraMinutos) : null;
+}
+
+// Mesma avaliação a partir do resumo das leituras (datas absolutas: o relógio entra só aqui).
+export function avaliarTemperaturaResumida(c, resumo, agora, intervaloLeituraMinutos) {
+  if (!temFaixa(c) || !resumo) return null;
+  const min = num(c.tempMin);
+  const max = num(c.tempMax);
+  const ultima = resumo.ultima ? { ...resumo.ultima, lidaEm: new Date(resumo.ultima.lidaEm) } : null;
   const monitorando = STATUS_MONITORA_TEMPERATURA.includes(c.status);
 
   const resultado = {
     setpoint: num(c.setpoint),
     tempMin: min,
     tempMax: max,
-    ultima: ultima ? { temperatura: num(ultima.temperatura), lidaEm: new Date(ultima.lidaEm), origem: ultima.origem } : null,
+    ultima: ultima ? { temperatura: ultima.temperatura, lidaEm: ultima.lidaEm, origem: ultima.origem } : null,
     monitorando,
     foraDaFaixa: false,
     desvio: null,
@@ -161,11 +189,8 @@ export function avaliarTemperatura(c, leituras, agora, intervaloLeituraMinutos) 
     nivelSemLeitura: null,
   };
 
-  if (ultima && fora(ultima)) {
-    // Início da sequência contínua de leituras fora da faixa que termina na última leitura.
-    let i = leituras.length - 1;
-    while (i > 0 && fora(leituras[i - 1])) i--;
-    const minutos = (agora - new Date(leituras[i].lidaEm)) / MINUTO;
+  if (ultima && resumo.foraDesde) {
+    const minutos = (agora - new Date(resumo.foraDesde)) / MINUTO;
     resultado.foraDaFaixa = true;
     resultado.desvio = num(ultima.temperatura) > max ? "ACIMA" : "ABAIXO";
     resultado.minutosForaDaFaixa = Math.max(0, Math.round(minutos));
