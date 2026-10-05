@@ -344,6 +344,8 @@ cliente nova que aponte para outra, declare a relação composta do mesmo jeito.
 
 **Lista paginada e resumo (v3.10):** `Container.resumo` (e as colunas `semaforoNivel`, `estadiaLimiteEm`, `demurrageVenceEm`, `ultimaTemperatura`, `previsaoFolgaHoras`) são gravados pela sincronização (`lib/alertas.js`, `lib/resumoContainer.js`) e usados por `GET /api/containers/lista` e `/api/painel`. Se mudar uma regra de prazo ou de temperatura, o resumo se corrige na próxima varredura (ou salvando Configurações). Ao criar uma coluna usada na ordenação da lista, inclua-a em `ORDENS` (`lib/listaContainers.js`) e no índice, se for a ordem padrão. Os índices `Container_lista_*` estão no `schema.prisma` (o `migrate dev` os conhece).
 
+**Painel em cache, varredura uma por vez e alertas paginados (v3.11):** o cálculo do Painel é guardado por organização por `PAINEL_CACHE_SEGUNDOS` (padrão 10, `0` desliga; a Home pode atrasar esse tempo). `sincronizarTodos` roda uma varredura por organização de cada vez (`lib/alertas.js`): não chame a varredura completa em laço sem esperar. As transações interativas do Prisma têm tempo limite de 30 s (`lib/prisma.js`). `GET /api/alertas?pagina=1&limite=20&ordem=...` é a forma paginada; sem `pagina`/`limite` devolve a lista inteira.
+
 Logins do seed (senha `demo12345`): `admin@demo.local`, `supervisor@demo.local`, `operador@demo.local`, `visualizacao@demo.local`.
 
 ⚠ A porta 3000 é a mesma do McCain local. Não rode os dois ao mesmo tempo, ou mude `PORT`.

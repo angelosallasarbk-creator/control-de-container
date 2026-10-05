@@ -151,7 +151,8 @@ const mostrarAlca = computed(() => estreita.value && !menuAberto.value);
 const resumo = ref(null);
 const INTERVALO_ALERTAS_MS = 30000;
 let timer = null;
-let criticosVistos = null;
+// Maior id de alerta crítico não reconhecido já visto (v3.11): ids só crescem, então um maior = crítico novo.
+let ultimoCriticoVisto = null;
 
 onMounted(() => auth.carregar());
 
@@ -173,9 +174,9 @@ async function atualizarAlertas() {
   if (ehTransportador.value || ehGestor.value || ehPlataforma.value) return; // sem acesso a alertas
   try {
     const r = await api.resumoAlertas();
-    const ids = new Set(r.criticosNaoReconhecidos.map((a) => a.id));
-    if (criticosVistos && [...ids].some((id) => !criticosVistos.has(id))) bipar();
-    criticosVistos = ids;
+    const ultimo = r.ultimoCriticoNaoReconhecidoId ?? 0;
+    if (ultimoCriticoVisto !== null && ultimo > ultimoCriticoVisto) bipar();
+    ultimoCriticoVisto = ultimo;
     resumo.value = r;
   } catch (e) {
     if (e.status === 401) auth.usuario = null;
