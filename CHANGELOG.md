@@ -4,6 +4,14 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.10.1 (manutenção: dependência e documentação)
+
+- `uuid` fixado em `^11.1.1` por `overrides` no `package.json` (o `exceljs` 4.4.0 trazia o 8.3.2, com o aviso
+  GHSA-w5hq-g745-h8pq). O `exceljs` só chama `v4()` sem buffer, então o aviso não era explorável aqui; a troca
+  zera o `npm audit` sem rebaixar o `exceljs`. Importação e exportação de planilhas passam nos testes.
+- CHANGELOG da 3.10.0: a rota antiga `GET /api/containers` não é mais usada por nenhuma tela (a frase dizia o contrário).
+- Sem migração e sem mudança de comportamento.
+
 ## 3.10.0 — 05/10/2026 (tag `v3.10.0`) — listas e painel por página: resumo gravado, filtro e ordem no banco
 
 Resolve o item "ainda de pé" da 3.9.0: `GET /api/containers` e `/api/painel` devolviam tudo (3,7 a 6 MB e 0,6 a 0,9 s
@@ -24,7 +32,7 @@ com ~1.300 ativos) e o custo crescia com o número de containers e de leituras.
   banco, com índices `Container_lista_*`. Limite de 100 por página (padrão 20), chaves de ordenação em lista
   fixa (nunca texto livre), desempate estável (`criadoEm desc, id desc`), nulos por último. `localizar=<id>` devolve a
   página do container aberto. Containers anteriores à 3.10 ganham o resumo na subida (varredura inicial) ou na
-  primeira consulta. A rota antiga `GET /api/containers` continua igual (a ficha e a exportação usam).
+  primeira consulta. A rota antiga `GET /api/containers` continua igual, por compatibilidade com quem consome a API (nenhuma tela usa mais).
 - **Painel:** os números (totais, semáforo, custos, contagem por fase) cobrem todos os ativos, mas os cards só vêm
   da aba/ponto/filtro pedidos e no máximo 60 por fase (os mais críticos primeiro; a tela mostra "+N" com atalho para
   a lista). Parâmetros: `regiao`, `grupoId`, `soProblemas`, `porFase` (máx. 200).
