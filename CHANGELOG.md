@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.11.0 (desempenho com muitos containers: painel, alertas, varredura e transações)
+## 3.11.0 — 06/10/2026 (tag `v3.11.0`) — desempenho com muitos containers: painel, alertas, varredura e transações
 
 Origem: teste das 3 empresas com ~3 a 5 vezes mais dados (3 × 2.500 containers, ~3.100 alertas abertos por empresa,
 ~59 mil leituras), 12 e 30 usuários simultâneos. O isolamento seguiu perfeito (0 vazamentos, 0 de 342 ataques cruzados
