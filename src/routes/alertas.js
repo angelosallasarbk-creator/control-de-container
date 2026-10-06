@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { TipoAlerta } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { asyncHandler, erroHttp } from "../lib/asyncHandler.js";
 import { requirePermissao } from "../lib/permissoes.js";
@@ -35,7 +36,8 @@ alertasRouter.get("/", asyncHandler(async (req, res) => {
   const where = {};
   if (req.query.estado === "historico") where.chaveAberta = null;
   else where.chaveAberta = { not: null };
-  if (req.query.tipo) where.tipo = umDe(req.query.tipo, ["ESTADIA", "DEMURRAGE", "DEADLINE", "TEMPERATURA", "SEM_LEITURA", "RISCO_DEMURRAGE", "RISCO_DEADLINE", "ATRASO_COLETA"], "Tipo");
+  // Todos os tipos do banco (lista fixa esquecia os novos: ENTREGA_A_DEFINIR, da v3.7, dava 400).
+  if (req.query.tipo) where.tipo = umDe(req.query.tipo, Object.values(TipoAlerta), "Tipo");
   if (req.query.grupoId) where.container = { grupoId: validarId(req.query.grupoId, "Grupo") };
 
   if (req.query.pagina === undefined && req.query.limite === undefined) {

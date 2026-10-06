@@ -48,6 +48,10 @@ aceitos), mas o servidor saturava em ~10 requisições por segundo e apareceram 
   `main` puro, e passou em outros horários do mesmo dia): precisa fixar a hora.
 - Sem migração. Novas variáveis: `PAINEL_CACHE_SEGUNDOS` (opcional).
 
+- Revisão antes de publicar: o filtro por tipo da tela de Alertas recusava (400) o tipo "Definir local
+  de entrega" (lista fixa da v3.7 sem ele) — agora aceita todos os tipos do banco; a tela de Alertas não
+  mostra mais "Nenhum alerta aberto" por um instante antes da primeira resposta.
+
 ## 3.10.1 (manutenção: dependência e documentação)
 
 - `uuid` fixado em `^11.1.1` por `overrides` no `package.json` (o `exceljs` 4.4.0 trazia o 8.3.2, com o aviso

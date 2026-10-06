@@ -3818,3 +3818,12 @@ test("v3.11 alertas paginados, resumo por contagem, painel com cache por cliente
   for (const c of ativosX) await x.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.11" });
   for (const c of cY) await y.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.11" });
 });
+
+test("alertas: filtro por tipo aceita todos os tipos do banco (inclui ENTREGA_A_DEFINIR)", async () => {
+  const { TipoAlerta } = await import("@prisma/client");
+  for (const tipo of Object.values(TipoAlerta)) {
+    assert.equal((await agentes.OPERADOR.get(`/api/alertas?tipo=${tipo}`)).status, 200, tipo);
+    assert.equal((await agentes.OPERADOR.get(`/api/alertas?tipo=${tipo}&pagina=1`)).status, 200, `${tipo} (paginado)`);
+  }
+  assert.equal((await agentes.OPERADOR.get("/api/alertas?tipo=INVENTADO")).status, 400);
+});

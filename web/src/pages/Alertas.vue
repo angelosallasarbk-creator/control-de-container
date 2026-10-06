@@ -14,7 +14,8 @@ const auth = useAuthStore();
 const lista = ref([]);
 const grupos = ref([]);
 const erro = ref(null);
-const carregando = ref(false);
+// Começa carregando: sem isso a tela mostrava "Nenhum alerta aberto" até a primeira resposta.
+const carregando = ref(true);
 const selecionado = ref(null);
 const filtro = reactive({ estado: "abertos", tipo: "", grupoId: "" });
 
