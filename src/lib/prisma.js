@@ -31,7 +31,9 @@ export class SemOrganizacaoError extends Error {
 }
 
 // Conexão com o usuário restrito ccs_app (RLS valendo) quando APP_DB_ROLE_PASSWORD existe.
-const base = new PrismaClient({ datasourceUrl: urlDaAplicacao() });
+// Transação interativa: o padrão do Prisma (5 s) estourava com o servidor ocupado (v3.11, medido: 2 de 49
+// criações de container com 30 usuários simultâneos davam 500, a transação em si tem 5 consultas).
+const base = new PrismaClient({ datasourceUrl: urlDaAplicacao(), transactionOptions: { maxWait: 10_000, timeout: 30_000 } });
 // Produção sem o usuário restrito NÃO sobe (v3.4, item 7): com o usuário das migrações o RLS não
 // vale e a camada da aplicação sozinha não filtra relações carregadas junto (include/select).
 if (process.env.NODE_ENV === "production" && !process.env.APP_DB_ROLE_PASSWORD) {

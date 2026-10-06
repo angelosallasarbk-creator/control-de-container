@@ -1,38 +1,54 @@
 <script setup>
-import { computed, inject, onMounted, reactive, ref } from "vue";
+import { inject, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import { ROTULO_ALERTA, rotuloEtapa, fmtDataHora, tempoDesde } from "../formato.js";
 import ReconhecerAlerta from "../components/ReconhecerAlerta.vue";
 import ThOrdenavel from "../components/ThOrdenavel.vue";
-import { useOrdenacao } from "../composables/useOrdenacao.js";
+import { useOrdenacaoServidor } from "../composables/useOrdenacaoServidor.js";
 import Paginacao from "../components/Paginacao.vue";
-import { usePaginacao } from "../composables/usePaginacao.js";
+import { usePaginacaoServidor } from "../composables/usePaginacaoServidor.js";
 
 const atualizarAlertas = inject("atualizarAlertas", () => {});
 const auth = useAuthStore();
 const lista = ref([]);
 const grupos = ref([]);
 const erro = ref(null);
-const carregando = ref(false);
+// Começa carregando: sem isso a tela mostrava "Nenhum alerta aberto" até a primeira resposta.
+const carregando = ref(true);
 const selecionado = ref(null);
 const filtro = reactive({ estado: "abertos", tipo: "", grupoId: "" });
 
+// Lista paginada no servidor (v3.11): filtro, ordem e página rodam no banco; só a página chega ao navegador.
+let sequencia = 0;
 async function carregar() {
+  const minha = ++sequencia; // descarta a resposta de uma consulta mais antiga
   carregando.value = true;
   try {
-    lista.value = await api.alertas(filtro);
+    const r = await api.alertas({ ...filtro, ...ordem.parametros(), pagina: pag.pagina.value, limite: pag.porPagina.value });
+    if (minha !== sequencia) return;
+    lista.value = r.itens;
+    pag.aplicar(r);
     erro.value = null;
   } catch (e) {
-    erro.value = e.message;
+    if (minha === sequencia) erro.value = e.message;
   } finally {
-    carregando.value = false;
+    if (minha === sequencia) carregando.value = false;
   }
 }
+// Filtro ou ordem mudou: volta à primeira página.
+function refazer() {
+  pag.voltarAoInicio();
+  carregar();
+}
+const pag = usePaginacaoServidor("alertas", carregar);
+// Nível: crescente = crítico primeiro. Tratamento: pendentes primeiro no crescente.
+const ordem = useOrdenacaoServidor(refazer, { ordem: "nivel", dir: "asc" });
 onMounted(async () => {
   grupos.value = await api.listar("grupos").catch(() => []);
   carregar();
 });
+watch(() => [filtro.estado, filtro.tipo, filtro.grupoId], refazer);
 
 function reconhecido() {
   selecionado.value = null;
@@ -40,41 +56,27 @@ function reconhecido() {
   atualizarAlertas();
 }
 
-// Nível: crescente = crítico primeiro. Tratamento: pendentes primeiro no crescente.
-const ordem = useOrdenacao({
-  nivel: (a) => (a.nivel === "CRITICO" ? 0 : 1),
-  tipo: (a) => ROTULO_ALERTA[a.tipo],
-  container: (a) => a.container.numero,
-  grupo: (a) => `${a.container.grupo.cliente} / ${a.container.grupo.fabrica}`,
-  mensagem: (a) => a.mensagem,
-  aberto: (a) => new Date(a.abertoEm),
-  tratamento: (a) => (a.reconhecidoEm ? `1 ${a.reconhecidoPor}` : "0"),
-});
-const linhas = computed(() => ordem.ordenar(lista.value));
-
-// Paginação da lista (10/20/50 por página, lembrado neste navegador).
-const pag = usePaginacao(() => linhas.value, "alertas");
 </script>
 
 <template>
   <div class="card filtros">
     <div class="campo">
       <label>Mostrar</label>
-      <select v-model="filtro.estado" @change="carregar">
+      <select v-model="filtro.estado">
         <option value="abertos">Abertos</option>
-        <option value="historico">Encerrados (últimos 300)</option>
+        <option value="historico">Encerrados</option>
       </select>
     </div>
     <div class="campo">
       <label>Tipo</label>
-      <select v-model="filtro.tipo" @change="carregar">
+      <select v-model="filtro.tipo">
         <option value="">Todos</option>
         <option v-for="(r, v) in ROTULO_ALERTA" :key="v" :value="v">{{ r }}</option>
       </select>
     </div>
     <div class="campo">
       <label>Ponto de Carregamento</label>
-      <select v-model="filtro.grupoId" @change="carregar">
+      <select v-model="filtro.grupoId">
         <option value="">Todos</option>
         <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
       </select>
@@ -97,7 +99,7 @@ const pag = usePaginacao(() => linhas.value, "alertas");
         </tr>
       </thead>
       <tbody>
-        <tr v-for="a in pag.itens.value" :key="a.id">
+        <tr v-for="a in lista" :key="a.id">
           <td><span class="chip" :class="a.nivel === 'CRITICO' ? 'vermelho' : 'amarelo'">{{ a.nivel === "CRITICO" ? "Crítico" : "Atenção" }}</span></td>
           <td class="negrito">{{ ROTULO_ALERTA[a.tipo] }}</td>
           <td>

@@ -6,6 +6,8 @@ import { semaforo, STATUS_ENCERRADOS } from "../lib/prazos.js";
 import { situacaoDoResumo } from "../lib/resumoContainer.js";
 import { SELECT_LINHA, carregarReferencias, comQrVinculado, montarLinha } from "../lib/listaContainers.js";
 import { temOperacao } from "../lib/fluxo.js";
+import { organizacaoAtual } from "../lib/tenant.js";
+import { comCachePainel } from "../lib/cachePainel.js";
 
 export const painelRouter = Router();
 
@@ -24,23 +26,30 @@ const FASES = {
 const GRAVIDADE = { VERMELHO: 0, AMARELO: 1, VERDE: 2 };
 const PADRAO_POR_FASE = 60;
 
-/**
- * Visão do pátio: containers ativos agrupados por Ponto de Carregamento (com a região da fábrica),
- * com semáforo e custos.
- *
- * v3.10: os números (totais, semáforo, custos, contagem por fase) cobrem TODOS os containers ativos,
- * mas os cards só vêm para o escopo pedido, no máximo `porFase` por grupo e fase (os mais críticos
- * primeiro) — antes eram 1 MB com todos os cards de todos os grupos a cada minuto.
- * Parâmetros: regiao (todas | sem | id), grupoId, soProblemas=1, porFase (padrão 60, máx. 200).
- */
-painelRouter.get("/", asyncHandler(async (req, res) => {
-  const regiao = String(req.query.regiao ?? "todas");
-  if (!/^(todas|sem|\d+)$/.test(regiao)) throw erroHttp(400, "Região inválida.");
-  const grupoFiltro = req.query.grupoId ? Number(req.query.grupoId) : null;
-  if (grupoFiltro !== null && (!Number.isInteger(grupoFiltro) || grupoFiltro <= 0)) throw erroHttp(400, "Ponto de carregamento inválido.");
-  const soProblemas = ["1", "true"].includes(String(req.query.soProblemas ?? ""));
-  const porFase = Math.min(200, Math.max(1, Number.parseInt(req.query.porFase, 10) || PADRAO_POR_FASE));
+const novoGrupo = (g) => ({
+  id: g.id,
+  cliente: g.cliente,
+  fabrica: g.fabrica,
+  regiao: g.regiao ? { id: g.regiao.id, nome: g.regiao.nome } : null,
+  metaEstadiaHoras: g.metaEstadiaHoras,
+  porStatus: {},
+  semaforo: { VERDE: 0, AMARELO: 0, VERMELHO: 0 },
+  alertasCriticos: 0,
+  alertasAtencao: 0,
+  custoDemurrage: {},
+  custoEstadia: 0,
+  total: 0,
+  fases: { chegando: 0, fabrica: 0, porto: 0 },
+  ocultos: { chegando: 0, fabrica: 0, porto: 0 },
+  containers: [],
+});
 
+/**
+ * Parte cara, igual para qualquer filtro: lê todos os ativos da organização e soma totais, semáforo,
+ * custos e contagem por fase. Guardada por cachePainel.js (por organização, alguns segundos).
+ * O que ela devolve NÃO pode ser alterado por quem usa (é compartilhado entre requisições).
+ */
+async function calcularBase() {
   const [linhas, refs, alertasAbertos, config, regioes] = await Promise.all([
     prisma.container.findMany({ where: { status: { notIn: STATUS_ENCERRADOS } }, select: SELECT_LINHA, orderBy: [{ chegadaFabricaEm: "asc" }, { criadoEm: "asc" }] }),
     carregarReferencias(),
@@ -58,23 +67,6 @@ painelRouter.get("/", asyncHandler(async (req, res) => {
   }
 
   const agora = new Date();
-  const novoGrupo = (g) => ({
-    id: g.id,
-    cliente: g.cliente,
-    fabrica: g.fabrica,
-    regiao: g.regiao ? { id: g.regiao.id, nome: g.regiao.nome } : null,
-    metaEstadiaHoras: g.metaEstadiaHoras,
-    porStatus: {},
-    semaforo: { VERDE: 0, AMARELO: 0, VERMELHO: 0 },
-    alertasCriticos: 0,
-    alertasAtencao: 0,
-    custoDemurrage: {},
-    custoEstadia: 0,
-    total: 0,
-    fases: { chegando: 0, fabrica: 0, porto: 0 },
-    ocultos: { chegando: 0, fabrica: 0, porto: 0 },
-    containers: [],
-  });
   const gruposAtivos = [...refs.grupos.values()].filter((g) => g.ativo)
     .sort((a, b) => a.fabrica.localeCompare(b.fabrica, "pt-BR") || a.cliente.localeCompare(b.cliente, "pt-BR"));
   const porGrupo = new Map(gruposAtivos.map((g) => [g.id, novoGrupo(g)]));
@@ -87,11 +79,8 @@ painelRouter.get("/", asyncHandler(async (req, res) => {
     custoDemurrage: {},
     custoEstadia: 0,
   };
-  const noEscopo = (g) =>
-    (regiao === "todas" || (regiao === "sem" ? !g.regiao : String(g.regiao?.id) === regiao)) && (!grupoFiltro || g.id === grupoFiltro);
 
-  // Passo 1: números de todos os containers (situação pelo resumo + relógio) e candidatos a card.
-  const candidatos = new Map(); // `${grupoId}:${fase}` → [{ l, nivel }]
+  const itens = []; // quem pode virar card: { l, grupoId, fase, nivel, cor, alertas }
   for (const l of linhas) {
     // Grupo desativado com container ainda ativo continua aparecendo no painel.
     if (!porGrupo.has(l.grupoId)) porGrupo.set(l.grupoId, novoGrupo(refs.grupos.get(l.grupoId)));
@@ -109,17 +98,51 @@ painelRouter.get("/", asyncHandler(async (req, res) => {
       alvo.alertasAtencao += alertas.ATENCAO;
     }
     g.total++;
-    const tem = temOperacao(l);
-    const fase = Object.keys(FASES).find((f) => FASES[f](l, tem));
-    if (fase) g.fases[fase]++;
-    if (fase && noEscopo(g) && (!soProblemas || cor !== "VERDE")) {
-      const chave = `${g.id}:${fase}`;
-      if (!candidatos.has(chave)) candidatos.set(chave, []);
-      candidatos.get(chave).push({ l, nivel: GRAVIDADE[cor], alertas });
+    const fase = Object.keys(FASES).find((f) => FASES[f](l, temOperacao(l)));
+    if (fase) {
+      g.fases[fase]++;
+      itens.push({ l, grupoId: g.id, fase, cor, nivel: GRAVIDADE[cor], alertas });
     }
   }
+  return { agora, config, refs, regioes, totais, grupos: [...porGrupo.values()], itens };
+}
 
-  // Passo 2: escolhe os cards (mais críticos primeiro quando passa do limite, mantendo a ordem de chegada).
+/**
+ * Visão do pátio: containers ativos agrupados por Ponto de Carregamento (com a região da fábrica),
+ * com semáforo e custos.
+ *
+ * v3.10: os números (totais, semáforo, custos, contagem por fase) cobrem TODOS os containers ativos,
+ * mas os cards só vêm para o escopo pedido, no máximo `porFase` por grupo e fase (os mais críticos
+ * primeiro) — antes eram 1 MB com todos os cards de todos os grupos a cada minuto.
+ * v3.11: o cálculo dos números é guardado alguns segundos por organização (lib/cachePainel.js).
+ * Parâmetros: regiao (todas | sem | id), grupoId, soProblemas=1, porFase (padrão 60, máx. 200).
+ */
+painelRouter.get("/", asyncHandler(async (req, res) => {
+  const regiao = String(req.query.regiao ?? "todas");
+  if (!/^(todas|sem|\d+)$/.test(regiao)) throw erroHttp(400, "Região inválida.");
+  const grupoFiltro = req.query.grupoId ? Number(req.query.grupoId) : null;
+  if (grupoFiltro !== null && (!Number.isInteger(grupoFiltro) || grupoFiltro <= 0)) throw erroHttp(400, "Ponto de carregamento inválido.");
+  const soProblemas = ["1", "true"].includes(String(req.query.soProblemas ?? ""));
+  const porFase = Math.min(200, Math.max(1, Number.parseInt(req.query.porFase, 10) || PADRAO_POR_FASE));
+
+  const base = await comCachePainel(organizacaoAtual(), calcularBase);
+  const { agora, config, refs } = base;
+  // Cópia por requisição: os cards e os "+N" dependem do filtro, o resto é compartilhado e só lido.
+  const grupos = base.grupos.map((g) => ({ ...g, ocultos: { chegando: 0, fabrica: 0, porto: 0 }, containers: [] }));
+  const porGrupo = new Map(grupos.map((g) => [g.id, g]));
+  const noEscopo = (g) =>
+    (regiao === "todas" || (regiao === "sem" ? !g.regiao : String(g.regiao?.id) === regiao)) && (!grupoFiltro || g.id === grupoFiltro);
+
+  // Candidatos a card: do escopo pedido (e só com problema, se pedido).
+  const candidatos = new Map(); // `${grupoId}:${fase}` → [item]
+  for (const it of base.itens) {
+    if (!noEscopo(porGrupo.get(it.grupoId)) || (soProblemas && it.cor === "VERDE")) continue;
+    const chave = `${it.grupoId}:${it.fase}`;
+    if (!candidatos.has(chave)) candidatos.set(chave, []);
+    candidatos.get(chave).push(it);
+  }
+
+  // Escolhe os cards (mais críticos primeiro quando passa do limite, mantendo a ordem de chegada).
   const escolhidos = [];
   for (const [chave, lista] of candidatos) {
     const [grupoId, fase] = chave.split(":");
@@ -133,7 +156,7 @@ painelRouter.get("/", asyncHandler(async (req, res) => {
     for (const item of ficam) escolhidos.push({ g, ...item });
   }
 
-  // Passo 3: monta só os cards escolhidos.
+  // Monta só os cards escolhidos.
   const qr = await comQrVinculado(escolhidos.map((e) => e.l.id));
   for (const { g, l, alertas } of escolhidos) {
     const c = montarLinha(l, refs, agora, config, qr.has(l.id));
@@ -181,5 +204,5 @@ painelRouter.get("/", asyncHandler(async (req, res) => {
     });
   }
 
-  res.json({ geradoEm: agora, totais, regioes, grupos: [...porGrupo.values()], escopo: { regiao, grupoId: grupoFiltro, soProblemas, porFase } });
+  res.json({ geradoEm: agora, totais: base.totais, regioes: base.regioes, grupos, escopo: { regiao, grupoId: grupoFiltro, soProblemas, porFase } });
 }));

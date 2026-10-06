@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
+import { organizacaoAtual } from "./tenant.js";
 import { lerConfiguracao } from "./configuracao.js";
 import { calcularSituacao, alertasDesejados, STATUS_ENCERRADOS } from "./prazos.js";
 import { estimarCiclo } from "./estimativa.js";
@@ -58,9 +59,15 @@ export async function sincronizarAlertas(containerId, { agora = new Date(), conf
 async function gravarResumo(container, leituras, previsao, cfg, agora) {
   const novo = construirResumo(container, leituras, previsao, agora, cfg);
   if (!resumoMudou(container, novo)) return false;
+  // Só grava se não houver um resumo mais novo (v3.11): a varredura em lote carrega os containers e as
+  // leituras no começo e só chega neste container depois; se uma leitura entrou nesse meio tempo e a
+  // sincronização dela já gravou o resumo, o da varredura (calculado com dados antigos) não pode sobrescrevê-lo.
   // Pelo JSON puro: datas viram texto ISO, como o banco vai devolver.
-  await prisma.container.updateMany({ where: { id: container.id }, data: { ...novo, resumo: JSON.parse(JSON.stringify(novo.resumo)), resumoEm: agora } });
-  return true;
+  const r = await prisma.container.updateMany({
+    where: { id: container.id, OR: [{ resumoEm: null }, { resumoEm: { lte: agora } }] },
+    data: { ...novo, resumo: JSON.parse(JSON.stringify(novo.resumo)), resumoEm: agora },
+  });
+  return r.count > 0;
 }
 
 // Núcleo da sincronização com os dados já carregados (um container ou a varredura em lote):
@@ -118,7 +125,34 @@ async function aplicarAlertas(container, { leituras, contexto, abertos, cfg, ago
 // Varredura periódica: todo container ativo + qualquer container que ainda tenha alerta aberto.
 // Em LOTE (v3.4, item 12): containers, leituras, contexto de rota e alertas abertos de todos de
 // uma vez (4 consultas) — antes eram ~4 consultas por container, uma de cada vez.
-export async function sincronizarTodos(agora = new Date(), { ids: soEstes } = {}) {
+//
+// Uma varredura completa por organização de cada vez (v3.11): ela carrega todos os containers, leituras e
+// contextos de rota na memória, e salvar Configurações dispara uma sem esperar a anterior. Medido: salvas
+// seguidas (uma a cada 300 ms) empilharam varreduras até o servidor cair por falta de memória
+// ("JavaScript heap out of memory"), derrubando todos os clientes. Quem chega com uma em andamento espera
+// ela terminar e as chamadas que chegarem nesse meio tempo dividem UMA rodada seguinte (que já vale a
+// configuração mais nova). A varredura restrita a `ids` (importação) não entra na fila.
+const emCurso = new Map(); // organização → varredura rodando
+const seguinte = new Map(); // organização → a única rodada que espera a atual
+function umaPorVez(chave, fazer) {
+  const atual = emCurso.get(chave);
+  if (!atual) {
+    const p = fazer().finally(() => emCurso.delete(chave));
+    emCurso.set(chave, p);
+    return p;
+  }
+  if (!seguinte.has(chave)) {
+    seguinte.set(chave, atual.catch(() => {}).then(() => { seguinte.delete(chave); return umaPorVez(chave, fazer); }));
+  }
+  return seguinte.get(chave);
+}
+
+export function sincronizarTodos(agora = new Date(), opcoes = {}) {
+  if (opcoes.ids) return varrerContainers(agora, opcoes);
+  return umaPorVez(String(organizacaoAtual()), () => varrerContainers(agora, opcoes));
+}
+
+async function varrerContainers(agora, { ids: soEstes } = {}) {
   const config = await lerConfiguracao();
   // soEstes: restringe a varredura a estes containers (ex.: os que a importação acabou de criar).
   const alvos = await prisma.container.findMany({

@@ -28,6 +28,8 @@ const naOrgPrisma = (cliente) => new Proxy(cliente, {
   },
 });
 process.env.JWT_SECRET ??= "segredo-apenas-para-teste";
+// O cache do painel (v3.11) fica desligado: os testes esperam ver a mudança na hora. O teste dele liga por conta própria.
+process.env.PAINEL_CACHE_SEGUNDOS ??= "0";
 // Testes nunca chamam o serviço de rota externo: sem chave, distância = linha reta × fator.
 process.env.ORS_API_KEY = "";
 
@@ -3658,4 +3660,170 @@ test("v3.10 lista paginada e painel enxuto: equivalem à lista antiga, filtram/o
   assert.equal((await logar("portaria@teste.local").then((p) => p.get("/api/containers/lista"))).status, 403, "portaria não usa a lista (só o pátio)");
 
   for (const c of criados) if (!["ENTREGUE_PORTO", "CANCELADO"].includes((await a.get(`/api/containers/${c.id}`)).body.status)) await a.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.10" });
+});
+test("v3.11 alertas paginados, resumo por contagem, painel com cache por cliente e transação mais longa", async () => {
+  const { criarOrganizacao } = await import("./lib/organizacoes.js");
+  const { prisma: bruto } = await import("./lib/prisma.js");
+  const { limparCachePainel } = await import("./lib/cachePainel.js");
+  const { org: orgX } = await criarOrganizacao({ nome: "Cliente Alerta X 3.11", admin: { email: "admin@alertax311.local", nome: "Admin X", senha: "senha-teste-123" }, criadoPor: "teste" });
+  const { org: orgY } = await criarOrganizacao({ nome: "Cliente Alerta Y 3.11", admin: { email: "admin@alertay311.local", nome: "Admin Y", senha: "senha-teste-123" }, criadoPor: "teste" });
+  const x = await logar("admin@alertax311.local");
+  const y = await logar("admin@alertay311.local");
+  const H = 3600e3;
+
+  const cadastros = async (cli, rotulo) => {
+    const g1 = (await cli.post("/api/grupos").send({ cliente: `Cli ${rotulo} Um`, fabrica: "Fab", metaEstadiaHoras: 24 })).body;
+    const g2 = (await cli.post("/api/grupos").send({ cliente: `Cli ${rotulo} Dois`, fabrica: "Fab", metaEstadiaHoras: 24 })).body;
+    const arm = (await cli.post("/api/armadores").send({ nome: `Arm ${rotulo}`, freeTimeDias: 5, valorDiaria: 50 })).body;
+    assert.ok(g1.id && g2.id && arm.id);
+    return { grupos: [g1.id, g2.id], armadorId: arm.id };
+  };
+  const cx = await cadastros(x, "X311");
+  const cy = await cadastros(y, "Y311");
+  // Coleta programada há várias horas: cada container abre um alerta de atraso (alguns críticos).
+  const criar = async (cli, cad, prefixo, n, horasAtras) => {
+    const r = await cli.post("/api/containers").send({ numero: `${prefixo}U${String(3110000 + n * 7).slice(1)}0`, confirmarDigito: true, tipo: "DRY_40", grupoId: cad.grupos[n % 2], armadorId: cad.armadorId, coletaProgramadaEm: new Date(Date.now() - horasAtras * H).toISOString() });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    return r.body;
+  };
+  const cX = []; for (let i = 0; i < 9; i++) cX.push(await criar(x, cx, "AXA", i, 2 + i * 3));
+  const cY = []; for (let i = 0; i < 3; i++) cY.push(await criar(y, cy, "AYA", i, 8 + i));
+
+  // ---- Alertas: lista inteira (compatível) x paginada ----
+  const inteira = (await x.get("/api/alertas")).body;
+  assert.ok(Array.isArray(inteira) && inteira.length >= 9, `alertas abertos: ${inteira.length}`);
+  const pagina = async (cli, q) => { const r = await cli.get(`/api/alertas?${q}`); assert.equal(r.status, 200, `${q} → ${JSON.stringify(r.body)}`); return r.body; };
+  const p1 = await pagina(x, "pagina=1&limite=4");
+  assert.deepEqual([p1.total, p1.pagina, p1.limite, p1.totalPaginas, p1.itens.length], [inteira.length, 1, 4, Math.ceil(inteira.length / 4), 4]);
+  const todosIds = [];
+  for (let p = 1; p <= p1.totalPaginas; p++) todosIds.push(...(await pagina(x, `pagina=${p}&limite=4`)).itens.map((a) => a.id));
+  assert.equal(todosIds.length, inteira.length, "todas as páginas somam o total");
+  assert.equal(new Set(todosIds).size, todosIds.length, "sem repetir alerta entre páginas");
+  assert.deepEqual([...todosIds].sort((a, b) => a - b), inteira.map((a) => a.id).sort((a, b) => a - b), "mesmos alertas da lista inteira");
+  assert.deepEqual(todosIds, inteira.map((a) => a.id), "mesma ordem padrão da lista inteira (crítico primeiro, mais novo primeiro)");
+  assert.deepEqual(Object.keys(p1.itens[0].container).sort(), Object.keys(inteira[0].container).sort(), "mesmo formato de cada alerta");
+
+  // ---- Ordenação no banco ----
+  const numeros = async (q) => (await pagina(x, `pagina=1&limite=100&${q}`)).itens.map((a) => a.container.numero);
+  const asc = await numeros("ordem=container&dir=asc");
+  assert.deepEqual(asc, [...asc].sort(), "por container crescente");
+  assert.deepEqual(await numeros("ordem=container&dir=desc"), [...asc].reverse(), "por container decrescente");
+  const abertos = (await pagina(x, "pagina=1&limite=100&ordem=aberto&dir=asc")).itens.map((a) => +new Date(a.abertoEm));
+  assert.deepEqual(abertos, [...abertos].sort((a, b) => a - b), "mais antigo primeiro no crescente");
+  const crit = (await pagina(x, "pagina=1&limite=100&ordem=nivel&dir=asc")).itens.map((a) => a.nivel);
+  assert.deepEqual(crit, [...crit].sort((a, b) => (a === "CRITICO" ? 0 : 1) - (b === "CRITICO" ? 0 : 1)), "crítico primeiro no crescente");
+  const alvo = inteira.find((a) => a.nivel === "CRITICO") ?? inteira[0];
+  assert.equal((await x.post(`/api/alertas/${alvo.id}/reconhecer`).send({ acaoTomada: "teste 3.11" })).status, 200);
+  const trat = (await pagina(x, "pagina=1&limite=100&ordem=tratamento&dir=asc")).itens.map((a) => Boolean(a.reconhecidoEm));
+  assert.deepEqual(trat, [...trat].sort((a, b) => a - b), "pendentes primeiro no crescente");
+  assert.equal(trat.at(-1), true);
+  assert.equal((await pagina(x, "pagina=1&limite=100&ordem=tratamento&dir=desc")).itens[0].reconhecidoEm !== null, true, "reconhecidos primeiro no decrescente");
+  // Filtros, limites e entradas ruins
+  const doTipo = await pagina(x, "pagina=1&limite=100&tipo=ATRASO_COLETA");
+  assert.ok(doTipo.itens.length > 0 && doTipo.itens.every((a) => a.tipo === "ATRASO_COLETA"));
+  const doGrupo = await pagina(x, `pagina=1&limite=100&grupoId=${cx.grupos[0]}`);
+  assert.ok(doGrupo.total > 0 && doGrupo.total < inteira.length && doGrupo.itens.every((a) => cX.some((c) => c.id === a.containerId && c.grupoId === cx.grupos[0])));
+  assert.equal((await x.get("/api/alertas?pagina=1&ordem=senha")).status, 400, "chave de ordenação fora da lista");
+  assert.equal((await x.get("/api/alertas?pagina=1&ordem=nivel;DROP")).status, 400);
+  assert.equal((await pagina(x, "pagina=1&limite=100000")).limite, 100, "limite máximo de 100");
+  const alem = await pagina(x, "pagina=999&limite=4");
+  assert.equal(alem.pagina, alem.totalPaginas, "página além do fim devolve a última");
+  assert.equal((await pagina(x, "estado=historico&pagina=1&limite=5")).itens.length, 0, "ainda não há alerta encerrado");
+
+  // ---- Isolamento dos alertas ----
+  const deY = await pagina(y, "pagina=1&limite=100");
+  assert.equal(deY.itens.every((a) => cY.some((c) => c.id === a.containerId)), true, "Y só vê containers dele");
+  assert.equal(deY.itens.some((a) => todosIds.includes(a.id)), false, "nenhum alerta de X aparece para Y");
+  assert.equal((await pagina(y, `pagina=1&limite=100&grupoId=${cx.grupos[0]}`)).total, 0, "grupo de X pedido por Y: vazio");
+  assert.equal((await pagina(y, "pagina=1&limite=100&ordem=container&dir=asc")).itens.some((a) => /^AXA/.test(a.container.numero)), false);
+
+  // ---- Resumo do sino: contagens no banco, mesmos números da lista inteira ----
+  const lista2 = (await x.get("/api/alertas")).body;
+  const resumo = (await x.get("/api/alertas/resumo")).body;
+  const criticosPend = lista2.filter((a) => a.nivel === "CRITICO" && !a.reconhecidoEm);
+  assert.equal(resumo.total, lista2.length);
+  assert.equal(resumo.criticos, lista2.filter((a) => a.nivel === "CRITICO").length);
+  assert.equal(resumo.naoReconhecidos, lista2.filter((a) => !a.reconhecidoEm).length);
+  assert.equal(resumo.ultimoCriticoNaoReconhecidoId, criticosPend.length ? Math.max(...criticosPend.map((a) => a.id)) : 0);
+  assert.deepEqual(resumo.criticosNaoReconhecidos.map((a) => a.id).sort((a, b) => a - b), criticosPend.map((a) => a.id).sort((a, b) => a - b));
+  assert.ok(resumo.criticosNaoReconhecidos.length <= 50);
+  const resumoY = (await y.get("/api/alertas/resumo")).body;
+  assert.equal(resumoY.total, deY.total, "o resumo de Y é só de Y");
+  assert.equal(resumoY.criticosNaoReconhecidos.some((a) => todosIds.includes(a.id)), false);
+
+  // ---- Painel com cache: por cliente, mesma resposta em chamadas simultâneas, valores iguais aos sem cache ----
+  const anterior = process.env.PAINEL_CACHE_SEGUNDOS;
+  const forma = (r) => ({
+    ativos: r.totais.ativos, semaforo: r.totais.semaforo, porStatus: r.totais.porStatus,
+    grupos: r.grupos.map((g) => [g.id, g.total, g.semaforo, g.fases, g.ocultos, g.containers.map((c) => c.id)]),
+  });
+  try {
+    process.env.PAINEL_CACHE_SEGUNDOS = "60";
+    limparCachePainel();
+    const p0 = (await x.get("/api/painel")).body;
+    assert.equal(p0.totais.ativos, 9);
+    const simult = await Promise.all([1, 2, 3, 4, 5].map(() => x.get("/api/painel")));
+    assert.equal(new Set(simult.map((r) => r.body.geradoEm)).size, 1, "chamadas seguidas usam o mesmo cálculo");
+    await criar(x, cx, "AXB", 20, 3);
+    assert.equal((await x.get("/api/painel")).body.totais.ativos, 9, "dentro do prazo do cache ainda mostra o cálculo anterior");
+    const pY = (await y.get("/api/painel")).body;
+    assert.equal(pY.totais.ativos, 3, "o cache é por cliente: Y não recebe os números de X");
+    assert.equal(JSON.stringify(pY).includes("Cli X311"), false);
+    assert.equal(JSON.stringify((await x.get("/api/painel")).body).includes("Cli Y311"), false);
+
+    // Cada filtro sobre o cálculo guardado dá exatamente o que dá sem cache
+    const filtros = ["", "?regiao=sem", `?grupoId=${cx.grupos[0]}&soProblemas=1&porFase=2`, `?grupoId=${cx.grupos[1]}&porFase=1`, "?soProblemas=1"];
+    limparCachePainel();
+    const comCache = []; for (const f of filtros) comCache.push(forma((await x.get(`/api/painel${f}`)).body));
+    process.env.PAINEL_CACHE_SEGUNDOS = "0";
+    for (const [i, f] of filtros.entries()) assert.deepEqual(comCache[i], forma((await x.get(`/api/painel${f}`)).body), `painel${f}`);
+    assert.equal(comCache[0].ativos, 10, "depois de expirar, o container novo aparece");
+    assert.ok(comCache[3].grupos.some((g) => g[4].chegando + g[4].fabrica + g[4].porto > 0), "porFase=1 deixa cards de fora e conta o '+N'");
+    // Um pedido filtrado não limita o seguinte (cada requisição trabalha numa cópia)
+    process.env.PAINEL_CACHE_SEGUNDOS = "60"; limparCachePainel();
+    const a1 = forma((await x.get(`/api/painel?grupoId=${cx.grupos[0]}&porFase=1`)).body);
+    const a2 = forma((await x.get("/api/painel")).body);
+    assert.ok(a2.grupos.flatMap((g) => g[5]).length > a1.grupos.flatMap((g) => g[5]).length);
+    assert.equal(a2.grupos.every((g) => g[4].chegando + g[4].fabrica + g[4].porto === 0), true);
+  } finally {
+    process.env.PAINEL_CACHE_SEGUNDOS = anterior ?? "0";
+    limparCachePainel();
+  }
+
+  // ---- Resumo: a varredura (dados do começo) não sobrescreve um resumo mais novo (corrida com a leitura) ----
+  const { sincronizarTodos: varrerTodos } = await import("./lib/alertas.js");
+  const alvoResumo = cX[0].id;
+  const resumoDe = () => comOrganizacao(orgX.id, () => bruto.container.findUnique({ where: { id: alvoResumo }, select: { ultimaTemperatura: true } }));
+  await comOrganizacao(orgX.id, () => bruto.container.updateMany({ where: { id: alvoResumo }, data: { ultimaTemperatura: -99, resumoEm: new Date(Date.now() + H) } }));
+  await comOrganizacao(orgX.id, () => varrerTodos());
+  assert.equal(Number((await resumoDe()).ultimaTemperatura), -99, "resumo mais novo que a varredura: não é sobrescrito");
+  await comOrganizacao(orgX.id, () => bruto.container.updateMany({ where: { id: alvoResumo }, data: { resumoEm: new Date(Date.now() - H) } }));
+  await comOrganizacao(orgX.id, () => varrerTodos());
+  assert.equal((await resumoDe()).ultimaTemperatura, null, "resumo mais velho: a varredura atualiza");
+  // ---- Varreduras completas não se empilham: 8 pedidos ao mesmo tempo = a atual + uma única rodada seguinte ----
+  const juntos = await comOrganizacao(orgX.id, () => Promise.all(Array.from({ length: 8 }, () => varrerTodos())));
+  assert.equal(new Set(juntos).size, 2, "no máximo 2 varreduras reais para 8 pedidos simultâneos");
+  assert.ok(juntos.every((r) => r.containers > 0));
+  const [rX, rY] = await Promise.all([comOrganizacao(orgX.id, () => varrerTodos()), comOrganizacao(orgY.id, () => varrerTodos())]);
+  assert.ok(rX !== rY && rX.containers > rY.containers, "organizações diferentes não esperam uma pela outra e cada uma varre só o que é dela");
+  // ---- Transação interativa passa de 5 s (padrão do Prisma) sem estourar ----
+  const contagem = await comOrganizacao(orgX.id, () => bruto.$transaction(async (tx) => {
+    const antes = await tx.container.count();
+    await new Promise((r) => setTimeout(r, 5500));
+    return [antes, await tx.container.count()];
+  }));
+  assert.equal(contagem[0], contagem[1], "a transação seguiu aberta depois de 5,5 s");
+
+  const ativosX = (await x.get("/api/containers?situacao=ativos")).body;
+  for (const c of ativosX) await x.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.11" });
+  for (const c of cY) await y.post(`/api/containers/${c.id}/cancelar`).send({ motivo: "fim do teste 3.11" });
+});
+
+test("alertas: filtro por tipo aceita todos os tipos do banco (inclui ENTREGA_A_DEFINIR)", async () => {
+  const { TipoAlerta } = await import("@prisma/client");
+  for (const tipo of Object.values(TipoAlerta)) {
+    assert.equal((await agentes.OPERADOR.get(`/api/alertas?tipo=${tipo}`)).status, 200, tipo);
+    assert.equal((await agentes.OPERADOR.get(`/api/alertas?tipo=${tipo}&pagina=1`)).status, 200, `${tipo} (paginado)`);
+  }
+  assert.equal((await agentes.OPERADOR.get("/api/alertas?tipo=INVENTADO")).status, 400);
 });

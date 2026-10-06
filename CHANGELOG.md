@@ -4,6 +4,54 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.11.0 — 06/10/2026 (tag `v3.11.0`) — desempenho com muitos containers: painel, alertas, varredura e transações
+
+Origem: teste das 3 empresas com ~3 a 5 vezes mais dados (3 × 2.500 containers, ~3.100 alertas abertos por empresa,
+~59 mil leituras), 12 e 30 usuários simultâneos. O isolamento seguiu perfeito (0 vazamentos, 0 de 342 ataques cruzados
+aceitos), mas o servidor saturava em ~10 requisições por segundo e apareceram quatro problemas reais:
+
+- **Painel (`GET /api/painel`, ~650 ms por chamada, mesmo para uma região vazia):** ele soma todos os containers
+  ativos. O cálculo agora é guardado por organização por `PAINEL_CACHE_SEGUNDOS` (padrão 10; `0` desliga) e chamadas
+  simultâneas dividem o mesmo cálculo; cada filtro (região, ponto, só problemas, `porFase`) é aplicado sobre o cálculo
+  guardado, numa cópia por requisição. A chave do cache é sempre a organização do contexto (nunca um parâmetro). Custo:
+  a Home pode mostrar até 10 s de atraso (ela já atualiza sozinha a cada 60 s). Ficou em ~15 a 40 ms quando em cache.
+- **Alertas:** `GET /api/alertas` devolvia todos os abertos (~730 ms e 2 MB com ~3.100). Agora, com `pagina`/`limite`,
+  devolve `{ itens, total, pagina, limite, totalPaginas }`, com filtros e ordenação por 7 chaves fixas feitas no banco
+  (limite 100, desempate estável); sem esses parâmetros continua igual (lista inteira, para quem consome a API). A
+  tela de Alertas usa a página. `GET /api/alertas/resumo` (todo navegador aberto consulta a cada poucos segundos) passou
+  a contar no banco em vez de ler todos os alertas abertos (4 KB e ~35 ms, antes 176 KB); a lista de críticos não
+  reconhecidos vem limitada aos 50 mais novos e há `ultimoCriticoNaoReconhecidoId`, que a tela usa para o aviso de novo
+  crítico (os ids só crescem). A ordenação por Tipo é pela ordem do cadastro do tipo, não pelo rótulo em português.
+- **Varreduras empilhadas derrubavam o servidor:** salvar Configurações dispara uma varredura completa (carrega a
+  organização inteira na memória) sem esperar a anterior. Salvas seguidas empilharam varreduras até o Node cair com
+  "JavaScript heap out of memory", tirando todos os clientes do ar (um administrador autenticado conseguiria isso).
+  Agora `sincronizarTodos` roda uma varredura por organização por vez; quem chega durante ela espera e os pedidos
+  seguintes dividem uma única rodada (que já vale a configuração mais nova). Com 809 salvas em 274 s o servidor
+  ficou de pé, com pico de 276 MB. A varredura restrita a ids (importação) não entra na fila.
+- **Resumo desatualizado (bug da 3.10.0):** a varredura carrega containers e leituras no começo e só chega em cada
+  container depois; se uma leitura entrava nesse meio tempo, a varredura sobrescrevia o resumo novo pelo antigo e a
+  lista mostrava a temperatura anterior (9 containers numa rodada do teste) até a varredura seguinte. O resumo agora só
+  é gravado se não houver um mais novo (`resumoEm`). Repetido com 2.400 leituras em paralelo a varreduras: 0 diferenças
+  entre a lista nova e o cálculo na hora.
+- **Transação interativa de 5 s (padrão do Prisma) estourava com o servidor ocupado:** 2 de 49 criações de container
+  davam 500 com 30 usuários simultâneos (a transação tem 5 consultas; o tempo era a fila do Node). O cliente do Prisma passou
+  a usar `maxWait` 10 s e `timeout` 30 s para todas as transações. Nada é gravado pela metade quando uma estoura.
+- **Medido (Postgres local, mesmo notebook gerando a carga; 3 empresas com 2.480 ativos cada):**
+  - 12 usuários: **~10 para 41 a 67 requisições/s**; tempo típico do painel 2,1 s → 50 a 100 ms, da lista de alertas
+    1,9 s → 100 a 190 ms, da ficha 0,7 a 0,9 s → 130 a 240 ms.
+  - 30 usuários + 8 criando containers: **6,8 para 61 requisições/s**, 49 → 312 containers criados em 75 s, 0 erros
+    (antes 2 respostas 500), tempo típico de criação 12,9 s → 2,1 s.
+  - Alertas paginados: 707 ms / 2,1 MB → 81 ms / 13 KB por página.
+- **Ainda de pé:** a criação de um container leva ~390 ms mesmo sem concorrência com 2.480 containers ativos (prepara a
+  rota, sincroniza e remonta a ficha); `GET /api/containers` (lista inteira) segue disponível só para API e leva 2,5 s
+  com 2.500 ativos. O teste "v1.2 trajeto com Ponto Fiscal" depende do horário em que roda (falhou às 17h18 e às 17h26 também no
+  `main` puro, e passou em outros horários do mesmo dia): precisa fixar a hora.
+- Sem migração. Novas variáveis: `PAINEL_CACHE_SEGUNDOS` (opcional).
+
+- Revisão antes de publicar: o filtro por tipo da tela de Alertas recusava (400) o tipo "Definir local
+  de entrega" (lista fixa da v3.7 sem ele) — agora aceita todos os tipos do banco; a tela de Alertas não
+  mostra mais "Nenhum alerta aberto" por um instante antes da primeira resposta.
+
 ## 3.10.1 (manutenção: dependência e documentação)
 
 - `uuid` fixado em `^11.1.1` por `overrides` no `package.json` (o `exceljs` 4.4.0 trazia o 8.3.2, com o aviso
