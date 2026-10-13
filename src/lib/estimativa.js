@@ -3,9 +3,15 @@
 //   → [rodagem cheio (+ paradas)] → porto de entrega → [fila/gate] → entrega
 // Paradas (ex.: Ponto Fiscal): rodagem até a parada + tempo parado; com a passagem registrada, o
 // trecho seguinte parte do horário real.
-// Regra de rodagem configurável (Configurações): o caminhão só roda dentro da janela diária
-// (ex.: 05h–22h, horário de Brasília) e faz no máximo `kmPorDia` por dia; fim de semana e
-// feriado rodam normal. Fora da janela ele fica parado e continua no dia seguinte.
+// Regra de rodagem configurável (Configurações → Previsão de rota), em dois modos (v3.13):
+// - JANELA: o caminhão só roda dentro da janela diária (ex.: 05h–22h, horário de Brasília), na
+//   velocidade média configurada, e para ao atingir `kmPorDia` (o que vier primeiro); fim de
+//   semana e feriado rodam normal. Velocidade 0 = automática (kmPorDia ÷ horas da janela, a regra
+//   de antes da v3.13). Fora da janela ou com o km do dia cumprido, continua no dia seguinte.
+// - LIVRE: sem janela e sem teto diário; o tempo de cada trecho é o do serviço de rota (perfil
+//   caminhão), como nos aplicativos de mapa. Sem esse tempo (estimativa em linha reta), usa a
+//   velocidade média (ou VELOCIDADE_LIVRE_PADRAO).
+// Nos dois modos, pausa/descanso opcional: a cada X h de direção, Y min parado.
 import { inicioDoDiaBrasilia } from "./prazos.js";
 import { temOperacao, CAMPO_DATA_STATUS } from "./fluxo.js";
 
@@ -26,37 +32,73 @@ export function haversineKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+// Modo livre sem tempo do serviço de rota e sem velocidade configurada.
+export const VELOCIDADE_LIVRE_PADRAO = 60;
+const modoLivre = (cfg) => cfg.modoRodagem === "LIVRE";
+
 export function janelaHoras(cfg) {
   return (cfg.rodagemFimMin - cfg.rodagemInicioMin) / 60;
 }
 
-// Horas de rodagem (dentro da janela) para percorrer `km`: 1 dia de janela = kmPorDia.
-export function horasDeRodagem(km, cfg) {
-  return (km / cfg.kmPorDia) * janelaHoras(cfg);
+// Velocidade usada no modo janela: a configurada ou, se 0/vazia, km/dia ÷ horas da janela.
+export function velocidadeDaJanela(cfg) {
+  return cfg.velocidadeMediaKmH > 0 ? cfg.velocidadeMediaKmH : cfg.kmPorDia / janelaHoras(cfg);
 }
 
-// Avança `horas` de rodagem a partir de `partida`, respeitando a janela diária em Brasília.
+// Horas de direção para percorrer `km`. `horasRota`: tempo do serviço de rota (só no modo livre).
+export function horasDeRodagem(km, cfg, horasRota = null) {
+  if (modoLivre(cfg)) {
+    if (horasRota !== null && horasRota !== undefined) return horasRota;
+    return km / (cfg.velocidadeMediaKmH > 0 ? cfg.velocidadeMediaKmH : VELOCIDADE_LIVRE_PADRAO);
+  }
+  return km / velocidadeDaJanela(cfg);
+}
+
+// Avança `horas` de direção a partir de `partida`: no modo janela respeita a janela diária em
+// Brasília e o teto de km do dia; nos dois modos, as pausas (a cada X h de direção, Y min parado).
 export function avancarRodagem(partida, horas, cfg) {
   let t = partida.getTime();
   let restanteMs = horas * HORA;
-  for (let guarda = 0; restanteMs > 0 && guarda < 400; guarda++) {
+  const pausaMs = cfg.pausaAtiva ? (cfg.pausaMinutos ?? 0) * MIN : 0;
+  const pausaACadaMs = pausaMs > 0 && cfg.pausaACadaHoras > 0 ? cfg.pausaACadaHoras * HORA : Infinity;
+  let desdePausaMs = 0;
+  if (modoLivre(cfg)) {
+    while (restanteMs > 0) {
+      const usar = Math.min(restanteMs, pausaACadaMs - desdePausaMs);
+      t += usar;
+      restanteMs -= usar;
+      desdePausaMs += usar;
+      if (restanteMs > 0 && desdePausaMs >= pausaACadaMs) { t += pausaMs; desdePausaMs = 0; }
+    }
+    return new Date(t);
+  }
+  // Teto do dia em horas de direção (km/dia na velocidade da janela).
+  const tetoDiaMs = (cfg.kmPorDia / velocidadeDaJanela(cfg)) * HORA;
+  let diaAtual = null;
+  let rodadoHojeMs = 0;
+  for (let guarda = 0; restanteMs > 0 && guarda < 2000; guarda++) {
     const meiaNoite = inicioDoDiaBrasilia(new Date(t)).getTime();
+    if (meiaNoite !== diaAtual) { diaAtual = meiaNoite; rodadoHojeMs = 0; }
     const abre = meiaNoite + cfg.rodagemInicioMin * MIN;
     const fecha = meiaNoite + cfg.rodagemFimMin * MIN;
-    if (t < abre) t = abre;
-    if (t >= fecha) {
+    if (t < abre) { t = abre; desdePausaMs = 0; } // descansou a noite
+    if (t >= fecha || rodadoHojeMs >= tetoDiaMs - 1) {
       t = meiaNoite + DIA + cfg.rodagemInicioMin * MIN; // abre no dia seguinte
+      desdePausaMs = 0;
       continue;
     }
-    const usar = Math.min(restanteMs, fecha - t);
+    const usar = Math.min(restanteMs, fecha - t, tetoDiaMs - rodadoHojeMs, pausaACadaMs - desdePausaMs);
     t += usar;
     restanteMs -= usar;
+    rodadoHojeMs += usar;
+    desdePausaMs += usar;
+    if (restanteMs > 0 && desdePausaMs >= pausaACadaMs) { t += pausaMs; desdePausaMs = 0; }
   }
   return new Date(t);
 }
 
-export function chegadaDoTrecho(partida, km, cfg) {
-  return avancarRodagem(partida, horasDeRodagem(km, cfg), cfg);
+export function chegadaDoTrecho(partida, km, cfg, horasRota = null) {
+  return avancarRodagem(partida, horasDeRodagem(km, cfg, horasRota), cfg);
 }
 
 // Percentil (nearest-rank). Usado com 80: valor que 80% das passagens não ultrapassaram.
@@ -80,12 +122,12 @@ function nivelRisco(folgaHoras, limiteAtencaoHoras) {
  * passagem (previsão ou horário real). `destinoReal` (etapa já registrada) torna as previsões das
  * paradas não registradas sem sentido (null).
  */
-function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [], nomes, carga, fase, destinoReal, cfg, futuro }) {
+function percorrerPerna({ inicio, kmTotal, horasTotal = null, fonteTotal, paradas = [], trechos = [], nomes, carga, fase, destinoReal, cfg, futuro }) {
   const lista = [];
   const marcos = [];
   const sufixo = carga ? ` (${carga})` : "";
   if (!paradas.length) {
-    const fim = destinoReal ?? futuro(chegadaDoTrecho(inicio, kmTotal, cfg));
+    const fim = destinoReal ?? futuro(chegadaDoTrecho(inicio, kmTotal, cfg, horasTotal));
     lista.push({ etapa: `${nomes.origem} → ${nomes.destino}${sufixo}`, km: kmTotal, fonte: fonteTotal, inicio, fim, real: Boolean(destinoReal) });
     return { fim, trechos: lista, marcos };
   }
@@ -94,7 +136,7 @@ function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [
   paradas.forEach((p, i) => {
     const km = trechos[i]?.km ?? null;
     const real = p.passouEm ? new Date(p.passouEm) : null;
-    const chegada = km === null ? t : futuro(chegadaDoTrecho(t, km, cfg));
+    const chegada = km === null ? t : futuro(chegadaDoTrecho(t, km, cfg, trechos[i]?.horas ?? null));
     lista.push({ etapa: `${origem} → ${p.nome}${sufixo}`, km, fonte: trechos[i]?.fonte ?? null, inicio: t, fim: real ?? chegada, real: Boolean(real) });
     const saida = real ?? futuro(new Date(chegada.getTime() + p.tempoHoras * HORA));
     lista.push({ etapa: `Parada: ${p.nome}`, horas: p.tempoHoras, inicio: real ?? chegada, fim: saida, real: Boolean(real), parada: true });
@@ -103,7 +145,7 @@ function percorrerPerna({ inicio, kmTotal, fonteTotal, paradas = [], trechos = [
     origem = p.nome;
   });
   const ultimo = trechos[paradas.length] ?? null;
-  const fim = destinoReal ?? futuro(chegadaDoTrecho(t, ultimo?.km ?? 0, cfg));
+  const fim = destinoReal ?? futuro(chegadaDoTrecho(t, ultimo?.km ?? 0, cfg, ultimo?.horas ?? null));
   lista.push({ etapa: `${origem} → ${nomes.destino}${sufixo}`, km: ultimo?.km ?? null, fonte: ultimo?.fonte ?? null, inicio: t, fim, real: Boolean(destinoReal) });
   return { fim, trechos: lista, marcos };
 }
@@ -139,14 +181,14 @@ export function estimarCiclo(c, ctx, agora, cfg) {
   // Ainda não coletado: simula a coleta na data programada (ou agora, se ela já passou/não existe).
   const coleta = aconteceu(c.coletadoEm) ?? futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
   const ida = percorrerPerna({
-    inicio: coleta, kmTotal: ctx.kmIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
+    inicio: coleta, kmTotal: ctx.kmIda, horasTotal: ctx.horasIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
     nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "carregamento" }, carga: exportacao ? "vazio" : null, fase: "ANTES_CARREGAMENTO",
     destinoReal: aconteceu(c.chegadaFabricaEm), cfg, futuro,
   });
   const chegadaFabrica = ida.fim;
   const saidaFabrica = aconteceu(c.saidaFabricaEm) ?? futuro(new Date(chegadaFabrica.getTime() + ctx.tempoFabricaHoras * HORA));
   const volta = percorrerPerna({
-    inicio: saidaFabrica, kmTotal: ctx.kmVolta, fonteTotal: ctx.fonteVolta, paradas: ctx.paradasVolta, trechos: ctx.trechosVolta,
+    inicio: saidaFabrica, kmTotal: ctx.kmVolta, horasTotal: ctx.horasVolta, fonteTotal: ctx.fonteVolta, paradas: ctx.paradasVolta, trechos: ctx.trechosVolta,
     nomes: { origem: "Carregamento", origemCurto: "Carregamento", destino: "entrega" }, carga: exportacao ? "cheio" : null, fase: "APOS_CARREGAMENTO",
     destinoReal: null, cfg, futuro,
   });
@@ -169,7 +211,7 @@ function estimarParcial(c, ctx, agora, cfg, exportacao) {
   const futuro = (d) => maisTarde(d, agora);
   const coleta = aconteceu(c.coletadoEm) ?? futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
   const ida = percorrerPerna({
-    inicio: coleta, kmTotal: ctx.kmIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
+    inicio: coleta, kmTotal: ctx.kmIda, horasTotal: ctx.horasIda, fonteTotal: ctx.fonteIda, paradas: ctx.paradasIda, trechos: ctx.trechosIda,
     nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "carregamento" }, carga: exportacao ? "vazio" : null, fase: "ANTES_CARREGAMENTO",
     destinoReal: aconteceu(c.chegadaFabricaEm), cfg, futuro,
   });
@@ -217,7 +259,7 @@ function estimarDireto(c, ctx, agora, cfg) {
   const futuro = (d) => maisTarde(d, agora);
   const coleta = c.coletadoEm ? new Date(c.coletadoEm) : futuro(c.coletaProgramadaEm ? new Date(c.coletaProgramadaEm) : agora);
   const perna = percorrerPerna({
-    inicio: coleta, kmTotal: ctx.kmDireto, fonteTotal: ctx.fonteDireto, paradas: ctx.paradasDireto, trechos: ctx.trechosDireto,
+    inicio: coleta, kmTotal: ctx.kmDireto, horasTotal: ctx.horasDireto, fonteTotal: ctx.fonteDireto, paradas: ctx.paradasDireto, trechos: ctx.trechosDireto,
     nomes: { origem: "Retirada", origemCurto: "Retirada", destino: "entrega" }, carga: null, fase: "ANTES_CARREGAMENTO",
     destinoReal: null, cfg, futuro,
   });

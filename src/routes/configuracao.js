@@ -33,6 +33,15 @@ configuracaoRouter.put("/", requirePermissao("administrar"), asyncHandler(async 
   if ("rodagemInicioMin" in b) rota.rodagemInicioMin = inteiro(b.rodagemInicioMin, "Início da rodagem", { obrigatorio: true, min: 0, max: 1439 });
   if ("rodagemFimMin" in b) rota.rodagemFimMin = inteiro(b.rodagemFimMin, "Fim da rodagem", { obrigatorio: true, min: 1, max: 1440 });
   if ("kmPorDia" in b) rota.kmPorDia = decimal(b.kmPorDia, "Km por dia", { obrigatorio: true, min: 50, max: 2000 });
+  if ("modoRodagem" in b) {
+    if (!["JANELA", "LIVRE"].includes(b.modoRodagem)) throw erroHttp(400, "Modo de cálculo da rota inválido (JANELA ou LIVRE).");
+    rota.modoRodagem = b.modoRodagem;
+  }
+  if ("velocidadeMediaKmH" in b) rota.velocidadeMediaKmH = decimal(b.velocidadeMediaKmH, "Velocidade média (km/h)", { min: 0, max: 120 }) ?? 0;
+  if (rota.velocidadeMediaKmH > 0 && rota.velocidadeMediaKmH < 10) throw erroHttp(400, "Velocidade média: informe pelo menos 10 km/h (ou 0 para automática).");
+  if ("pausaAtiva" in b) rota.pausaAtiva = b.pausaAtiva === true || b.pausaAtiva === 1 || b.pausaAtiva === "1" ? 1 : 0;
+  if ("pausaACadaHoras" in b) rota.pausaACadaHoras = decimal(b.pausaACadaHoras, "Pausa a cada (h de direção)", { obrigatorio: true, min: 0.5, max: 24 });
+  if ("pausaMinutos" in b) rota.pausaMinutos = inteiro(b.pausaMinutos, "Duração da pausa (min)", { obrigatorio: true, min: 5, max: 720 });
   if ("filaPortoHorasPadrao" in b) rota.filaPortoHorasPadrao = decimal(b.filaPortoHorasPadrao, "Fila padrão no porto (h)", { obrigatorio: true, min: 0, max: 240 });
   if ("fatorLinhaReta" in b) rota.fatorLinhaReta = decimal(b.fatorLinhaReta, "Fator da estimativa em linha reta", { obrigatorio: true, min: 1, max: 3 });
   if ("riscoFolgaHoras" in b) rota.riscoFolgaHoras = decimal(b.riscoFolgaHoras, "Folga mínima para alertar risco (h)", { obrigatorio: true, min: 0, max: 720 });
