@@ -18,6 +18,12 @@ export function configRodagem(config) {
     rodagemFimMin: config.rodagemFimMin,
     kmPorDia: config.kmPorDia,
     riscoFolgaHoras: config.riscoFolgaHoras,
+    // v3.13: modo (JANELA ou LIVRE), velocidade média e pausa/descanso.
+    modoRodagem: config.modoRodagem,
+    velocidadeMediaKmH: config.velocidadeMediaKmH,
+    pausaAtiva: Boolean(config.pausaAtiva),
+    pausaACadaHoras: config.pausaACadaHoras,
+    pausaMinutos: config.pausaMinutos,
   };
 }
 
@@ -59,15 +65,18 @@ async function paradasPorContainer(containerIds) {
   return mapa;
 }
 
-// Trechos de uma perna (ida ou volta) passando pelas paradas: km de cada trecho + total.
+// Trechos de uma perna (ida ou volta) passando pelas paradas: km (e tempo do serviço de rota,
+// quando houver) de cada trecho + total.
 function perna(origemId, destinoId, paradas, km) {
   const seq = [origemId, ...paradas.map((p) => p.localId), destinoId];
   const trechos = seq.slice(1).map((d, i) => km.get(chavePar(seq[i], d)) ?? null);
   const completo = trechos.every(Boolean);
   return {
     km: completo ? trechos.reduce((s, x) => s + x.km, 0) : null,
+    // Tempo total do serviço de rota (h): só se todos os trechos tiverem (senão, o modo livre usa a velocidade).
+    horas: completo && trechos.every((x) => x.horas !== null) ? trechos.reduce((s, x) => s + x.horas, 0) : null,
     fonte: completo ? (trechos.some((x) => x.fonte === "ESTIMADA") ? "ESTIMADA" : trechos[0]?.fonte ?? null) : null,
-    trechos: trechos.map((x) => (x ? { km: x.km, fonte: x.fonte } : null)),
+    trechos: trechos.map((x) => (x ? { km: x.km, fonte: x.fonte, horas: x.horas } : null)),
     paradas: paradas.map((p) => ({
       id: p.id, localId: p.localId, nome: p.local.nome, passouEm: p.passouEm,
       tempoHoras: tempoParadaDoLocal(p.local),
@@ -96,7 +105,7 @@ export async function montarContextos(containers, config) {
     tempoNaFabricaPorLocal([...new Set(comTrajeto.map((c) => c.localCarregamentoId).filter(Boolean))]),
   ]);
   // Ordenado por data: o mais recente de cada par (em qualquer sentido) prevalece.
-  const km = new Map(distancias.map((d) => [chavePar(d.origemId, d.destinoId), { km: Number(d.distanciaKm), fonte: d.fonte }]));
+  const km = new Map(distancias.map((d) => [chavePar(d.origemId, d.destinoId), { km: Number(d.distanciaKm), fonte: d.fonte, horas: d.duracaoMin === null ? null : Number(d.duracaoMin) / 60 }]));
   const fila = new Map(portos.map((p) => [p.id, p.filaHoras === null ? null : Number(p.filaHoras)]));
 
   const contextos = new Map();
@@ -111,8 +120,10 @@ export async function montarContextos(containers, config) {
     const historico = tempos.get(c.localCarregamentoId);
     contextos.set(c.id, {
       kmIda: ida?.km ?? null,
+      horasIda: ida?.horas ?? null,
       fonteIda: ida?.fonte ?? null,
       kmVolta: volta?.km ?? null,
+      horasVolta: volta?.horas ?? null,
       fonteVolta: volta?.fonte ?? null,
       // Paradas (ex.: Ponto Fiscal) e o km de cada trecho entre elas (vazio = sem paradas).
       paradasIda: ida?.paradas ?? [],
@@ -120,6 +131,7 @@ export async function montarContextos(containers, config) {
       paradasVolta: volta?.paradas ?? [],
       trechosVolta: volta?.trechos ?? [],
       kmDireto: direto?.km ?? null,
+      horasDireto: direto?.horas ?? null,
       fonteDireto: direto?.fonte ?? null,
       paradasDireto: direto?.paradas ?? [],
       trechosDireto: direto?.trechos ?? [],

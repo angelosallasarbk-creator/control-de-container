@@ -34,6 +34,8 @@ const irPara = (chave) => router.replace({ query: { ...route.query, aba: chave }
 const podeEditar = computed(() => auth.pode("administrar"));
 // Liga/desliga do rastreamento (o servidor guarda 1/0).
 const smsLigado = computed({ get: () => Boolean(cfg.rastreioSmsAtivo), set: (v) => (cfg.rastreioSmsAtivo = v ? 1 : 0) });
+// Previsão de rota (v3.13): pausa/descanso ligada/desligada (1/0) e velocidade efetiva para a dica.
+const pausaLigada = computed({ get: () => Boolean(cfg.pausaAtiva), set: (v) => (cfg.pausaAtiva = v ? 1 : 0) });
 const personalizado = computed({ get: () => Boolean(cfg.rastreioPersonalizado), set: (v) => (cfg.rastreioPersonalizado = v ? 1 : 0) });
 
 // ---------- Regras (uma única configuração, salva por aba) ----------
@@ -51,6 +53,11 @@ function aplicar(c) {
 }
 const janelaHoras = computed(() => (horaParaMinutos(fimRodagem.value) - horaParaMinutos(inicioRodagem.value)) / 60);
 const mediaKmH = computed(() => (janelaHoras.value > 0 ? cfg.kmPorDia / janelaHoras.value : 0));
+const velocidadeJanela = computed(() => (cfg.velocidadeMediaKmH > 0 ? cfg.velocidadeMediaKmH : mediaKmH.value));
+// Horas rodando por dia no modo janela: a janela inteira ou até cumprir o km do dia, o que vier primeiro.
+const horasRodandoDia = computed(() => (velocidadeJanela.value > 0 ? Math.min(janelaHoras.value, cfg.kmPorDia / velocidadeJanela.value) : 0));
+const fmtH = (h) => { const m = Math.round(h * 60); return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`; };
+const fmt1 = (n) => Number(n).toFixed(1).replace(".0", "").replace(".", ",");
 
 async function salvar() {
   erro.value = null;
@@ -153,17 +160,68 @@ const pag = usePaginacao(() => logsFiltrados.value, "log");
   <form v-if="aba === 'rota'" class="card" @submit.prevent="salvar">
     <h2>Previsão de rota</h2>
     <div class="mudo pequeno" style="margin: -6px 0 10px">
-      Usada para prever a entrega no porto e o risco de demurrage. O caminhão só roda dentro da janela de horário (todos os dias,
-      inclusive fim de semana e feriado) e faz no máximo os km por dia informados; fora da janela fica parado.
+      Usada para prever a entrega no porto e o risco de demurrage. Escolha como o tempo de viagem é calculado.
     </div>
     <div class="grade-form">
+      <div class="campo" style="grid-column: 1 / -1; max-width: 520px">
+        <label for="cfg-modo-rodagem">Modo de cálculo do tempo de viagem</label>
+        <select id="cfg-modo-rodagem" v-model="cfg.modoRodagem" :disabled="!podeEditar">
+          <option value="JANELA">Janela de viagem — horário, km por dia e velocidade</option>
+          <option value="LIVRE">Livre — tempo do serviço de rota, sem janela</option>
+        </select>
+        <span v-if="cfg.modoRodagem === 'LIVRE'" class="dica">
+          O caminhão roda sem parar à noite e sem limite de km por dia; o tempo de cada trecho é o calculado pelo serviço de rota
+          para caminhão (como nos aplicativos de mapa). Só a pausa/descanso abaixo é acrescentada.
+        </span>
+        <span v-else class="dica">
+          O caminhão só roda dentro do horário (todos os dias, inclusive fim de semana e feriado), na velocidade média, e para ao
+          cumprir os km do dia — o que vier primeiro. Fora disso fica parado e continua no dia seguinte.
+        </span>
+      </div>
+    </div>
+    <div v-if="cfg.modoRodagem !== 'LIVRE'" class="grade-form" style="margin-top: 12px">
       <div class="campo"><label>Rodagem: início</label><input v-model="inicioRodagem" type="time" required :disabled="!podeEditar" /></div>
       <div class="campo"><label>Rodagem: fim</label><input v-model="fimRodagem" type="time" required :disabled="!podeEditar" /></div>
       <div class="campo">
         <label>Km máximos por dia</label>
         <input v-model.number="cfg.kmPorDia" type="number" min="50" max="2000" step="10" required :disabled="!podeEditar" />
-        <span class="dica">Janela de {{ janelaHoras }}h → média de {{ mediaKmH.toFixed(1).replace(".", ",") }} km/h rodando.</span>
       </div>
+      <div class="campo">
+        <label>Velocidade média (km/h)</label>
+        <input v-model.number="cfg.velocidadeMediaKmH" type="number" min="0" max="120" step="1" required :disabled="!podeEditar" />
+        <span class="dica">
+          <template v-if="cfg.velocidadeMediaKmH > 0">Roda até {{ fmtH(horasRodandoDia) }} por dia ({{ fmt1(Math.min(cfg.kmPorDia, velocidadeJanela * janelaHoras)) }} km).</template>
+          <template v-else>0 = automática: km/dia ÷ janela de {{ fmt1(janelaHoras) }}h = {{ fmt1(mediaKmH) }} km/h.</template>
+        </span>
+      </div>
+    </div>
+    <div v-else class="grade-form" style="margin-top: 12px">
+      <div class="campo">
+        <label>Velocidade média sem tempo do serviço de rota (km/h)</label>
+        <input v-model.number="cfg.velocidadeMediaKmH" type="number" min="0" max="120" step="1" required :disabled="!podeEditar" />
+        <span class="dica">Só quando o serviço de rota não informa o tempo (estimativa em linha reta). 0 = 60 km/h.</span>
+      </div>
+    </div>
+
+    <h3 class="subtitulo">Pausa / descanso</h3>
+    <label class="chave-linha">
+      <input v-model="pausaLigada" type="checkbox" :disabled="!podeEditar" />
+      <span>Considerar pausas do motorista</span>
+    </label>
+    <div v-if="pausaLigada" class="grade-form" style="margin-top: 8px">
+      <div class="campo">
+        <label>Pausa a cada (horas de direção)</label>
+        <input v-model.number="cfg.pausaACadaHoras" type="number" min="0.5" max="24" step="0.5" required :disabled="!podeEditar" />
+      </div>
+      <div class="campo">
+        <label>Duração da pausa (minutos)</label>
+        <input v-model.number="cfg.pausaMinutos" type="number" min="5" max="720" step="5" required :disabled="!podeEditar" />
+        <span class="dica">Lei do Motorista: 30 min a cada 5h30 de direção.</span>
+      </div>
+    </div>
+
+    <h3 class="subtitulo">Demais regras</h3>
+    <div class="grade-form">
       <div class="campo">
         <label>Fila / gate padrão no porto (h)</label>
         <input v-model.number="cfg.filaPortoHorasPadrao" type="number" min="0" max="240" step="0.5" required :disabled="!podeEditar" />

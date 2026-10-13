@@ -15,6 +15,15 @@ export const CONFIG_PADRAO = {
   rodagemInicioMin: 300, // 05:00
   rodagemFimMin: 1320, // 22:00
   kmPorDia: 500,
+  // v3.13: modo de cálculo — "JANELA" (janela + km/dia + velocidade) ou "LIVRE" (tempo do serviço
+  // de rota, sem janela). Velocidade média 0 = automática (janela: km/dia ÷ horas da janela;
+  // livre: só usada sem tempo do serviço de rota, padrão 60 km/h).
+  modoRodagem: "JANELA",
+  velocidadeMediaKmH: 0,
+  // Pausa/descanso (1 = ligada): a cada X h de direção, Y min parado (Lei do Motorista: 30 min a cada 5h30).
+  pausaAtiva: 0,
+  pausaACadaHoras: 5.5,
+  pausaMinutos: 30,
   filaPortoHorasPadrao: 4,
   fatorLinhaReta: 1.3,
   riscoFolgaHoras: 24,

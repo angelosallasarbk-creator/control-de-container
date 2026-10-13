@@ -1,7 +1,8 @@
 // Distância rodoviária entre Locais, com cache em DistanciaRota.
 // Fonte principal: OpenRouteService (perfil caminhão, plano gratuito, chave em ORS_API_KEY).
 // Sem chave ou com falha: linha reta × fatorLinhaReta (fonte ESTIMADA), retentada depois.
-// Do ORS usamos só a DISTÂNCIA; o tempo sai da regra de rodagem configurável (estimativa.js).
+// Do ORS usamos a DISTÂNCIA e (v3.13) o TEMPO de viagem: o tempo só entra no modo "livre" da
+// previsão; no modo janela o tempo sai da regra de rodagem configurável (estimativa.js).
 import { prisma } from "./prisma.js";
 import { haversineKm } from "./estimativa.js";
 import { lerConfiguracao } from "./configuracao.js";
@@ -36,7 +37,7 @@ async function buscarJson(url, opcoes = {}) {
 const temCoordenadas = (l) => l && l.latitude !== null && l.longitude !== null;
 const ponto = (l) => ({ latitude: Number(l.latitude), longitude: Number(l.longitude) });
 
-async function distanciaOrsKm(origem, destino) {
+async function rotaOrs(origem, destino) {
   const corpo = await buscarJson(`${ORS_URL}/v2/directions/driving-hgv`, {
     method: "POST",
     headers: { Authorization: chaveOrs(), "Content-Type": "application/json" },
@@ -49,24 +50,29 @@ async function distanciaOrsKm(origem, destino) {
     }),
   });
   const metros = corpo?.routes?.[0]?.summary?.distance;
+  const segundos = corpo?.routes?.[0]?.summary?.duration;
   if (typeof metros !== "number") throw new Error("Resposta do serviço de rota sem distância.");
-  return metros / 1000;
+  return { km: metros / 1000, duracaoMin: typeof segundos === "number" ? segundos / 60 : null };
 }
 
 /**
  * Distância em km de origem → destino (ids de Local). Usa o cache; calcula se faltar.
- * Devolve { km, fonte } ou null se algum local não tem coordenadas.
+ * Devolve { km, fonte, duracaoMin } ou null se algum local não tem coordenadas.
  */
 export async function obterDistancia(origemId, destinoId, { forcar = false } = {}) {
   if (!origemId || !destinoId) return null;
-  if (origemId === destinoId) return { km: 0, fonte: "ORS" };
+  if (origemId === destinoId) return { km: 0, fonte: "ORS", duracaoMin: 0 };
 
   const cache = await prisma.distanciaRota.findFirst({
     where: { OR: [{ origemId, destinoId }, { origemId: destinoId, destinoId: origemId }] },
     orderBy: { calculadoEm: "desc" },
   });
   const estimadaVencida = cache?.fonte === "ESTIMADA" && orsConfigurado() && Date.now() - cache.calculadoEm.getTime() > RETENTAR_ESTIMADA_APOS_MS;
-  if (cache && !forcar && !estimadaVencida) return { km: Number(cache.distanciaKm), fonte: cache.fonte };
+  // Cache do ORS anterior à v3.13 não tem o tempo de viagem: recalcula uma vez para obtê-lo.
+  const semDuracao = cache?.fonte === "ORS" && cache.duracaoMin === null && orsConfigurado();
+  if (cache && !forcar && !estimadaVencida && !semDuracao) {
+    return { km: Number(cache.distanciaKm), fonte: cache.fonte, duracaoMin: cache.duracaoMin === null ? null : Number(cache.duracaoMin) };
+  }
 
   const [origem, destino] = await Promise.all([
     prisma.local.findUnique({ where: { id: origemId } }),
@@ -75,10 +81,11 @@ export async function obterDistancia(origemId, destinoId, { forcar = false } = {
   if (!temCoordenadas(origem) || !temCoordenadas(destino)) return null;
 
   let km;
+  let duracaoMin = null;
   let fonte = "ORS";
   if (orsConfigurado()) {
     try {
-      km = await distanciaOrsKm(origem, destino);
+      ({ km, duracaoMin } = await rotaOrs(origem, destino));
     } catch (err) {
       console.warn(`Rotas: serviço de rota falhou para ${origem.nome} → ${destino.nome} (${err.message}); usando estimativa em linha reta.`);
     }
@@ -89,12 +96,13 @@ export async function obterDistancia(origemId, destinoId, { forcar = false } = {
     fonte = "ESTIMADA";
   }
   km = Math.round(km * 10) / 10;
+  if (duracaoMin !== null) duracaoMin = Math.round(duracaoMin * 10) / 10;
   await prisma.distanciaRota.upsert({
     where: { origemId_destinoId: { origemId, destinoId } },
-    create: { origemId, destinoId, distanciaKm: km, fonte },
-    update: { distanciaKm: km, fonte, calculadoEm: new Date() },
+    create: { origemId, destinoId, distanciaKm: km, duracaoMin, fonte },
+    update: { distanciaKm: km, duracaoMin, fonte, calculadoEm: new Date() },
   });
-  return { km, fonte };
+  return { km, fonte, duracaoMin };
 }
 
 // Coordenadas de um local mudaram: descarta as distâncias dele (recalculadas sob demanda).

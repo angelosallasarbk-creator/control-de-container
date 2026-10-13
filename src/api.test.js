@@ -3888,3 +3888,46 @@ test("v3.12 ponto de operação: carregamento ou descarga pelo Tipo de Operaçã
 
   for (const id of [imp.body.id, exp.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v3.12" });
 });
+
+test("v3.13 previsão de rota: modo livre (tempo do serviço de rota), velocidade e pausa configuráveis", async () => {
+  const put = (b) => agentes.ADMIN.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, ...b });
+  const cfg = (await agentes.ADMIN.get("/api/configuracao")).body;
+  assert.equal(cfg.modoRodagem, "JANELA", "padrão: janela (regra de antes)");
+  assert.equal(cfg.velocidadeMediaKmH, 0, "padrão: velocidade automática");
+  assert.equal(cfg.pausaAtiva, 0, "padrão: sem pausa");
+  assert.equal((await put({ modoRodagem: "QUALQUER" })).status, 400);
+  assert.equal((await put({ velocidadeMediaKmH: 5 })).status, 400, "velocidade muito baixa");
+  assert.equal((await put({ velocidadeMediaKmH: 200 })).status, 400, "velocidade acima do máximo");
+  assert.equal((await put({ pausaMinutos: 0 })).status, 400);
+  assert.equal((await agentes.SUPERVISOR.put("/api/configuracao").send({ intervaloLeituraMinutos: 240, modoRodagem: "LIVRE" })).status, 403);
+
+  // Simulação Santos → Cubatão → Santos; o tempo do serviço de rota é gravado no cache da distância.
+  const grupoId = (await agentes.ADMIN.get("/api/grupos?ativos=1")).body[0].id;
+  const armadorId = (await agentes.ADMIN.get("/api/armadores?ativos=1")).body[0].id;
+  const simular = async () => {
+    const r = await agentes.OPERADOR.get(`/api/rotas/estimar?portoRetiradaId=${ids.santos}&localCarregamentoId=${ids.cubatao}&portoEntregaId=${ids.santos}&grupoId=${grupoId}&armadorId=${armadorId}`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const t = r.body.trechos[0];
+    return (new Date(t.fim) - new Date(t.inicio)) / 60000; // minutos do 1º trecho
+  };
+  await simular(); // garante a distância no cache
+  const par = { OR: [{ origemId: ids.santos, destinoId: ids.cubatao }, { origemId: ids.cubatao, destinoId: ids.santos }] };
+  assert.ok(await prisma.distanciaRota.count({ where: par }) >= 1);
+  await prisma.distanciaRota.updateMany({ where: par, data: { duracaoMin: 400 } });
+
+  const livre = await put({ modoRodagem: "LIVRE", velocidadeMediaKmH: 0, pausaAtiva: 0 });
+  assert.equal(livre.status, 200, JSON.stringify(livre.body));
+  assert.equal(livre.body.modoRodagem, "LIVRE");
+  assert.equal(await simular(), 400, "modo livre: exatamente o tempo do serviço de rota (6h40)");
+  await put({ pausaAtiva: 1, pausaACadaHoras: 5.5, pausaMinutos: 30 });
+  assert.equal(await simular(), 430, "com 1 pausa de 30 min");
+  // Sem o tempo do serviço de rota (estimativa): velocidade configurada.
+  await prisma.distanciaRota.updateMany({ where: par, data: { duracaoMin: null } });
+  await put({ pausaAtiva: 0, velocidadeMediaKmH: 50 });
+  const km = Number((await prisma.distanciaRota.findFirst({ where: par })).distanciaKm);
+  assert.ok(Math.abs((await simular()) - (km / 50) * 60) < 0.01, "sem tempo do serviço: km ÷ velocidade");
+
+  // Volta ao padrão (as previsões dos outros testes não mudam).
+  const volta = await put({ modoRodagem: "JANELA", velocidadeMediaKmH: 0, pausaAtiva: 0 });
+  assert.equal(volta.body.modoRodagem, "JANELA");
+});

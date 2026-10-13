@@ -125,3 +125,36 @@ test("programado com coleta futura: a simulação parte da data programada", () 
   const atrasado = estimarCiclo({ ...base, coletaProgramadaEm: brt("2026-10-09T06:00:00") }, ctx(180, 100), agora, cfg);
   assert.equal(atrasado.trechos[0].inicio.getTime(), agora.getTime());
 });
+
+// ---------- v3.13: velocidade configurável, modo livre e pausa/descanso ----------
+test("janela com velocidade: roda na velocidade e para no km do dia (o que vier primeiro)", () => {
+  const v60 = { ...cfg, velocidadeMediaKmH: 60 }; // 500 km a 60 km/h = 8h20 por dia
+  assert.equal(horasDeRodagem(120, v60), 2);
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T05:00:00"), 1000, v60), brt("2026-10-11T13:20:00"));
+  // Mais devagar que a média da janela: a janela é que limita (20 km/h × 17 h = 340 km).
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T05:00:00"), 340, { ...cfg, velocidadeMediaKmH: 20 }), brt("2026-10-10T22:00:00"));
+  // Velocidade 0 = automática (regra anterior à v3.13).
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T05:00:00"), 500, { ...cfg, velocidadeMediaKmH: 0 }), brt("2026-10-10T22:00:00"));
+});
+
+test("modo livre: tempo do serviço de rota, sem janela nem teto diário", () => {
+  const livre = { ...cfg, modoRodagem: "LIVRE" };
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T20:00:00"), 900, livre, 10), brt("2026-10-11T06:00:00"));
+  // Sem o tempo do serviço de rota: velocidade configurada, ou 60 km/h.
+  assert.equal(horasDeRodagem(120, livre), 2);
+  assert.equal(horasDeRodagem(120, { ...livre, velocidadeMediaKmH: 80 }), 1.5);
+  // No modo janela o tempo do serviço de rota é ignorado.
+  assert.equal(horasDeRodagem(500, cfg, 6), 17);
+});
+
+test("pausa/descanso: a cada X h de direção, Y min parado (nos dois modos)", () => {
+  const pausa = { pausaAtiva: true, pausaACadaHoras: 5.5, pausaMinutos: 30 };
+  const livre = { ...cfg, modoRodagem: "LIVRE", ...pausa };
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T20:00:00"), 900, livre, 10), brt("2026-10-11T06:30:00"), "1 pausa em 10 h");
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T08:00:00"), 0, livre, 5.5), brt("2026-10-10T13:30:00"), "sem pausa ao chegar");
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T08:00:00"), 0, livre, 12), brt("2026-10-10T21:00:00"), "2 pausas em 12 h");
+  // Janela 05h–22h (17 h): 5h30 + pausa + 5h30 + pausa + 5h até 22h; falta 1 h no dia seguinte.
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T05:00:00"), 500, { ...cfg, ...pausa }), brt("2026-10-11T06:00:00"));
+  // Desligada: nada muda.
+  assert.deepEqual(chegadaDoTrecho(brt("2026-10-10T05:00:00"), 500, { ...cfg, ...pausa, pausaAtiva: false }), brt("2026-10-10T22:00:00"));
+});

@@ -4,6 +4,28 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.13.0 — 13/10/2026 (tag `v3.13.0`) — previsão de rota: modo janela ou livre, velocidade e pausa configuráveis
+
+Pedido do usuário: em *Configurações → Previsão de rota*, poder configurar km/dia, horário **e velocidade**, escolher entre
+trabalhar com **janela de viagem** ou **livre** (no livre, o tempo de viagem do serviço de rota, como no Google) e considerar
+**pausa/descanso**. Antes, a velocidade não era configurável: saía de km/dia ÷ horas da janela.
+
+- **Modo de cálculo** (`modoRodagem`): **JANELA** (padrão) — janela de horário, km máximos por dia e a nova **velocidade média**
+  (`velocidadeMediaKmH`; 0 = automática, a regra de antes). O caminhão roda na velocidade dentro da janela e para ao cumprir o
+  km do dia, o que vier primeiro. **LIVRE** — sem janela nem teto diário; cada trecho leva o tempo de viagem do ORS (perfil
+  caminhão). Sem esse tempo (estimativa em linha reta), usa a velocidade média (0 = 60 km/h).
+- **Pausa/descanso** (`pausaAtiva`, `pausaACadaHoras`, `pausaMinutos`; desligada por padrão; sugestão 30 min a cada 5h30):
+  vale nos dois modos; no modo janela a noite parada zera a contagem.
+- **Banco:** coluna `DistanciaRota.duracaoMin` (migração `20261020100000_duracao_rota`, só acrescenta). O ORS já devolvia o tempo;
+  agora ele é guardado. Distâncias do ORS guardadas antes (sem tempo) são recalculadas uma vez, sob demanda (verificador
+  periódico / gravação do container), uma chamada por vez como antes.
+- **Motor** (`src/lib/estimativa.js`): `horasDeRodagem` e `avancarRodagem` passam a tratar os dois modos, o teto diário em
+  horas (km/dia ÷ velocidade) e as pausas; o tempo do serviço de rota chega por trecho (`previsao.js` → `horasIda/Volta/Direto`).
+- **Compatibilidade:** com os padrões (janela, velocidade 0, sem pausa) as previsões são idênticas às da 3.12 — os testes antigos
+  do motor passam sem mudança.
+- **Testes:** 3 testes novos do motor (velocidade + teto, modo livre, pausas) e 1 da API (padrões, validação, permissão, modo livre
+  usando o tempo gravado, pausa, reserva pela velocidade); 123 testes passando. Tela conferida no navegador (computador e celular).
+
 ## 3.12.0 — 13/10/2026 (tag `v3.12.0`) — ponto de Carregamento ou de Descarga pelo Tipo de Operação
 
 Origem: teste do usuário — ao criar um container de **Importação** o sistema pedia "Ponto de Carregamento", mas na importação
