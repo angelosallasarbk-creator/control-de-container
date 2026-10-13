@@ -58,7 +58,7 @@ const TIPOS_OPERACAO_PADRAO = [
     etapas: [["COLETA", "Coleta do cheio", "CARREGAMENTO"], ["ENTREGA", "Entrega do cheio", "RETIRADA_ENTREGA"]],
   },
   {
-    nome: "Importação", descricao: "Retira o cheio no porto, desova no cliente e devolve o vazio.",
+    nome: "Importação", naturezaPonto: "DESCARGA", descricao: "Retira o cheio no porto, desova no cliente e devolve o vazio.",
     etapas: [["COLETA", "Retirada do cheio", "RETIRADA_ENTREGA"], ["CHEGADA", "Chegada no cliente", "CARREGAMENTO"], ["INICIO_OPERACAO", "Em desova"], ["LIBERACAO", "Desova concluída"], ["SAIDA", "Saída do cliente"], ["ENTREGA", "Devolução do vazio", "RETIRADA_ENTREGA"]],
   },
   { nome: "Transferência", descricao: "Leva o container de um local a outro, com paradas se necessário.", etapas: [["COLETA"], ["ENTREGA"]] },

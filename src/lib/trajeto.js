@@ -25,8 +25,8 @@ export const serializarParadas = (paradas = []) =>
     nome: p.local?.nome, cidade: p.local?.cidade, uf: p.local?.uf,
     latitude: p.local?.latitude === null || p.local?.latitude === undefined ? null : Number(p.local.latitude),
     longitude: p.local?.longitude === null || p.local?.longitude === undefined ? null : Number(p.local.longitude),
-    // Ponto de Carregamento usado como parada aparece com esse rótulo (não "Fábrica"/"Armazém").
-    tipo: p.local?.tipo?.funcao === "PARADA" ? p.local.tipo.nome : "Ponto de Carregamento",
+    // Ponto de Operação usado como parada aparece com esse rótulo (não "Fábrica"/"Armazém").
+    tipo: p.local?.tipo?.funcao === "PARADA" ? p.local.tipo.nome : "Ponto de Operação",
     tempoParadaHoras: tempoParadaDoLocal(p.local),
   }));
 
@@ -89,7 +89,7 @@ export async function validarTrajeto(pontos, container) {
     if (!local) throw erroHttp(400, `${rotulo}: local não encontrado.`);
     if (papel === "PARADA") {
       if (local.tipo.funcao !== "PARADA" && !locaisDeGrupoParada.has(local.id)) {
-        throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome} — não serve como ponto de parada (marque "Pode ser ponto de parada" no Ponto de Carregamento dele).`);
+        throw erroHttp(400, `${rotulo}: "${local.nome}" é do tipo ${local.tipo.nome} — não serve como ponto de parada (marque "Pode ser ponto de parada" no Ponto de Operação dele).`);
       }
     } else {
       const regra = regras[CAMPO_DO_PAPEL[papel]];

@@ -4,6 +4,29 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
+## 3.12.0 — (a publicar) — ponto de Carregamento ou de Descarga pelo Tipo de Operação
+
+Origem: teste do usuário — ao criar um container de **Importação** o sistema pedia "Ponto de Carregamento", mas na importação
+o container é **descarregado** (desova) no cliente. Em vez de um cadastro separado de "pontos de descarregamento" (o mesmo
+Cliente/Fábrica pode receber exportação e importação) ou de uma escolha manual a cada container (sujeita a erro), a
+natureza do ponto passou a ser uma propriedade do **Tipo de Operação**:
+
+- **Banco:** enum `NaturezaPonto` (CARREGAMENTO, DESCARGA) e coluna `TipoOperacao.naturezaPonto` (padrão CARREGAMENTO).
+  A migração `20261015100000_natureza_ponto` só acrescenta: marca o tipo "Importação" como DESCARGA e grava
+  `naturezaPonto` no fluxo copiado (`Container.fluxo`) dos containers desse tipo. Nenhum dado é removido.
+- **Servidor:** `fluxoDoTipo` copia a natureza para o container; `montarContainer` expõe `naturezaPonto` (containers antigos
+  = CARREGAMENTO); cadastro do Tipo de Operação valida o campo (400 para valor inválido; PATCH sem o campo mantém o atual);
+  semente de novas organizações cria a Importação como DESCARGA. Mensagens de erro e o rótulo da parada no trajeto passam a
+  dizer "Ponto de Operação".
+- **Telas:** menu e cadastro **Pontos de Operação**; no Tipo de Operação, campo "No ponto de operação" (Carregamento/ovação ou
+  Descarga/desova) e aviso na lista; Novo container, ficha e cadastro pelo QR mostram "Ponto de Carregamento" ou "Ponto de
+  Descarregamento" conforme o tipo (`rotuloPonto` em `formato.js`); filtros, Home, Alertas, Containers, Custos e Editar
+  trajeto (que misturam os dois) usam "Ponto de Operação".
+- **Planilha:** coluna "Ponto de Operação"; o título antigo "Ponto de Carregamento" (modelos já baixados) e "Ponto de
+  Descarregamento" continuam aceitos (aliases).
+- **Testes:** novo teste v3.12 (semente, cadastro, cópia para o container, imutabilidade após editar o tipo, planilha com os
+  dois títulos); 119 testes passando.
+
 ## 3.11.0 — 06/10/2026 (tag `v3.11.0`) — desempenho com muitos containers: painel, alertas, varredura e transações
 
 Origem: teste das 3 empresas com ~3 a 5 vezes mais dados (3 × 2.500 containers, ~3.100 alertas abertos por empresa,

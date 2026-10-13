@@ -117,6 +117,8 @@ export function fluxoDoTipo(tipo) {
     nomes: Object.fromEntries(principais.filter((e) => e.nome).map((e) => [STATUS_DA_ACAO[e.acao], e.nome])),
     freeTimeInicio: tipo.freeTimeInicio,
     freeTimeFim: tipo.freeTimeFim,
+    // Carregamento ou descarga no ponto de operação (v3.12): define o nome do ponto no container.
+    naturezaPonto: tipo.naturezaPonto ?? "CARREGAMENTO",
     regras: { portoRetiradaId: regra(coleta), localCarregamentoId: regra(chegada), portoEntregaId: regra(entrega) },
     sugeridos: { portoRetiradaId: coleta?.localSugeridoId ?? null, localCarregamentoId: chegada?.localSugeridoId ?? null, portoEntregaId: entrega?.localSugeridoId ?? null },
     // Passagens do fluxo (viram paradas do trajeto quando têm local sugerido).

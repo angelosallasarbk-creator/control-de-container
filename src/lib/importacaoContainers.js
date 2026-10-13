@@ -19,7 +19,7 @@ export const COLUNAS = [
   { chave: "numero", titulo: "Número do container", obrigatorio: true, largura: 20, ajuda: "4 letras + 7 dígitos (ex.: MSKU1234565)." },
   { chave: "tipo", titulo: "Tipo", obrigatorio: true, largura: 13, lista: "tipos", ajuda: "20' Dry, 40' Dry, 40' HC, 20' Reefer ou 40' Reefer." },
   { chave: "tipoOperacao", titulo: "Tipo de Operação", largura: 24, lista: "tiposOperacao", ajuda: "Exatamente como no cadastro (ex.: Coleta de cheio). Em branco = o tipo padrão. Define o fluxo e os locais aceitos." },
-  { chave: "grupo", titulo: "Ponto de Carregamento", obrigatorio: true, largura: 38, lista: "grupos", ajuda: "Exatamente como no cadastro: Cliente / Fábrica." },
+  { chave: "grupo", titulo: "Ponto de Operação", aliases: ["Ponto de Carregamento", "Ponto de Descarregamento"], obrigatorio: true, largura: 38, lista: "grupos", ajuda: "Exatamente como no cadastro (Pontos de Operação): Cliente / Fábrica." },
   { chave: "armador", titulo: "Armador", obrigatorio: true, largura: 22, lista: "armadores" },
   { chave: "produto", titulo: "Produto", obrigatorio: true, largura: 24, lista: "produtos", ajuda: "Produto da carga (no reefer define a faixa de temperatura)." },
   { chave: "portoRetirada", titulo: "Local de retirada", obrigatorio: true, largura: 30, lista: "locais", ajuda: "Onde o container é coletado (na exportação: porto ou terminal do vazio)." },
@@ -193,7 +193,8 @@ export async function lerPlanilha(buffer) {
   if (!ws) throw erroHttp(400, "A planilha não tem nenhuma aba.");
 
   // Cabeçalho: linha 1, pelo nome da coluna (com ou sem o "*").
-  const porTitulo = new Map(COLUNAS.map((c) => [normalizar(c.titulo), c]));
+  // Também aceita títulos antigos da coluna (aliases), para modelos baixados antes da mudança de nome.
+  const porTitulo = new Map(COLUNAS.flatMap((c) => [c.titulo, ...(c.aliases ?? [])].map((t) => [normalizar(t), c])));
   const colunaDe = {};
   ws.getRow(1).eachCell((cell, i) => {
     const c = porTitulo.get(normalizar(String(valorCelula(cell) ?? "").replace(/\*/g, "")));
@@ -229,7 +230,7 @@ export async function lerPlanilha(buffer) {
       const corpo = {
         numero,
         tipo,
-        grupoId: porNome(cad.grupos, v.grupo, "Ponto de Carregamento", nomeGrupo),
+        grupoId: porNome(cad.grupos, v.grupo, "Ponto de Operação", nomeGrupo),
         armadorId: porNome(cad.armadores, v.armador, "Armador"),
         produtoId: porNome(cad.produtos, v.produto, "Produto"),
         coletaProgramadaEm: paraDataIso(v.coletaProgramadaEm, "Coleta programada"),

@@ -184,7 +184,7 @@ const grupos = computed(() =>
     <div class="linha-entre">
       <div class="filtros">
         <div class="campo">
-          <label>Ponto de Carregamento</label>
+          <label>Ponto de Operação</label>
           <select v-model="filtroGrupo">
             <option value="">Todos</option>
             <option v-for="g in gruposComDemanda" :key="g.id" :value="String(g.id)">{{ g.cliente }} / {{ g.fabrica }}</option>
@@ -196,7 +196,7 @@ const grupos = computed(() =>
     </div>
 
     <div v-if="!grupos.length" class="card vazio">
-      <template v-if="!gruposDaAba.length">Nenhuma fábrica vinculada a esta região. Vincule em <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link>.</template>
+      <template v-if="!gruposDaAba.length">Nenhuma fábrica vinculada a esta região. Vincule em <router-link to="/cadastros/grupos">Ponto de Operação</router-link>.</template>
       <template v-else>
         Nenhum container ativo{{ soProblemas ? " com problema" : "" }}.
         <router-link v-if="!soProblemas" to="/containers" class="btn pequeno" style="margin-left: 8px">Cadastrar container</router-link>

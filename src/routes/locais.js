@@ -169,7 +169,7 @@ locaisRouter.delete("/:id", requirePermissao("cadastros.editar"), asyncHandler(a
   const localId = validarId(req.params.id);
   const antes = await prisma.local.findUnique({ where: { id: localId }, include: INCLUDE });
   if (!antes) throw erroHttp(404, "Local não encontrado.");
-  if (serializar(antes).emUso > 0) throw erroHttp(409, "Este local está vinculado a um Ponto de Carregamento ou a containers. Desative-o em vez de excluir.");
+  if (serializar(antes).emUso > 0) throw erroHttp(409, "Este local está vinculado a um Ponto de Operação ou a containers. Desative-o em vez de excluir.");
   await prisma.local.delete({ where: { id: localId } });
   await registrarLog({ usuarioEmail: req.usuario.email, acao: "EXCLUIR", entidade: "Local", entidadeId: localId, descricao: `Local excluído: ${antes.nome}`, dadosAntes: antes });
   res.status(204).end();
@@ -193,7 +193,7 @@ rotasRouter.get("/estimar", requirePermissao("containers.operar"), limiteEstimar
   const idsLocais = [portoRetiradaId, localCarregamentoId, portoEntregaId].filter(Boolean);
   if ((await prisma.local.count({ where: { id: { in: idsLocais } } })) !== new Set(idsLocais).size) throw erroHttp(400, "Local do trajeto não encontrado.");
   const [grupo, armador, config] = await Promise.all([
-    q.grupoId ? prisma.grupoOperacao.findUnique({ where: { id: validarId(q.grupoId, "Ponto de Carregamento") } }) : null,
+    q.grupoId ? prisma.grupoOperacao.findUnique({ where: { id: validarId(q.grupoId, "Ponto de Operação") } }) : null,
     q.armadorId ? prisma.armador.findUnique({ where: { id: validarId(q.armadorId, "Armador") } }) : null,
     lerConfiguracao(),
   ]);

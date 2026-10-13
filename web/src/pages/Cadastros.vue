@@ -14,15 +14,15 @@ const auth = useAuthStore();
 const CONFIG = {
   regioes: {
     titulo: "Regiões",
-    ajuda: "Cada região ativa vira uma aba na Home. Vincule as fábricas à região em Ponto de Carregamento.",
+    ajuda: "Cada região ativa vira uma aba na Home. Vincule as fábricas à região em Pontos de Operação.",
     rotuloUso: "Pontos de Carregamento",
     colunas: [{ rotulo: "Região", valor: (r) => r.nome }],
     campos: [{ chave: "nome", rotulo: "Nome da região", tipo: "text", obrigatorio: true }],
   },
   grupos: {
-    titulo: "Ponto de Carregamento",
+    titulo: "Pontos de Operação",
     ajuda:
-      "Cada Ponto de Carregamento (combinação Cliente + Fábrica) é um grupo de operação no pátio, com sua própria meta de estadia. " +
+      "Cada Ponto de Operação (combinação Cliente + Fábrica) é onde o container é carregado (ovação) ou descarregado (desova) — quem define é o Tipo de Operação do container — com sua própria meta de estadia. " +
       "A região é da fábrica: ao escolher a região de um cliente, ela vale para todos os clientes daquela fábrica.",
     colunas: [
       { rotulo: "Cliente", valor: (r) => r.cliente },

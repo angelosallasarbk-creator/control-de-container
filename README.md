@@ -1,6 +1,6 @@
 # Controle de Container
 
-Controle de containers de **exportação** entre o porto e a fábrica: estadia na fábrica, demurrage, deadline do navio e temperatura de reefer, com alertas antecipados e visão do pátio por **Ponto de Carregamento** (Cliente + Fábrica).
+Controle de containers de **exportação** entre o porto e a fábrica: estadia na fábrica, demurrage, deadline do navio e temperatura de reefer, com alertas antecipados e visão do pátio por **Ponto de Operação** (Cliente + Fábrica; "Ponto de Carregamento" ou "Ponto de Descarregamento" conforme o Tipo de Operação).
 
 Substitui o controle manual por planilha + WhatsApp.
 
@@ -108,6 +108,12 @@ Menu **Cadastros → Tipo de Operação**. Cada tipo define o fluxo que o contai
   Local de carregamento só é obrigatório quando o tipo tem local de operação.
 - **Home:** seções "A caminho do local de operação", "No local de operação" e "A caminho da entrega" (tipos sem local de
   operação vão direto para a última); o card mostra o tipo quando não é o padrão.
+- **No ponto de operação (v3.12):** cada tipo diz se o ponto é de **Carregamento (ovação)** ou de **Descarga (desova)**.
+  O cadastro passou a se chamar **Pontos de Operação** (menu Cadastros); no Novo container, na ficha e no QR o campo
+  aparece como "Ponto de Carregamento" ou "Ponto de Descarregamento" conforme o tipo escolhido. A **Importação** vem como
+  Descarga; os demais, Carregamento. A natureza é copiada para o container junto com o fluxo (mudar o tipo depois não altera
+  containers já criados). Telas que misturam os dois tipos (filtros, Home, Alertas, Custos) usam "Ponto de Operação". Na
+  planilha, a coluna é "Ponto de Operação"; modelos antigos com "Ponto de Carregamento" continuam aceitos.
 
 ## Produtos: categoria e temperatura (v1.4)
 
@@ -246,7 +252,7 @@ Rastreabilidade sem digitação posterior: a etiqueta vai **colada no container*
   - O custo é lançado **no dia em que ocorre**: cada diária de demurrage no dia cobrado, cada hora além da meta de estadia no dia em que passou. Containers ativos contam até agora; cancelados não entram.
   - A estadia usa o custo/h **gravado no container**. Se o custo/h do Ponto de Carregamento for cadastrado depois, salve o cadastro com "Aplicar também aos containers em andamento" (ou o supervisor ajusta em *Editar → Prazos deste container*, na ficha). Horas sem valor aparecem como "sem R$/h".
   - **Moedas**: estadia em R$ e demurrage na moeda do armador. Com a cotação informada em *Configurações* (US$ e €), tudo é consolidado em R$. Sem cotação, cada moeda aparece separada, em gráficos separados, sem somar moedas diferentes.
-- **Cadastros**: Regiões, Locais e Tipos de local, Ponto de Carregamento, Armadores, Produtos. Cadastro já usado não pode ser excluído, só desativado.
+- **Cadastros**: Regiões, Locais e Tipos de local, Pontos de Operação, Armadores, Produtos. Cadastro já usado não pode ser excluído, só desativado.
 - **Usuários**, **Integração** (tokens), **Configurações e log** de auditoria.
 
 ### Perfis e permissões por usuário

@@ -317,7 +317,7 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
     throw erroHttp(422, "O dígito verificador não confere. Confira o número digitado.", { codigo: "DIGITO_INVALIDO" });
   }
   const tipo = umDe(b.tipo, TIPOS, "Tipo de container", { obrigatorio: true });
-  const grupoId = validarId(b.grupoId, "Ponto de Carregamento");
+  const grupoId = validarId(b.grupoId, "Ponto de Operação");
   const armadorId = validarId(b.armadorId, "Armador");
   const produtoId = b.produtoId ? validarId(b.produtoId, "Produto") : null;
 
@@ -326,7 +326,7 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
     buscarCadastro(cache, "armador", armadorId),
     produtoId ? buscarCadastro(cache, "produto", produtoId) : null,
   ]);
-  if (!grupo?.ativo) throw erroHttp(400, "Ponto de Carregamento inexistente ou inativo.");
+  if (!grupo?.ativo) throw erroHttp(400, "Ponto de Operação inexistente ou inativo.");
   if (!armador?.ativo) throw erroHttp(400, "Armador inexistente ou inativo.");
   if (produtoId && !produto?.ativo) throw erroHttp(400, "Produto inexistente ou inativo.");
   if (ehReefer(tipo) && !produto) throw erroHttp(400, "Container reefer precisa de um produto (define a faixa de temperatura).");
@@ -343,7 +343,7 @@ export async function validarNovoContainer(b, usuarioEmail, { cache = null } = {
   // Locais não informados: os sugeridos no fluxo; carregamento = o sugerido ou o local do Ponto de
   // Carregamento, só se o fluxo tiver local de operação.
   const sugeridos = Object.fromEntries(Object.entries(fluxo?.sugeridos ?? {}).filter(([, v]) => v));
-  // O local do Ponto de Carregamento só entra se atender ao tipo de local exigido pelo fluxo.
+  // O local do Ponto de Operação só entra se atender ao tipo de local exigido pelo fluxo.
   const localDoGrupo = grupo.localId ? await buscarCadastro(cache, "local", grupo.localId, COM_TIPO) : null;
   const grupoServe = localDoGrupo && !motivoLocalForaDaRegra(localDoGrupo, regras.localCarregamentoId);
   const padraoCarregamento = regras.localCarregamentoId === null ? {} : { localCarregamentoId: sugeridos.localCarregamentoId ?? (grupoServe ? grupo.localId : null) };

@@ -164,7 +164,7 @@ async function salvar() {
               <option v-if="p.papel === 'ENTREGA'" value="">A definir</option>
               <option v-else value="" disabled>{{ p.papel === "PARADA" ? "Escolha o ponto (ex.: Ponto Fiscal)…" : "Escolha o local…" }}</option>
               <option v-for="l in opcoes(p)" :key="l.id" :value="l.id">
-                {{ l.pontoCarregamento ? "Ponto de Carregamento: " : "" }}{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}{{ p.papel === "PARADA" && l.posicaoParada ? ` — ${ROTULO_POSICAO_PARADA[l.posicaoParada].toLowerCase()}` : "" }}
+                {{ l.pontoCarregamento ? "Ponto de Operação: " : "" }}{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}{{ p.papel === "PARADA" && l.posicaoParada ? ` — ${ROTULO_POSICAO_PARADA[l.posicaoParada].toLowerCase()}` : "" }}
               </option>
             </select>
           </div>
@@ -176,7 +176,7 @@ async function salvar() {
         </li>
       </ol>
       <button type="button" class="adicionar" @click="adicionar">+ Adicionar ponto</button>
-      <p v-if="!opcoesParada.length" class="dica pequeno mudo">Nenhum ponto de parada cadastrado. Cadastre um Ponto Fiscal em Cadastros → Locais, ou marque "Pode ser ponto de parada" em Cadastros → Ponto de Carregamento.</p>
+      <p v-if="!opcoesParada.length" class="dica pequeno mudo">Nenhum ponto de parada cadastrado. Cadastre um Ponto Fiscal em Cadastros → Locais, ou marque "Pode ser ponto de parada" em Cadastros → Ponto de Operação.</p>
 
       <div class="modal-acoes">
         <button type="button" @click="emit('fechar')">Cancelar</button>

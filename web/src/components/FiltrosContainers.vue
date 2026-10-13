@@ -1,5 +1,5 @@
 <script setup>
-// Filtros do cabeçalho da tela de Containers: Região e Ponto de Carregamento (múltipla escolha).
+// Filtros do cabeçalho da tela de Containers: Região e Ponto de Operação (múltipla escolha).
 // Pontos de carregamento seguem as regiões marcadas; marcar outra região limpa pontos que saíram.
 import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../api.js";
@@ -34,7 +34,7 @@ watch(opcoesGrupo, (opcoes) => {
 <template>
   <div class="filtros-containers">
     <FiltroMultiplo v-model="filtroContainers.regioes" rotulo="Região" todos="Todas" :opcoes="opcoesRegiao" />
-    <FiltroMultiplo v-model="filtroContainers.grupos" rotulo="Ponto de Carregamento" :opcoes="opcoesGrupo" busca />
+    <FiltroMultiplo v-model="filtroContainers.grupos" rotulo="Ponto de Operação" :opcoes="opcoesGrupo" busca />
     <label class="sem-qr" :class="{ marcado: filtroContainers.semQr }" title="Mostrar só os containers que ainda não têm etiqueta QR vinculada">
       <input v-model="filtroContainers.semQr" type="checkbox" /> Sem QR code
     </label>
