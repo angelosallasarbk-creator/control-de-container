@@ -142,7 +142,7 @@ const graficosTendencia = computed(() => {
   return graficos;
 });
 
-// Custo por Ponto de Carregamento (visão geral da região)
+// Custo por Ponto de Operação (visão geral da região)
 const porGrupo = computed(() => {
   if (!dados.value || grupoAtual.value !== "geral") return [];
   return gruposDaRegiao.value
@@ -239,7 +239,7 @@ const pag = usePaginacao(() => detalhamento.value, "custos");
         {{ a.nome }} <span class="aba-contagem">{{ a.rotuloValor }}</span>
       </button>
     </nav>
-    <nav class="abas sub" role="tablist" aria-label="Ponto de Carregamento">
+    <nav class="abas sub" role="tablist" aria-label="Ponto de Operação">
       <button class="aba" :class="{ ativa: grupoAtual === 'geral' }" @click="selecionar({ grupo: 'geral' })">Visão geral</button>
       <button
         v-for="g in gruposDaRegiao" :key="g.id" class="aba" :class="{ ativa: grupoAtual === String(g.id) }"
@@ -298,9 +298,9 @@ const pag = usePaginacao(() => detalhamento.value, "custos");
       </div>
     </div>
 
-    <!-- Por Ponto de Carregamento -->
+    <!-- Por Ponto de Operação -->
     <div v-if="grupoAtual === 'geral' && porGrupo.length" class="card">
-      <h2>Custo por Ponto de Carregamento</h2>
+      <h2>Custo por Ponto de Operação</h2>
       <GraficoBarras
         v-if="graficoPorGrupo" :rotulos="graficoPorGrupo.rotulos" :series="graficoPorGrupo.series" horizontal
         :altura="Math.max(140, graficoPorGrupo.rotulos.length * 44 + 60)"
@@ -309,7 +309,7 @@ const pag = usePaginacao(() => detalhamento.value, "custos");
         <table>
           <thead>
             <tr>
-              <th>Ponto de Carregamento</th><th v-if="regiaoAtual === 'todas'">Região</th><th>Containers c/ custo</th>
+              <th>Ponto de Operação</th><th v-if="regiaoAtual === 'todas'">Região</th><th>Containers c/ custo</th>
               <th>Horas além da meta</th><th>Estadia</th><th>Diárias</th><th>Demurrage</th><th>Total</th>
             </tr>
           </thead>
@@ -347,7 +347,7 @@ const pag = usePaginacao(() => detalhamento.value, "custos");
         <table class="pequeno">
           <thead>
             <tr>
-              <th>Container</th><th v-if="grupoAtual === 'geral'">Ponto de Carregamento</th><th>Armador</th><th>Etapa</th>
+              <th>Container</th><th v-if="grupoAtual === 'geral'">Ponto de Operação</th><th>Armador</th><th>Etapa</th>
               <th title="Coleta → chegada na fábrica">Até fábrica</th><th title="Chegada → saída">Na fábrica</th><th title="Saída → entrega no porto">Até porto</th>
               <th>Horas além da meta</th><th>Estadia</th><th>Diárias</th><th>Demurrage</th><th>Total</th>
             </tr>

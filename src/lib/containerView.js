@@ -59,6 +59,8 @@ export function montarContainerComSituacao(c, situacao, config) {
     // e o tipo de local exigido em cada campo do trajeto. Containers anteriores: fluxo de exportação.
     tipoOperacao: c.tipoOperacao ?? (c.fluxo?.tipo ? { id: c.fluxo.tipoId, nome: c.fluxo.tipo } : null),
     fluxo: etapasDoContainer(c),
+    // Carregamento ou descarga no ponto de operação (v3.12): define o nome do ponto nas telas.
+    naturezaPonto: c.fluxo?.naturezaPonto ?? "CARREGAMENTO",
     temOperacao: temOperacao(c),
     regrasLocal: regrasDeLocal(c),
     // Tem etiqueta QR ligada agora (consulta com CONTAGEM_QR, ou a lista de etiquetas da ficha).

@@ -72,6 +72,7 @@ async function validar(b, antes = null) {
   if (!antes || "descricao" in b) d.descricao = texto(b.descricao, "Descrição", { max: 300 });
   if ("ativo" in b) d.ativo = Boolean(b.ativo);
   if ("padrao" in b) d.padrao = Boolean(b.padrao);
+  if (!antes || "naturezaPonto" in b) d.naturezaPonto = umDe(b.naturezaPonto ?? antes?.naturezaPonto ?? "CARREGAMENTO", ["CARREGAMENTO", "DESCARGA"], "No ponto de operação");
   let etapas = null;
   if (!antes || "etapas" in b) etapas = await conferirLocais(validarEtapasFluxo(b.etapas));
   // Free time: etapas que existem no fluxo, início antes do fim.

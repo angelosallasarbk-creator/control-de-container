@@ -288,7 +288,7 @@ function alternarSecao(nome) {
         <div v-show="faixaIcones || secaoAberta('cadastros')" id="menu-cadastros" class="sub-itens">
           <router-link to="/cadastros/regioes" title="Regiões"><Icone nome="mapa" :tamanho="19" /><span class="rotulo-menu">Regiões</span></router-link>
           <router-link to="/locais" title="Locais"><Icone nome="local" :tamanho="19" /><span class="rotulo-menu">Locais</span></router-link>
-          <router-link to="/cadastros/grupos" title="Ponto de Carregamento"><Icone nome="fabrica" :tamanho="19" /><span class="rotulo-menu">Ponto de Carregamento</span></router-link>
+          <router-link to="/cadastros/grupos" title="Pontos de Operação"><Icone nome="fabrica" :tamanho="19" /><span class="rotulo-menu">Pontos de Operação</span></router-link>
           <router-link to="/tipos-operacao" title="Tipo de Operação"><Icone nome="fluxo" :tamanho="19" /><span class="rotulo-menu">Tipo de Operação</span></router-link>
           <router-link to="/cadastros/armadores" title="Armadores"><Icone nome="navio" :tamanho="19" /><span class="rotulo-menu">Armadores</span></router-link>
           <router-link to="/cadastros/produtos" title="Produtos"><Icone nome="caixa" :tamanho="19" /><span class="rotulo-menu">Produtos</span></router-link>

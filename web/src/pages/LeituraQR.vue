@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { api, qrMotorista } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
-import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal, atendeRegraLocal } from "../formato.js";
+import { FLUXO, rotuloEtapa, ROTULO_TIPO, fmtDataHora, fmtTemp, paraInputLocal, deInputLocal, atendeRegraLocal, rotuloPonto } from "../formato.js";
 import { conferirNumero } from "../iso6346.js";
 import { melhorPosicao } from "../geolocalizacao.js";
 
@@ -780,7 +780,7 @@ async function registrarPassagemQr() {
           <div v-if="temCarregamento" class="campo">
             <label for="local-carregamento">Local de carregamento</label>
             <select id="local-carregamento" v-model="col.carregamentoId" class="grande-campo">
-              <option value="">— {{ precisaCadastro ? "o do Ponto de Carregamento" : "não informado" }} —</option>
+              <option value="">— {{ precisaCadastro ? "o do ponto de operação" : "não informado" }} —</option>
               <option v-for="l in locaisCarregamento" :key="l.id" :value="l.id">{{ l.nome }}{{ l.uf ? ` (${l.uf})` : "" }}</option>
             </select>
           </div>
@@ -816,7 +816,7 @@ async function registrarPassagemQr() {
               </select>
             </div>
             <div class="campo">
-              <label for="ponto">Ponto de Carregamento</label>
+              <label for="ponto">{{ rotuloPonto(tipoOperacaoNovo?.naturezaPonto) }}</label>
               <select id="ponto" v-model="col.grupoId" class="grande-campo" required>
                 <option value="" disabled>Selecione</option>
                 <option v-for="g in opcoes?.grupos ?? []" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>

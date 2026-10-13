@@ -54,7 +54,7 @@ const pag = usePaginacaoServidor("containers", carregar);
 const ordem = useOrdenacaoServidor(refazer);
 
 onMounted(carregar);
-// Região / Ponto de Carregamento / Sem QR (cabeçalho): valem também no servidor.
+// Região / Ponto de Operação / Sem QR (cabeçalho): valem também no servidor.
 watch(() => [filtroContainers.regioes, filtroContainers.grupos, filtroContainers.semQr], refazer, { deep: true });
 
 let atraso = null;
@@ -117,7 +117,7 @@ function textoDemurrage(d) {
           <ThOrdenavel chave="semaforo" :ordem="ordem" titulo="Situação: crítico primeiro no crescente"><span class="sr-only">Situação</span></ThOrdenavel>
           <ThOrdenavel chave="numero" :ordem="ordem">Container</ThOrdenavel>
           <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
-          <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Carregamento</ThOrdenavel>
+          <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Operação</ThOrdenavel>
           <ThOrdenavel chave="armador" :ordem="ordem">Armador</ThOrdenavel>
           <th>Motorista / Placa</th>
           <ThOrdenavel chave="etapa" :ordem="ordem" titulo="Na ordem do processo">Etapa</ThOrdenavel>

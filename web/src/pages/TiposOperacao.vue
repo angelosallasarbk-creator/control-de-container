@@ -55,7 +55,7 @@ const temOperacao = (t) => t.etapas.some((e) => e.acao === "CHEGADA");
 
 // ---------- Editor ----------
 const editando = ref(null); // null | {} (novo) | tipo
-const f = reactive({ nome: "", descricao: "", padrao: false, freeTimeInicio: "COLETADO", freeTimeFim: "ENTREGUE_PORTO" });
+const f = reactive({ nome: "", descricao: "", padrao: false, naturezaPonto: "CARREGAMENTO", freeTimeInicio: "COLETADO", freeTimeFim: "ENTREGUE_PORTO" });
 const etapas = ref([]);
 const enviando = ref(false);
 const erroModal = ref(null);
@@ -69,7 +69,7 @@ function abrir(t) {
   erroModal.value = null;
   editando.value = t ?? {};
   Object.assign(f, {
-    nome: t?.nome ?? "", descricao: t?.descricao ?? "", padrao: Boolean(t?.padrao),
+    nome: t?.nome ?? "", descricao: t?.descricao ?? "", padrao: Boolean(t?.padrao), naturezaPonto: t?.naturezaPonto ?? "CARREGAMENTO",
     freeTimeInicio: t?.freeTimeInicio ?? "COLETADO", freeTimeFim: t?.freeTimeFim ?? "ENTREGUE_PORTO",
   });
   etapas.value = (t?.etapas ?? [{ acao: "COLETA", funcaoLocal: "RETIRADA_ENTREGA" }, { acao: "ENTREGA", funcaoLocal: "RETIRADA_ENTREGA" }]).map(linha);
@@ -80,7 +80,7 @@ function opcoesLocal(e) {
   if (e.acao === "PASSAGEM") {
     const fiscais = locais.value.filter((l) => l.tipo.funcao === "PARADA");
     const vistos = new Set(fiscais.map((l) => l.id));
-    const extras = gruposParada.value.filter((g) => !vistos.has(g.localId)).map((g) => ({ id: g.localId, nome: `Ponto de Carregamento: ${g.cliente} / ${g.fabrica}` }));
+    const extras = gruposParada.value.filter((g) => !vistos.has(g.localId)).map((g) => ({ id: g.localId, nome: `Ponto de Operação: ${g.cliente} / ${g.fabrica}` }));
     return [...fiscais, ...extras];
   }
   const [tipo, valor] = e.regra.split(":");
@@ -220,6 +220,7 @@ async function excluir(t) {
               {{ t.nome }} <span v-if="t.padrao" class="chip azul pequeno">padrão</span>
               <div v-if="t.descricao" class="mudo pequeno" style="font-weight: 400">{{ t.descricao }}</div>
               <div v-if="!temOperacao(t)" class="mudo pequeno" style="font-weight: 400">sem local de operação (sem estadia)</div>
+              <div v-else-if="t.naturezaPonto === 'DESCARGA'" class="mudo pequeno" style="font-weight: 400">descarga no ponto de operação</div>
             </td>
             <td>
               <ol class="fluxo-resumo">
@@ -251,6 +252,14 @@ async function excluir(t) {
       <div class="grade-2">
         <div class="campo"><label for="to-nome">Nome *</label><input id="to-nome" v-model="f.nome" required maxlength="60" placeholder="Ex.: Exportação via ferrovia" /></div>
         <div class="campo"><label for="to-desc">Descrição</label><input id="to-desc" v-model="f.descricao" maxlength="300" /></div>
+      </div>
+      <div v-if="temOperacao({ etapas: etapas })" class="campo" style="max-width: 420px">
+        <label for="to-natureza">No ponto de operação</label>
+        <select id="to-natureza" v-model="f.naturezaPonto">
+          <option value="CARREGAMENTO">Carregamento (ovação) — "Ponto de Carregamento"</option>
+          <option value="DESCARGA">Descarga (desova) — "Ponto de Descarregamento"</option>
+        </select>
+        <span class="dica">Define o nome do ponto no cadastro e na ficha dos containers deste tipo.</span>
       </div>
       <label class="check"><input v-model="f.padrao" type="checkbox" :disabled="editando.padrao" /> Tipo padrão (usado quando o container não informa o tipo)</label>
       <p v-if="editando.id && editando.containers" class="aviso pequeno">{{ editando.containers }} container(s) usam este tipo e continuam com o fluxo de quando foram cadastrados.</p>

@@ -247,7 +247,7 @@ qrRouter.get("/opcoes/coleta", requirePermissao("qr.registrar"), asyncHandler(as
     }),
     prisma.tipoOperacao.findMany({
       where: { ativo: true }, orderBy: [{ padrao: "desc" }, { nome: "asc" }],
-      select: { id: true, nome: true, padrao: true, etapas: { orderBy: { ordem: "asc" }, select: { acao: true, nome: true, funcaoLocal: true, tipoLocalId: true, localSugeridoId: true } } },
+      select: { id: true, nome: true, padrao: true, naturezaPonto: true, etapas: { orderBy: { ordem: "asc" }, select: { acao: true, nome: true, funcaoLocal: true, tipoLocalId: true, localSugeridoId: true } } },
     }),
   ]);
   res.json({ tipos, locais, locaisCarregamento, grupos, armadores, produtos, tiposContainer: TIPOS_CONTAINER, todosTipos, todosLocais, tiposOperacao });

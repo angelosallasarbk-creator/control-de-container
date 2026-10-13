@@ -223,6 +223,12 @@ model TipoLocal {
 
 // Tipo de Operação (Exportação padrão, Coleta de cheio, Importação, Transferência…): define o fluxo
 // de etapas do container. O fluxo é copiado para Container.fluxo na criação do container.
+// O que acontece no ponto de operação (v3.12): carregamento (ovação) ou descarga (desova).
+enum NaturezaPonto {
+  CARREGAMENTO
+  DESCARGA
+}
+
 model TipoOperacao {
   // Organização (cliente) dona do registro — filtro automático + RLS (v3.0).
   organizacaoId  Int
@@ -235,6 +241,8 @@ model TipoOperacao {
   // Etapas que abrem e fecham o free time do armador (demurrage).
   freeTimeInicio StatusContainer @default(COLETADO)
   freeTimeFim    StatusContainer @default(ENTREGUE_PORTO)
+  // No ponto de operação: carregamento ou descarga — o container mostra o nome certo do ponto (v3.12).
+  naturezaPonto  NaturezaPonto   @default(CARREGAMENTO)
   criadoEm       DateTime        @default(now())
   etapas         EtapaFluxo[]
   containers     Container[]
@@ -476,8 +484,8 @@ model Container {
   semaforoNivel      Int? // 0 vermelho, 1 amarelo, 2 verde (ordenar/filtrar a lista no banco)
   estadiaLimiteEm    DateTime? // meta de estadia vence em (só com estadia em andamento)
   demurrageVenceEm   DateTime? // fim do free time (só com demurrage em andamento)
-  ultimaTemperatura  Decimal? @db.Decimal(5, 1)
-  previsaoFolgaHoras Decimal? @db.Decimal(8, 1)
+  ultimaTemperatura  Decimal?  @db.Decimal(5, 1)
+  previsaoFolgaHoras Decimal?  @db.Decimal(8, 1)
 
   eventos         EventoContainer[]
   leituras        LeituraTemperatura[]

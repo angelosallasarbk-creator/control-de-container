@@ -1196,7 +1196,7 @@ test("planilha de containers: modelo com listas, prévia sem gravar, confirma s�
   const ok1 = num("PLNU100001"), ok2 = num("PLNU100002"), ativo = num("PLNU100003");
   // Obrigatórios: número, tipo, ponto, armador, produto, retirada, carregamento, entrega e coleta programada.
   const base = {
-    Tipo: "40' Dry", "Ponto de Carregamento": "planilha sa / fabrica upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
+    Tipo: "40' Dry", "Ponto de Operação": "planilha sa / fabrica upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
     "Local de retirada": "Porto de Santos", "Local de carregamento": "Armazém Cubatão", "Local de entrega": "Porto de Santos", "Coleta programada": "07/10/2026 10:00",
   };
   linha(2, { "Número do container": ok1, ...base, "Local de retirada": "Porto de Santos", "Local de carregamento": "Armazém Cubatão", "Coleta programada": "05/10/2026 08:30", Booking: "BK-PL-1" });
@@ -2054,7 +2054,7 @@ test("v1.3: Ponto de Carregamento como parada (checkbox) e motorista/placa do QR
   assert.match(naoMarcado.body.erro, /Pode ser ponto de parada/);
   const r = await put([P("RETIRADA", ids.santos), P("PARADA", ids.rioVerde), P("CARREGAMENTO", ids.cubatao), P("ENTREGA", ids.santos)]);
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual([r.body.paradas[0].nome, r.body.paradas[0].tipo, r.body.paradas[0].tempoParadaHoras], ["Fábrica Rio Verde", "Ponto de Carregamento", 3]);
+  assert.deepEqual([r.body.paradas[0].nome, r.body.paradas[0].tipo, r.body.paradas[0].tempoParadaHoras], ["Fábrica Rio Verde", "Ponto de Operação", 3]);
   const trechoParada = r.body.situacao.previsao.trechos.find((t) => t.etapa === "Parada: Fábrica Rio Verde");
   assert.equal(trechoParada?.horas, 3, "tempo de parada do Ponto de Carregamento");
   // O próprio local de carregamento não pode ser parada.
@@ -2333,7 +2333,7 @@ test("tipos de operação (v2.0-B): planilha com a coluna Tipo de Operação", a
   const col = (titulo) => cab.findIndex((t) => t.replace(" *", "") === titulo) + 1;
   const linha = (n, v) => { for (const [t, x] of Object.entries(v)) ws.getRow(n).getCell(col(t)).value = x; };
   const base = {
-    Tipo: "40' Dry", "Ponto de Carregamento": "Planilha SA / Fábrica Upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
+    Tipo: "40' Dry", "Ponto de Operação": "Planilha SA / Fábrica Upload", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
     "Local de entrega": "Porto de Santos", "Coleta programada": "10/10/2026 09:00",
   };
   const ok = num("PLCU210001");
@@ -3826,4 +3826,65 @@ test("alertas: filtro por tipo aceita todos os tipos do banco (inclui ENTREGA_A_
     assert.equal((await agentes.OPERADOR.get(`/api/alertas?tipo=${tipo}&pagina=1`)).status, 200, `${tipo} (paginado)`);
   }
   assert.equal((await agentes.OPERADOR.get("/api/alertas?tipo=INVENTADO")).status, 400);
+});
+
+test("v3.12 ponto de operação: carregamento ou descarga pelo Tipo de Operação", async () => {
+  // Semente/migração: Importação é DESCARGA; os demais, CARREGAMENTO.
+  const lista = (await agentes.VISUALIZACAO.get("/api/tipos-operacao")).body;
+  const tipo = (nome) => lista.find((t) => t.nome === nome);
+  assert.equal(tipo("Importação").naturezaPonto, "DESCARGA");
+  assert.equal(tipo("Exportação padrão").naturezaPonto, "CARREGAMENTO");
+
+  // Cadastro: padrão CARREGAMENTO, aceita DESCARGA, recusa valor inválido; editar outro campo não muda a natureza.
+  const coleta = { acao: "COLETA", funcaoLocal: "RETIRADA_ENTREGA" };
+  const entrega = { acao: "ENTREGA", funcaoLocal: "RETIRADA_ENTREGA" };
+  const fluxo = [coleta, { acao: "CHEGADA" }, { acao: "SAIDA" }, entrega];
+  assert.equal((await agentes.SUPERVISOR.post("/api/tipos-operacao").send({ nome: "Natureza inválida", etapas: fluxo, naturezaPonto: "OVO" })).status, 400);
+  const semNatureza = await agentes.SUPERVISOR.post("/api/tipos-operacao").send({ nome: "Ovação 3.12", etapas: fluxo });
+  assert.equal(semNatureza.status, 201, JSON.stringify(semNatureza.body));
+  assert.equal(semNatureza.body.naturezaPonto, "CARREGAMENTO");
+  const desova = await agentes.SUPERVISOR.post("/api/tipos-operacao").send({ nome: "Desova 3.12", etapas: fluxo, naturezaPonto: "DESCARGA" });
+  assert.equal(desova.body.naturezaPonto, "DESCARGA");
+  const editado = await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${desova.body.id}`).send({ descricao: "só a descrição" });
+  assert.equal(editado.body.naturezaPonto, "DESCARGA", "PATCH sem o campo mantém a natureza");
+
+  // Container copia a natureza do tipo (fluxo gravado) e a API expõe naturezaPonto.
+  const ativo = async (rec) => (await agentes.ADMIN.get(`/api/${rec}?ativos=1`)).body[0].id;
+  const cad = { tipo: "DRY_40", grupoId: await ativo("grupos"), armadorId: await ativo("armadores"), confirmarDigito: true, portoRetiradaId: ids.santos, localCarregamentoId: ids.rioVerde, portoEntregaId: ids.santos };
+  const imp = await agentes.OPERADOR.post("/api/containers").send({ ...cad, numero: "NATU3120001", tipoOperacaoId: desova.body.id });
+  assert.equal(imp.status, 201, JSON.stringify(imp.body));
+  assert.equal(imp.body.naturezaPonto, "DESCARGA");
+  assert.equal((await prisma.container.findUnique({ where: { id: imp.body.id } })).fluxo.naturezaPonto, "DESCARGA");
+  const exp = await agentes.OPERADOR.post("/api/containers").send({ ...cad, numero: "NATU3120002", tipoOperacaoId: semNatureza.body.id });
+  assert.equal(exp.body.naturezaPonto, "CARREGAMENTO");
+  assert.equal((await agentes.ADMIN.get(`/api/containers/${ids.reefer}`)).body.naturezaPonto, "CARREGAMENTO", "container antigo sem natureza = carregamento");
+  // Editar o tipo depois não muda containers já criados.
+  await agentes.SUPERVISOR.patch(`/api/tipos-operacao/${desova.body.id}`).send({ naturezaPonto: "CARREGAMENTO" });
+  assert.equal((await agentes.ADMIN.get(`/api/containers/${imp.body.id}`)).body.naturezaPonto, "DESCARGA");
+
+  // Planilha: coluna nova "Ponto de Operação" e o título antigo "Ponto de Carregamento" (modelos já baixados).
+  const ExcelJS = (await import("exceljs")).default;
+  const binario = (res, cb) => { const partes = []; res.on("data", (x) => partes.push(x)); res.on("end", () => cb(null, Buffer.concat(partes))); };
+  const modelo = await agentes.OPERADOR.get("/api/containers/modelo").buffer(true).parse(binario);
+  for (const titulo of ["Ponto de Operação *", "Ponto de Carregamento *"]) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(modelo.body);
+    const ws = wb.getWorksheet("Containers");
+    const cab = ws.getRow(1).values.slice(1);
+    const iPonto = cab.indexOf("Ponto de Operação *");
+    assert.ok(iPonto >= 0, "modelo traz a coluna Ponto de Operação");
+    ws.getRow(1).getCell(iPonto + 1).value = titulo;
+    const col = (t) => cab.findIndex((x) => x.replace(" *", "") === t) + 1;
+    const v = {
+      "Número do container": "NATU3120030", "Dígito conferido": "sim", Tipo: "40' Dry", Armador: "Armador Planilha", Produto: "Resfriado Planilha",
+      "Local de retirada": "Porto de Santos", "Local de carregamento": "Armazém Cubatão", "Local de entrega": "Porto de Santos", "Coleta programada": "10/10/2026 09:00",
+    };
+    for (const [t, x] of Object.entries(v)) ws.getRow(2).getCell(col(t)).value = x;
+    ws.getRow(2).getCell(iPonto + 1).value = "Planilha SA / Fábrica Upload";
+    const previa = await agentes.OPERADOR.post("/api/containers/importar").set("Content-Type", "application/octet-stream").send(Buffer.from(await wb.xlsx.writeBuffer()));
+    assert.equal(previa.status, 200, JSON.stringify(previa.body));
+    assert.equal(previa.body.linhas[0].erro, null, `${titulo}: ${previa.body.linhas[0].erro}`);
+  }
+
+  for (const id of [imp.body.id, exp.body.id]) await agentes.ADMIN.post(`/api/containers/${id}/cancelar`).send({ motivo: "fim do teste v3.12" });
 });

@@ -7,7 +7,7 @@ import { api } from "../api.js";
 import { useAuthStore } from "../stores/auth.js";
 import {
   FLUXO, ROTULO_TIPO, ROTULO_ALERTA, rotuloEtapa, acaoEtapa, atendeRegraLocal, kmDoCiclo,
-  fmtDataHora, fmtHoras, fmtKm, fmtFolga, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde,
+  fmtDataHora, fmtHoras, fmtKm, fmtFolga, fmtMoeda, fmtTemp, paraInputLocal, deInputLocal, tempoDesde, rotuloPonto,
 } from "../formato.js";
 import GraficoTemperatura from "../components/GraficoTemperatura.vue";
 import PrevisaoCiclo from "../components/PrevisaoCiclo.vue";
@@ -744,7 +744,7 @@ const pagHistorico = usePaginacao(historico, "ficha-historico");
           <div class="card">
             <h2>Dados</h2>
             <dl class="lista-def">
-              <dt>Ponto de Carregamento</dt><dd>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</dd>
+              <dt>{{ rotuloPonto(c) }}</dt><dd>{{ c.grupo.cliente }} / {{ c.grupo.fabrica }}</dd>
               <dt>Armador</dt><dd>{{ c.armador.nome }}</dd>
               <dt v-if="c.produto">Produto</dt><dd v-if="c.produto">{{ c.produto.nome }}</dd>
               <dt>Booking</dt><dd>{{ c.booking || "—" }}</dd>

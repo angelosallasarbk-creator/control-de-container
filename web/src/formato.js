@@ -76,6 +76,12 @@ export const horaParaMinutos = (h) => {
 export const fmtKm = (km) => (km === null || km === undefined ? "—" : `${Number(km).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`);
 
 // Folga em horas → texto ("2,5 dias" / "10h" / "-6h").
+// Nome do ponto de operação do container (v3.12): vem do Tipo de Operação (carregamento ou descarga).
+export const rotuloPonto = (naturezaOuContainer) => {
+  const n = typeof naturezaOuContainer === "string" ? naturezaOuContainer : naturezaOuContainer?.naturezaPonto;
+  return n === "DESCARGA" ? "Ponto de Descarregamento" : "Ponto de Carregamento";
+};
+
 export function fmtFolga(h) {
   if (h === null || h === undefined) return "—";
   const sinal = h < 0 ? "-" : "";

@@ -75,7 +75,7 @@ function reconhecido() {
       </select>
     </div>
     <div class="campo">
-      <label>Ponto de Carregamento</label>
+      <label>Ponto de Operação</label>
       <select v-model="filtro.grupoId">
         <option value="">Todos</option>
         <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
@@ -92,7 +92,7 @@ function reconhecido() {
           <ThOrdenavel chave="nivel" :ordem="ordem" titulo="Crítico primeiro no crescente">Nível</ThOrdenavel>
           <ThOrdenavel chave="tipo" :ordem="ordem">Tipo</ThOrdenavel>
           <ThOrdenavel chave="container" :ordem="ordem">Container</ThOrdenavel>
-          <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Carregamento</ThOrdenavel>
+          <ThOrdenavel chave="grupo" :ordem="ordem">Ponto de Operação</ThOrdenavel>
           <ThOrdenavel chave="mensagem" :ordem="ordem">Mensagem</ThOrdenavel>
           <ThOrdenavel chave="aberto" :ordem="ordem" titulo="Mais antigo primeiro no crescente">Aberto</ThOrdenavel>
           <ThOrdenavel chave="tratamento" :ordem="ordem" titulo="Pendentes (não reconhecidos) primeiro no crescente">Tratamento</ThOrdenavel>

@@ -20,11 +20,11 @@ export function cnpjValido(cnpj) {
   return dv(12) === Number(cnpj[12]) && dv(13) === Number(cnpj[13]);
 }
 
-// Cadastros de apoio (Regiões, Ponto de Carregamento, Armadores, Produtos) com o mesmo CRUD.
+// Cadastros de apoio (Regiões, Ponto de Operação, Armadores, Produtos) com o mesmo CRUD.
 // Registro já usado não é excluído fisicamente: desativa-se (ativo = false).
 // `uso` = relação que conta onde o registro é usado (bloqueia exclusão).
 
-// A região pertence à FÁBRICA, mas a fábrica é um texto dentro do Ponto de Carregamento. Para uma
+// A região pertence à FÁBRICA, mas a fábrica é um texto dentro do Ponto de Operação. Para uma
 // fábrica nunca ficar dividida entre duas abas do Pátio:
 // - sem região informada, o grupo herda a região dos outros clientes da mesma fábrica;
 // - com região informada, ela é aplicada a todos os clientes daquela fábrica.
@@ -102,7 +102,7 @@ const CADASTROS = {
       // Ponto de parada: precisa do local (endereço/coordenadas) e da posição padrão; tempo vazio = 1 h.
       const parada = "podeSerParada" in dados ? dados.podeSerParada : Boolean(antes?.podeSerParada);
       if (parada) {
-        if (!("localId" in dados ? dados.localId : antes?.localId)) throw erroHttp(400, "Para ser ponto de parada, informe o local de carregamento (endereço) deste Ponto de Carregamento.");
+        if (!("localId" in dados ? dados.localId : antes?.localId)) throw erroHttp(400, "Para ser ponto de parada, informe o local de carregamento (endereço) deste Ponto de Operação.");
         if (!("posicaoParada" in dados ? dados.posicaoParada : antes?.posicaoParada)) throw erroHttp(400, "Informe se, como parada, ele fica antes ou depois do carregamento.");
         const tempo = "tempoParadaHoras" in dados ? dados.tempoParadaHoras : antes?.tempoParadaHoras;
         if (tempo === null || tempo === undefined) dados.tempoParadaHoras = 1;

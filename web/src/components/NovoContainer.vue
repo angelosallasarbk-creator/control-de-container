@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { api } from "../api.js";
-import { ROTULO_TIPO, paraInputLocal, deInputLocal, fmtTemp, fmtMoeda } from "../formato.js";
+import { ROTULO_TIPO, paraInputLocal, deInputLocal, fmtTemp, fmtMoeda, rotuloPonto } from "../formato.js";
 import PrevisaoCiclo from "./PrevisaoCiclo.vue";
 
 const emit = defineEmits(["fechar", "criado"]);
@@ -151,7 +151,7 @@ async function salvar(confirmarDigito = false) {
     <form class="modal" @submit.prevent="salvar(false)">
       <h2>Novo container</h2>
       <div v-if="faltamCadastros" class="aviso">
-        Antes de cadastrar containers, cadastre pelo menos um <router-link to="/cadastros/grupos">Ponto de Carregamento</router-link> e um
+        Antes de cadastrar containers, cadastre pelo menos um <router-link to="/cadastros/grupos">Ponto de Operação</router-link> e um
         <router-link to="/cadastros/armadores">Armador</router-link>.
       </div>
       <div v-if="erro" class="erro">{{ erro }}</div>
@@ -183,7 +183,7 @@ async function salvar(confirmarDigito = false) {
           </select>
         </div>
         <div class="campo">
-          <label>Ponto de Carregamento *</label>
+          <label>{{ rotuloPonto(tipoOperacao?.naturezaPonto) }} *</label>
           <select v-model="f.grupoId" required>
             <option value="" disabled>Selecione…</option>
             <option v-for="g in grupos" :key="g.id" :value="g.id">{{ g.cliente }} / {{ g.fabrica }}</option>
