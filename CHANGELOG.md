@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.13.0 — (a publicar) — previsão de rota: modo janela ou livre, velocidade e pausa configuráveis
+## 3.13.0 — 13/10/2026 (tag `v3.13.0`) — previsão de rota: modo janela ou livre, velocidade e pausa configuráveis
 
 Pedido do usuário: em *Configurações → Previsão de rota*, poder configurar km/dia, horário **e velocidade**, escolher entre
 trabalhar com **janela de viagem** ou **livre** (no livre, o tempo de viagem do serviço de rota, como no Google) e considerar
