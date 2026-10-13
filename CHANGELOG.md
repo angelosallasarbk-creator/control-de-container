@@ -4,7 +4,7 @@ A versão que está no ar aparece no rodapé do menu lateral e em `GET /api/saud
 Cada versão publicada tem uma tag no Git (`vX.Y.Z`) — é o ponto de retorno em caso de rollback
 (procedimento no README, seção "Versões e rollback").
 
-## 3.12.0 — (a publicar) — ponto de Carregamento ou de Descarga pelo Tipo de Operação
+## 3.12.0 — 13/10/2026 (tag `v3.12.0`) — ponto de Carregamento ou de Descarga pelo Tipo de Operação
 
 Origem: teste do usuário — ao criar um container de **Importação** o sistema pedia "Ponto de Carregamento", mas na importação
 o container é **descarregado** (desova) no cliente. Em vez de um cadastro separado de "pontos de descarregamento" (o mesmo
